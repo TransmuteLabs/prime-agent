@@ -236,7 +236,7 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 					})
 					.join("\n")}\n`
 			: "";
-	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
+	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with a persistent IPython control plane
 
 ${chalk.bold("Usage:")}
   ${APP_NAME} [options] [@files...] [messages...]
