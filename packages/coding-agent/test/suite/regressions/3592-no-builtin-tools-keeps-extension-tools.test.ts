@@ -1,17 +1,17 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	createAgentSessionFromServices,
 	createAgentSessionServices,
-} from "../../../src/core/agent-session-services.js";
-import { DefaultResourceLoader } from "../../../src/core/resource-loader.js";
-import { createAgentSession } from "../../../src/core/sdk.js";
-import { SessionManager } from "../../../src/core/session-manager.js";
-import { SettingsManager } from "../../../src/core/settings-manager.js";
+} from "../../../src/core/agent-session-services.ts";
+import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
+import { createAgentSession } from "../../../src/core/sdk.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
 
 describe("regression #3592: no-builtin-tools keeps extension tools enabled", () => {
 	let tempDir: string;
@@ -40,10 +40,10 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				(pi) => {
 					pi.on("session_start", () => {
 						pi.registerTool({
-							name: "extension_tool",
-							label: "Extension Tool",
+							name: "dynamic_tool",
+							label: "Dynamic Tool",
 							description: "Tool registered from session_start",
-							promptSnippet: "Run extension test behavior",
+							promptSnippet: "Run dynamic test behavior",
 							parameters: Type.Object({}),
 							execute: async () => ({
 								content: [{ type: "text", text: "ok" }],
@@ -78,12 +78,13 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["extension_tool", "ipython"]);
-		expect(session.getActiveToolNames()).toEqual(["extension_tool"]);
-		expect(session.systemPrompt).not.toContain("- extension_tool: Run extension test behavior");
-		expect(session.systemPrompt).not.toContain("- ipython:");
+		).toEqual(["bash", "dynamic_tool", "edit", "find", "grep", "ls", "read", "write"]);
+		expect(session.getActiveToolNames()).toEqual(["dynamic_tool"]);
+		expect(session.systemPrompt).toContain("You are a general purpose agent that uses code to solve tasks.");
+		// Tool schemas carry descriptions; RLM doctrine does not list extension tool snippets.
+		expect(session.systemPrompt).not.toContain("- dynamic_tool:");
+		expect(session.systemPrompt).not.toContain("- read:");
 		expect(session.systemPrompt).not.toContain("- bash:");
-		expect(session.systemPrompt).not.toContain("- edit:");
 		session.dispose();
 	});
 
@@ -92,6 +93,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 
 		expect(session.getAllTools()).toEqual([]);
 		expect(session.getActiveToolNames()).toEqual([]);
+		expect(session.systemPrompt).toContain("You are a general purpose agent that uses code to solve tasks.");
 		expect(session.systemPrompt).not.toContain("Available tools:");
 		session.dispose();
 	});
@@ -113,8 +115,9 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 		});
 
 		expect(session.getActiveToolNames()).toEqual([]);
+		expect(session.systemPrompt).toContain("You are a general purpose agent that uses code to solve tasks.");
 		expect(session.systemPrompt).not.toContain("Available tools:");
-		expect(session.systemPrompt).not.toContain("- ipython:");
+		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
 	});
 });

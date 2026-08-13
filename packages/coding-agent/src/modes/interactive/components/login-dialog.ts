@@ -1,5 +1,4 @@
 import { win32 } from "node:path";
-import { getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import {
 	type Component,
 	Container,
@@ -13,12 +12,13 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { execFile } from "child_process";
-import { PRIME_BUTTERFLY_LOGO } from "../../../themes/prime-logo.js";
-import { copyToClipboard } from "../../../utils/clipboard.js";
-import { theme } from "../theme/theme.js";
-import { formatKeyText, keyHint } from "./keybinding-hints.js";
-import { MenuPanel, MenuSearchInput } from "./menu-panel.js";
-import { shouldTreatAsBack } from "./modal-back.js";
+import { getOAuthProviderInfos } from "../../../core/auth-storage.ts";
+import { PRIME_BUTTERFLY_LOGO } from "../../../themes/prime-logo.ts";
+import { copyToClipboard } from "../../../utils/clipboard.ts";
+import { theme } from "../theme/theme.ts";
+import { formatKeyText, keyHint } from "./keybinding-hints.ts";
+import { MenuPanel, MenuSearchInput } from "./menu-panel.ts";
+import { shouldTreatAsBack } from "./modal-back.ts";
 
 const PRIME_INFERENCE_PROVIDER_ID = "prime-inference";
 const PRIME_LOGO_LINES = PRIME_BUTTERFLY_LOGO.split("\n");
@@ -85,6 +85,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	private continueRejecter?: (error: Error) => void;
 	private authUrl?: string;
 	private authActions?: Text;
+	private readonly onComplete: (success: boolean, message?: string) => void;
 
 	// Focusable implementation - propagate to input for IME cursor positioning
 	private _focused = false;
@@ -99,14 +100,15 @@ export class LoginDialogComponent extends Container implements Focusable {
 	constructor(
 		tui: TUI,
 		providerId: string,
-		private onComplete: (success: boolean, message?: string) => void,
+		onComplete: (success: boolean, message?: string) => void,
 		providerNameOverride?: string,
 		titleOverride?: string,
 	) {
 		super();
 		this.tui = tui;
+		this.onComplete = onComplete;
 
-		const providerInfo = getOAuthProviders().find((p) => p.id === providerId);
+		const providerInfo = getOAuthProviderInfos().find((p) => p.id === providerId);
 		const providerName = providerNameOverride || providerInfo?.name || providerId;
 		this.isPrimeInference = providerId === PRIME_INFERENCE_PROVIDER_ID;
 		const title = titleOverride ?? `Login to ${providerName}`;
@@ -125,11 +127,21 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.input = new MenuSearchInput("Paste value");
 		this.input.onSubmit = () => {
 			if (this.inputResolver) {
-				this.inputResolver(this.input.getValue());
+				const value = this.input.getValue();
+				this.replaceInputWithSubmittedText(value);
+				this.inputResolver(value);
 				this.inputResolver = undefined;
 				this.inputRejecter = undefined;
 			}
 		};
+	}
+
+	/** Freeze a submitted value as static text so later prompts get a fresh field. */
+	private replaceInputWithSubmittedText(value: string): void {
+		this.contentContainer.children = this.contentContainer.children.map((child) =>
+			child === this.input ? new Text(theme.fg("text", `> ${value}`), 0, 0) : child,
+		);
+		this.inputVisible = false;
 	}
 
 	get signal(): AbortSignal {
@@ -194,6 +206,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.addSectionSpacer();
 		this.addSectionTitle("Manual fallback");
 		this.addMutedText(prompt);
+		this.input.setValue("");
 		this.contentContainer.addChild(this.input);
 		this.inputVisible = true;
 		this.authActions?.setText(this.getAuthActionsText());

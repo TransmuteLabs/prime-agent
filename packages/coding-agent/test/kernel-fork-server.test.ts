@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { ForkServerUnavailable, forkKernel, isForkServerEnabled } from "../src/core/kernel/fork-server.js";
+import { ForkServerUnavailable, forkKernel, isForkServerEnabled } from "../src/core/kernel/fork-server.ts";
 
 const FORK_ENV = "PRIME_AGENT_KERNEL_FORKSERVER";
 

@@ -1,9 +1,9 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { completeSimple } from "@earendil-works/pi-ai";
-import type { ModelRegistry } from "../../core/model-registry.js";
-import type { AgentStatus, AgentTaskState } from "../../core/session-manager.js";
-import type { ActiveSessionState } from "./active-session-state.js";
+import type { ModelRegistry } from "../../core/model-registry.ts";
+import type { AgentStatus, AgentTaskState } from "../../core/session-manager.ts";
+import type { ActiveSessionState } from "./active-session-state.ts";
+import { completeSimple } from "./prime-port-ai-compat.ts";
 
 const SWEEP_INTERVAL_MS = 25_000;
 // Collapse a tool-use loop's rapid turn_end bursts into one summarization.
@@ -216,14 +216,20 @@ export class DaemonSessionSummarizer {
 	// Sessions requested while one was running; get one more pass on completion.
 	private readonly rerunRequested = new Set<string>();
 
+	private readonly listSessions: () => readonly ActiveSessionState[];
+	private readonly onStatusChanged?: (state: ActiveSessionState) => void;
+	private readonly generate: (params: GenerateAgentStatusParams) => Promise<AgentStatusResult | undefined>;
+
 	constructor(
-		private readonly listSessions: () => readonly ActiveSessionState[],
-		private readonly onStatusChanged?: (state: ActiveSessionState) => void,
+		listSessions: () => readonly ActiveSessionState[],
+		onStatusChanged?: (state: ActiveSessionState) => void,
 		// Injectable for tests.
-		private readonly generate: (
-			params: GenerateAgentStatusParams,
-		) => Promise<AgentStatusResult | undefined> = generateAgentStatus,
-	) {}
+		generate: (params: GenerateAgentStatusParams) => Promise<AgentStatusResult | undefined> = generateAgentStatus,
+	) {
+		this.listSessions = listSessions;
+		this.onStatusChanged = onStatusChanged;
+		this.generate = generate;
+	}
 
 	start(): void {
 		if (this.interval) {

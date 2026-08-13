@@ -1,17 +1,17 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it, vi } from "vitest";
-import { MissingSessionCwdError } from "../src/core/session-cwd.js";
-import { SessionImportFileNotFoundError } from "../src/core/session-import-errors.js";
+import { MissingSessionCwdError } from "../src/core/session-cwd.ts";
+import { SessionImportFileNotFoundError } from "../src/core/session-import-errors.ts";
 import {
 	DAEMON_REFINE_REQUEST_TIMEOUT_MS,
 	DaemonAgentConnection,
-} from "../src/modes/agent-connection/daemon-agent-connection.js";
+} from "../src/modes/agent-connection/daemon-agent-connection.ts";
 import type {
 	AgentConnectionEvent,
 	AgentConnectionSavedSessionInfo,
 	AgentConnectionState,
-} from "../src/modes/agent-connection/types.js";
+} from "../src/modes/agent-connection/types.ts";
 
 import {
 	DaemonCapabilityUnavailableError,
@@ -21,7 +21,7 @@ import {
 	type DaemonClientRequestOptions,
 	type DaemonHello,
 	DaemonSocketClosedError,
-} from "../src/modes/daemon/daemon-client.js";
+} from "../src/modes/daemon/daemon-client.ts";
 import {
 	DAEMON_PROTOCOL_INFO,
 	DAEMON_SCHEMA_REVISION,
@@ -29,7 +29,7 @@ import {
 	type DaemonCommand,
 	type DaemonOutbound,
 	type DaemonResponse,
-} from "../src/modes/daemon/daemon-protocol.js";
+} from "../src/modes/daemon/daemon-protocol.ts";
 
 class FakeDaemonClient {
 	readonly requests: DaemonCommand[] = [];

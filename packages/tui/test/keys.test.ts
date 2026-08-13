@@ -11,7 +11,7 @@ import {
 	matchesKey,
 	parseKey,
 	setKittyProtocolActive,
-} from "../src/keys.js";
+} from "../src/keys.ts";
 
 function withEnv(name: string, value: string | undefined, fn: () => void): void {
 	const previous = process.env[name];
@@ -431,6 +431,10 @@ describe("matchesKey", () => {
 			assert.strictEqual(parseKey("\x1ba"), "alt+a");
 			assert.strictEqual(matchesKey("\x1b1", "alt+1"), true);
 			assert.strictEqual(parseKey("\x1b1"), "alt+1");
+			assert.strictEqual(matchesKey("\x1b,", "alt+,"), true);
+			assert.strictEqual(parseKey("\x1b,"), "alt+,");
+			assert.strictEqual(matchesKey("\x1b.", "alt+."), true);
+			assert.strictEqual(parseKey("\x1b."), "alt+.");
 			assert.strictEqual(matchesKey("\x1by", "alt+y"), true);
 			assert.strictEqual(parseKey("\x1by"), "alt+y");
 			assert.strictEqual(matchesKey("\x1bz", "alt+z"), true);
@@ -451,6 +455,10 @@ describe("matchesKey", () => {
 			assert.strictEqual(parseKey("\x1ba"), undefined);
 			assert.strictEqual(matchesKey("\x1b1", "alt+1"), false);
 			assert.strictEqual(parseKey("\x1b1"), undefined);
+			assert.strictEqual(matchesKey("\x1b,", "alt+,"), false);
+			assert.strictEqual(parseKey("\x1b,"), undefined);
+			assert.strictEqual(matchesKey("\x1b.", "alt+."), false);
+			assert.strictEqual(parseKey("\x1b."), undefined);
 			assert.strictEqual(matchesKey("\x1by", "alt+y"), false);
 			assert.strictEqual(parseKey("\x1by"), undefined);
 			setKittyProtocolActive(false);
@@ -472,6 +480,17 @@ describe("matchesKey", () => {
 			assert.strictEqual(matchesKey("\x1bOF", "end"), true);
 		});
 
+		it("should match xterm Ctrl-modified viewport navigation", () => {
+			assert.strictEqual(matchesKey("\x1b[1;5H", "ctrl+home"), true);
+			assert.strictEqual(matchesKey("\x1b[1;5F", "ctrl+end"), true);
+			assert.strictEqual(matchesKey("\x1b[5;5~", "ctrl+pageUp"), true);
+			assert.strictEqual(matchesKey("\x1b[6;5~", "ctrl+pageDown"), true);
+			assert.strictEqual(parseKey("\x1b[1;5H"), "ctrl+home");
+			assert.strictEqual(parseKey("\x1b[1;5F"), "ctrl+end");
+			assert.strictEqual(parseKey("\x1b[5;5~"), "ctrl+pageUp");
+			assert.strictEqual(parseKey("\x1b[6;5~"), "ctrl+pageDown");
+		});
+
 		it("should match legacy function keys and clear", () => {
 			assert.strictEqual(matchesKey("\x1bOP", "f1"), true);
 			assert.strictEqual(matchesKey("\x1b[24~", "f12"), true);
@@ -481,9 +500,6 @@ describe("matchesKey", () => {
 		it("should match alt+arrows", () => {
 			assert.strictEqual(matchesKey("\x1bp", "alt+up"), true);
 			assert.strictEqual(matchesKey("\x1bp", "up"), false);
-			// Standard xterm CSI modified-arrow sequences (terminals without Kitty protocol)
-			assert.strictEqual(matchesKey("\x1b[1;3A", "alt+up"), true);
-			assert.strictEqual(matchesKey("\x1b[1;3B", "alt+down"), true);
 		});
 
 		it("should match rxvt modifier sequences", () => {
@@ -612,30 +628,6 @@ describe("parseKey", () => {
 
 		it("should parse double bracket pageUp", () => {
 			assert.strictEqual(parseKey("\x1b[[5~"), "pageUp");
-		});
-	});
-
-	describe("combined modified arrows", () => {
-		// xterm encodes modifiers as a 1-based parameter: 1 + shift(1) + alt(2) + ctrl(4).
-		// Ctrl+Alt is therefore parameter 7, and parameter 8 is Shift+Ctrl+Alt.
-		it("matches xterm and Kitty Ctrl+Alt arrows", () => {
-			assert.equal(matchesKey("\x1b[1;7A", "ctrl+alt+up"), true);
-			assert.equal(matchesKey("\x1b[1;7B", "ctrl+alt+down"), true);
-			assert.equal(matchesKey("\x1b[57419;7u", "ctrl+alt+up"), true);
-			assert.equal(matchesKey("\x1b[57420;7u", "ctrl+alt+down"), true);
-		});
-
-		it("does not alias Shift+Ctrl+Alt arrows onto Ctrl+Alt", () => {
-			assert.equal(matchesKey("\x1b[1;8A", "shift+ctrl+alt+up"), true);
-			assert.equal(matchesKey("\x1b[1;8A", "ctrl+alt+up"), false);
-			assert.equal(matchesKey("\x1b[1;8B", "ctrl+alt+down"), false);
-		});
-
-		it("matches legacy Option-as-Meta wrapped Ctrl arrows", () => {
-			assert.equal(matchesKey("\x1b\x1b[1;5A", "ctrl+alt+up"), true);
-			assert.equal(matchesKey("\x1b\x1b[1;5B", "ctrl+alt+down"), true);
-			assert.equal(matchesKey("\x1b\x1bOa", "ctrl+alt+up"), true);
-			assert.equal(matchesKey("\x1b\x1bOb", "ctrl+alt+down"), true);
 		});
 	});
 });

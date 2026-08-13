@@ -2,9 +2,9 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getBundledSkillsDir } from "../src/config.js";
-import type { PythonSkillRuntimeInfo } from "../src/core/skills.js";
-import { IpythonKernelProvisioner } from "../src/core/tools/ipython.js";
+import { getBundledSkillsDir } from "../src/config.ts";
+import type { PythonSkillRuntimeInfo } from "../src/core/skills.ts";
+import { IpythonKernelProvisioner } from "../src/core/tools/ipython.ts";
 
 function bundledAgentObserveSkill(): PythonSkillRuntimeInfo {
 	const packagePath = join(getBundledSkillsDir(), "agent-observe");

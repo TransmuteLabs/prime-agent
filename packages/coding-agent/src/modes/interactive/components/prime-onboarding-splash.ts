@@ -1,6 +1,6 @@
 import { type Component, getKeybindings, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { PRIME_BUTTERFLY_LOGO } from "../../../themes/prime-logo.js";
-import { type ThemeColor, theme } from "../theme/theme.js";
+import { PRIME_BUTTERFLY_LOGO } from "../../../themes/prime-logo.ts";
+import { type ThemeColor, theme } from "../theme/theme.ts";
 
 interface PrimeOnboardingSplashOptions {
 	getRows?: () => number;
@@ -52,12 +52,14 @@ export class PrimeOnboardingSplashComponent implements Component {
 	private frame = 0;
 	private animationInterval?: ReturnType<typeof setInterval>;
 	private progressMessage?: string;
+	private readonly onSelect: () => void;
+	private readonly onCancel: () => void;
+	private readonly options: PrimeOnboardingSplashOptions;
 
-	constructor(
-		private readonly onSelect: () => void,
-		private readonly onCancel: () => void,
-		private readonly options: PrimeOnboardingSplashOptions = {},
-	) {
+	constructor(onSelect: () => void, onCancel: () => void, options: PrimeOnboardingSplashOptions = {}) {
+		this.onSelect = onSelect;
+		this.onCancel = onCancel;
+		this.options = options;
 		if (options.requestRender) {
 			this.animationInterval = setInterval(() => {
 				this.frame++;

@@ -2,17 +2,17 @@ import { Buffer } from "node:buffer";
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { appendRotatingLog, getAgentTracesLogPath, getSessionsDir, VERSION } from "../config.js";
-import { readFirstLineSync } from "../utils/file-lines.js";
-import type { AuthStorage } from "./auth-storage.js";
+import { appendRotatingLog, getAgentTracesLogPath, getSessionsDir, VERSION } from "../config.ts";
+import { readFirstLineSync } from "../utils/file-lines.ts";
+import type { AuthStorage } from "./auth-storage.ts";
 import {
 	loadPrimeCliConfig,
 	PRIME_AGENT_TRACES_PROVIDER_ID,
 	PRIME_INFERENCE_PROVIDER_ID,
 	resolvePrimeAgentTracesBaseUrl,
-} from "./prime-inference-auth.js";
-import type { SessionHeader, SessionManager } from "./session-manager.js";
-import type { SettingsManager } from "./settings-manager.js";
+} from "./prime-inference-auth.ts";
+import type { SessionHeader, SessionManager } from "./session-manager.ts";
+import type { SettingsManager } from "./settings-manager.ts";
 
 const MAX_TRACE_BYTES = 20 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -645,7 +645,7 @@ export async function getPrimeAgentTraceCredential(
 		authStorage.reload();
 	}
 
-	const traceKey = await authStorage.getApiKey(PRIME_AGENT_TRACES_PROVIDER_ID, { includeFallback: false });
+	const traceKey = authStorage.getApiKey(PRIME_AGENT_TRACES_PROVIDER_ID, { includeFallback: false });
 	if (traceKey) {
 		return { apiKey: traceKey, source: "stored", label: "Prime Agent Traces credential" };
 	}
@@ -657,7 +657,7 @@ export async function getPrimeAgentTraceCredential(
 
 	const primeCredential = authStorage.get(PRIME_INFERENCE_PROVIDER_ID);
 	if (primeCredential) {
-		const primeKey = await authStorage.getApiKey(PRIME_INFERENCE_PROVIDER_ID, { includeFallback: false });
+		const primeKey = authStorage.getApiKey(PRIME_INFERENCE_PROVIDER_ID, { includeFallback: false });
 		if (primeKey) {
 			return { apiKey: primeKey, source: "prime-inference", label: "Prime Inference credential" };
 		}
@@ -854,11 +854,13 @@ class AgentTraceUploadController {
 	private flushPromise: Promise<AgentTraceUploadResult | undefined> | undefined;
 	private lastUploadStartedAt: number | undefined;
 	private lastUploadedSignature: string | undefined;
+	private readonly sessionManager: SessionManager;
+	private options: AgentTraceUploadInstallOptions;
 
-	constructor(
-		private readonly sessionManager: SessionManager,
-		private options: AgentTraceUploadInstallOptions,
-	) {}
+	constructor(sessionManager: SessionManager, options: AgentTraceUploadInstallOptions) {
+		this.sessionManager = sessionManager;
+		this.options = options;
+	}
 
 	update(options: AgentTraceUploadInstallOptions): void {
 		this.options = options;

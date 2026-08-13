@@ -1,18 +1,18 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { AgentSession } from "../core/agent-session.js";
+import type { AgentSession } from "../core/agent-session.ts";
 import {
 	type AgentAutonomousStatus,
 	autonomousLimitReason,
 	buildAutonomousGateFailureContinuation,
-} from "../core/autonomous.js";
+} from "../core/autonomous.ts";
 import {
 	COMPACTION_OUTCOME_CUSTOM_TYPE,
 	type CompactionOutcomeMessage,
 	isCompactionOutcomeMessage,
 	isSessionSlashCommandResultMessage,
 	type SessionSlashCommandResultMessage,
-} from "../core/messages.js";
+} from "../core/messages.ts";
 
 export function latestAutonomousGateAttempt(status: AgentAutonomousStatus): number {
 	return Math.max(status.lastGateFailure?.attempt ?? 0, 0, ...Object.values(status.gateAttempts));

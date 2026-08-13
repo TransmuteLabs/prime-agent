@@ -1,11 +1,11 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
-import type { RlmChildAgentStatus } from "./agent-session.js";
-import { calculateContextTokens, estimateContextTokens } from "./compaction/index.js";
-import type { ContextUsage } from "./extensions/index.js";
-import { buildSessionContext, type FileEntry, loadEntriesFromFile, type SessionEntry } from "./session-manager.js";
-import { addAssistantUsage, cloneUsage, emptyUsage, subtractAssistantUsage } from "./usage.js";
+import type { RlmChildAgentStatus } from "./agent-session.ts";
+import { calculateContextTokens, estimateContextTokens } from "./compaction/index.ts";
+import type { ContextUsage } from "./extensions/index.ts";
+import { buildSessionContext, type FileEntry, loadEntriesFromFile, type SessionEntry } from "./session-manager.ts";
+import { addAssistantUsage, cloneUsage, emptyUsage, subtractAssistantUsage } from "./usage.ts";
 
 /** Resolves a model's context window so disk-only nodes can report utilization. */
 export type ContextWindowResolver = (provider: string, modelId: string) => number | undefined;

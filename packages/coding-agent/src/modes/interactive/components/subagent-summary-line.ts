@@ -1,7 +1,7 @@
 import { type Component, type Focusable, getKeybindings, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { AgentConnectionRlmChildAgentSnapshot } from "../../agent-connection/index.js";
-import { theme } from "../theme/theme.js";
-import { keyText } from "./keybinding-hints.js";
+import type { AgentConnectionRlmChildAgentSnapshot } from "../../agent-connection/index.ts";
+import { theme } from "../theme/theme.ts";
+import { keyText } from "./keybinding-hints.ts";
 
 export interface SubagentSummaryCounts {
 	total: number;
@@ -45,11 +45,19 @@ export class SubagentSummaryLine implements Component, Focusable {
 	onCancel?: () => void;
 	onChatAction?: (data: string) => void;
 
+	private readonly getLocationLabel: () => string | undefined;
+	private readonly getContextLabel: () => string | undefined;
+	private readonly getOverrideLabel: () => string | undefined;
+
 	constructor(
-		private readonly getLocationLabel: () => string | undefined = () => undefined,
-		private readonly getContextLabel: () => string | undefined = () => undefined,
-		private readonly getOverrideLabel: () => string | undefined = () => undefined,
-	) {}
+		getLocationLabel: () => string | undefined = () => undefined,
+		getContextLabel: () => string | undefined = () => undefined,
+		getOverrideLabel: () => string | undefined = () => undefined,
+	) {
+		this.getLocationLabel = getLocationLabel;
+		this.getContextLabel = getContextLabel;
+		this.getOverrideLabel = getOverrideLabel;
+	}
 
 	setSubagentCounts(counts: SubagentSummaryCounts): void {
 		this.counts = counts;

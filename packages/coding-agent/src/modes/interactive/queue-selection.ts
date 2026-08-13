@@ -1,4 +1,4 @@
-import type { AgentConnectionQueueState } from "../agent-connection/index.js";
+import type { AgentConnectionQueueState } from "../agent-connection/index.ts";
 
 export type QueueLane = "steering" | "followUp";
 

@@ -1,8 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Container, visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.js";
-import { initTheme } from "../../../src/modes/interactive/theme/theme.js";
+import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 
 type RecapRenderMode = {
 	recapContainer: Container;

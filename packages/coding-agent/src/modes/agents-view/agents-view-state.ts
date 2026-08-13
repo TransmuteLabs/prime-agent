@@ -1,7 +1,7 @@
 import { basename, resolve } from "node:path";
-import { canonicalizePath } from "../../utils/paths.js";
-import type { AgentConnectionHeartbeat, AgentConnectionSavedSessionInfo } from "../agent-connection/index.js";
-import { classifySessionRosterStatus, type SessionSummary } from "../daemon/daemon-session-list.js";
+import { canonicalizePath } from "../../utils/paths.ts";
+import type { AgentConnectionHeartbeat, AgentConnectionSavedSessionInfo } from "../agent-connection/index.ts";
+import { classifySessionRosterStatus, type SessionSummary } from "../daemon/daemon-session-list.ts";
 
 export type AgentsViewSection = "running" | "idle" | "inactive";
 

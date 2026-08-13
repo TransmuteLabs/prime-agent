@@ -12,11 +12,11 @@ import {
 import { join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
-import { completeSimple } from "@earendil-works/pi-ai";
-import { getAgentDir } from "../../config.js";
-import { serializeConversation } from "../compaction/utils.js";
-import { convertToLlm } from "../messages.js";
-import type { CustomEntry } from "../session-manager.js";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { getAgentDir } from "../../config.ts";
+import { serializeConversation } from "../compaction/utils.ts";
+import { convertToLlm } from "../messages.ts";
+import type { CustomEntry } from "../session-manager.ts";
 
 export const REFINEMENT_CUSTOM_TYPE = "prime-agent.refinement";
 

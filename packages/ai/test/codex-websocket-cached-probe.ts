@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 /**
  * Live probe for OpenAI Codex Responses websocket-cached mode.
  *
@@ -9,17 +9,17 @@
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Type } from "typebox";
-import { AuthStorage } from "../../coding-agent/src/core/auth-storage.js";
-import { getModel } from "../src/models.js";
+import { ModelRuntime } from "../../coding-agent/src/core/model-runtime.ts";
 import {
 	closeOpenAICodexWebSocketSessions,
 	getOpenAICodexWebSocketDebugStats,
 	resetOpenAICodexWebSocketDebugStats,
-	streamOpenAICodexResponses,
-} from "../src/providers/openai-codex-responses.js";
-import type { AssistantMessage, Context, Message, Model, Tool, ToolResultMessage, Transport } from "../src/types.js";
+	stream as streamOpenAICodexResponses,
+} from "../src/api/openai-codex-responses.ts";
+import { getModel } from "../src/compat.ts";
+import type { AssistantMessage, Context, Message, Model, Tool, ToolResultMessage, Transport } from "../src/types.ts";
 
-type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
+type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 interface Args {
 	turns: number;
@@ -58,7 +58,14 @@ function parseArgs(argv: string[]): Args {
 				break;
 			case "--reasoning": {
 				const value = required(argv[++i], arg);
-				if (value !== "minimal" && value !== "low" && value !== "medium" && value !== "high" && value !== "xhigh") {
+				if (
+					value !== "minimal" &&
+					value !== "low" &&
+					value !== "medium" &&
+					value !== "high" &&
+					value !== "xhigh" &&
+					value !== "max"
+				) {
 					throw new Error(`Invalid --reasoning: ${value}`);
 				}
 				reasoning = value;
@@ -85,12 +92,12 @@ function required(value: string | undefined, flag: string): string {
 }
 
 function printHelp(): void {
-	console.log(`Usage: npx tsx test/codex-websocket-cached-probe.ts [options]
+	console.log(`Usage: node test/codex-websocket-cached-probe.ts [options]
 
 Options:
   --turns <n>          Number of user turns. Default: ${DEFAULT_TURNS}
   --transport <mode>   sse | websocket | websocket-cached | auto. Default: websocket-cached
-  --reasoning <level>  minimal | low | medium | high | xhigh. Default: low
+  --reasoning <level>  minimal | low | medium | high | xhigh | max. Default: low
   --max-tokens <n>     Max output tokens per model request. Default: ${DEFAULT_MAX_TOKENS}
   --session-id <id>    Session id for websocket/cache state
 `);
@@ -159,8 +166,9 @@ async function main(): Promise<void> {
 	const model = getModel("openai-codex", "gpt-5.5") as Model<"openai-codex-responses"> | undefined;
 	if (!model) throw new Error("Model openai-codex/gpt-5.5 not found");
 	const modelWithMaxTokens = { ...model, maxTokens: args.maxTokens };
-	const authStorage = AuthStorage.create();
-	const apiKey = (await authStorage.getApiKey("openai-codex")) ?? (await authStorage.getApiKey("openai"));
+	const modelRuntime = await ModelRuntime.create();
+	const apiKey =
+		(await modelRuntime.getAuth("openai-codex"))?.auth.apiKey ?? (await modelRuntime.getAuth("openai"))?.auth.apiKey;
 	if (!apiKey) {
 		throw new Error("No OpenAI Codex API key found in coding-agent auth storage.");
 	}

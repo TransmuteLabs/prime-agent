@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { execEnvForSession, filterClientEnv, withClientEnv } from "../src/modes/daemon/daemon-client-env.js";
+import { execEnvForSession, filterClientEnv, withClientEnv } from "../src/modes/daemon/daemon-client-env.ts";
 
 describe("filterClientEnv", () => {
 	it("keeps only allowlisted keys", () => {

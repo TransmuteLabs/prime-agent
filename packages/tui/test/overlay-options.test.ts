@@ -1,14 +1,17 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import type { Component } from "../src/tui.js";
-import { TUI } from "../src/tui.js";
-import { VirtualTerminal } from "./virtual-terminal.js";
+import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
+import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class StaticOverlay implements Component {
-	constructor(
-		private lines: string[],
-		public requestedWidth?: number,
-	) {}
+	private lines: string[];
+	requestedWidth?: number;
+
+	constructor(lines: string[], requestedWidth?: number) {
+		this.lines = lines;
+		this.requestedWidth = requestedWidth;
+	}
 
 	render(width: number): string[] {
 		// Store the width we were asked to render at for verification
@@ -36,7 +39,7 @@ describe("TUI overlay options", () => {
 	describe("width overflow protection", () => {
 		it("should truncate overlay lines that exceed declared width", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			// Overlay declares width 20 but renders lines much wider
 			const overlay = new StaticOverlay(["X".repeat(100)]);
 
@@ -57,7 +60,7 @@ describe("TUI overlay options", () => {
 
 		it("should handle overlay with complex ANSI sequences without crashing", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			// Simulate complex ANSI content like the crash log showed
 			const complexLine =
 				"\x1b[48;2;40;50;40m \x1b[38;2;128;128;128mSome styled content\x1b[39m\x1b[49m" +
@@ -78,7 +81,7 @@ describe("TUI overlay options", () => {
 
 		it("should handle overlay composited on styled base content", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 
 			// Base content with styling
 			class StyledContent implements Component {
@@ -105,7 +108,7 @@ describe("TUI overlay options", () => {
 
 		it("should handle wide characters at overlay boundary", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			// Wide chars (each takes 2 columns) at the edge of declared width
 			const wideCharLine = "中文日本語한글テスト漢字"; // Mix of CJK chars
 			const overlay = new StaticOverlay([wideCharLine]);
@@ -123,7 +126,7 @@ describe("TUI overlay options", () => {
 
 		it("should handle overlay positioned at terminal edge", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			// Overlay positioned at right edge with content that exceeds declared width
 			const overlay = new StaticOverlay(["X".repeat(50)]);
 
@@ -141,7 +144,7 @@ describe("TUI overlay options", () => {
 
 		it("should handle overlay on base content with OSC sequences", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 
 			// Base content with OSC 8 hyperlinks (like file paths in agent output)
 			class HyperlinkContent implements Component {
@@ -170,7 +173,7 @@ describe("TUI overlay options", () => {
 	describe("width percentage", () => {
 		it("should render overlay at percentage of terminal width", async () => {
 			const terminal = new VirtualTerminal(100, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["test"]);
 
 			tui.addChild(new EmptyContent());
@@ -184,7 +187,7 @@ describe("TUI overlay options", () => {
 
 		it("should respect minWidth when widthPercent results in smaller width", async () => {
 			const terminal = new VirtualTerminal(100, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["test"]);
 
 			tui.addChild(new EmptyContent());
@@ -197,57 +200,10 @@ describe("TUI overlay options", () => {
 		});
 	});
 
-	describe("scrollback", () => {
-		it("should preserve full overlay content in terminal scrollback while showing the bottom", async () => {
-			const terminal = new VirtualTerminal(20, 5);
-			const tui = new TUI(terminal);
-			const overlay = new StaticOverlay(
-				Array.from({ length: 8 }, (_, index) => `line ${String(index + 1).padStart(2, "0")}`),
-			);
-
-			tui.addChild(new EmptyContent());
-			tui.showOverlay(overlay, { anchor: "top-left", width: "100%", scrollback: true });
-			tui.start();
-			await renderAndFlush(tui, terminal);
-
-			const viewport = terminal.getViewport().join("\n");
-			assert.ok(viewport.includes("line 08"), `Expected bottom overlay line in viewport, got:\n${viewport}`);
-			assert.ok(!viewport.includes("line 01"), `Expected top overlay line in scrollback only, got:\n${viewport}`);
-
-			const scrollBuffer = terminal.getScrollBuffer().join("\n");
-			assert.ok(scrollBuffer.includes("line 01"), "Expected first overlay line in scrollback");
-			assert.ok(scrollBuffer.includes("line 08"), "Expected final overlay line in scrollback");
-			tui.stop();
-		});
-
-		it("should align scrollback overlays with the bottom of existing content", async () => {
-			const terminal = new VirtualTerminal(20, 5);
-			const tui = new TUI(terminal);
-			const content = new StaticOverlay(Array.from({ length: 20 }, (_, index) => `base ${index + 1}`));
-			const overlay = new StaticOverlay(
-				Array.from({ length: 8 }, (_, index) => `modal ${String(index + 1).padStart(2, "0")}`),
-			);
-
-			tui.addChild(content);
-			tui.showOverlay(overlay, { anchor: "top-left", width: "100%", scrollback: true });
-			tui.start();
-			await renderAndFlush(tui, terminal);
-
-			const viewport = terminal.getViewport().join("\n");
-			assert.ok(viewport.includes("modal 08"), `Expected bottom overlay line in viewport, got:\n${viewport}`);
-			assert.ok(!viewport.includes("modal 01"), `Expected top overlay line in scrollback only, got:\n${viewport}`);
-
-			const scrollBuffer = terminal.getScrollBuffer().join("\n");
-			assert.ok(scrollBuffer.includes("modal 01"), "Expected first overlay line in scrollback");
-			assert.ok(scrollBuffer.includes("modal 08"), "Expected final overlay line in scrollback");
-			tui.stop();
-		});
-	});
-
 	describe("anchor positioning", () => {
 		it("should position overlay at top-left", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["TOP-LEFT"]);
 
 			tui.addChild(new EmptyContent());
@@ -262,7 +218,7 @@ describe("TUI overlay options", () => {
 
 		it("should position overlay at bottom-right", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["BTM-RIGHT"]);
 
 			tui.addChild(new EmptyContent());
@@ -280,7 +236,7 @@ describe("TUI overlay options", () => {
 
 		it("should position overlay at top-center", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["CENTERED"]);
 
 			tui.addChild(new EmptyContent());
@@ -302,7 +258,7 @@ describe("TUI overlay options", () => {
 	describe("margin", () => {
 		it("should clamp negative margins to zero", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["NEG-MARGIN"]);
 
 			tui.addChild(new EmptyContent());
@@ -323,7 +279,7 @@ describe("TUI overlay options", () => {
 
 		it("should respect margin as number", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["MARGIN"]);
 
 			tui.addChild(new EmptyContent());
@@ -344,7 +300,7 @@ describe("TUI overlay options", () => {
 
 		it("should respect margin object", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["MARGIN"]);
 
 			tui.addChild(new EmptyContent());
@@ -367,7 +323,7 @@ describe("TUI overlay options", () => {
 	describe("offset", () => {
 		it("should apply offsetX and offsetY from anchor position", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["OFFSET"]);
 
 			tui.addChild(new EmptyContent());
@@ -386,7 +342,7 @@ describe("TUI overlay options", () => {
 	describe("percentage positioning", () => {
 		it("should position with rowPercent and colPercent", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["PCT"]);
 
 			tui.addChild(new EmptyContent());
@@ -411,7 +367,7 @@ describe("TUI overlay options", () => {
 
 		it("rowPercent 0 should position at top", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["TOP"]);
 
 			tui.addChild(new EmptyContent());
@@ -426,7 +382,7 @@ describe("TUI overlay options", () => {
 
 		it("rowPercent 100 should position at bottom", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["BOTTOM"]);
 
 			tui.addChild(new EmptyContent());
@@ -443,7 +399,7 @@ describe("TUI overlay options", () => {
 	describe("maxHeight", () => {
 		it("should truncate overlay to maxHeight", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["Line 1", "Line 2", "Line 3", "Line 4", "Line 5"]);
 
 			tui.addChild(new EmptyContent());
@@ -463,7 +419,7 @@ describe("TUI overlay options", () => {
 
 		it("should truncate overlay to maxHeightPercent", async () => {
 			const terminal = new VirtualTerminal(80, 10);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			// 10 lines in a 10 row terminal with 50% maxHeight should show 5 lines
 			const overlay = new StaticOverlay(["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10"]);
 
@@ -484,7 +440,7 @@ describe("TUI overlay options", () => {
 	describe("absolute positioning", () => {
 		it("row and col should override anchor", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const overlay = new StaticOverlay(["ABSOLUTE"]);
 
 			tui.addChild(new EmptyContent());
@@ -501,111 +457,10 @@ describe("TUI overlay options", () => {
 		});
 	});
 
-	describe("marker anchoring", () => {
-		it("renders above its marker without moving the anchored content", async () => {
-			const terminal = new VirtualTerminal(20, 8);
-			const tui = new TUI(terminal);
-			const marker = "\x1b_pi:test-overlay\x07";
-			const content = new StaticOverlay([
-				"transcript 1",
-				"transcript 2",
-				"transcript 3",
-				"transcript 4",
-				"underlay 1",
-				"underlay 2",
-				`${marker}input`,
-				"footer",
-			]);
-
-			tui.addChild(content);
-			tui.showOverlay(new StaticOverlay(["suggestion", "description"]), {
-				width: "100%",
-				aboveMarker: marker,
-				nonCapturing: true,
-			});
-			tui.start();
-			await renderAndFlush(tui, terminal);
-
-			const viewport = terminal.getViewport();
-			assert.equal(viewport[4]?.trimEnd(), "suggestion");
-			assert.equal(viewport[5]?.trimEnd(), "description");
-			assert.equal(viewport[6], "input");
-			assert.equal(viewport[7], "footer");
-			assert.ok(viewport.every((line) => !line.includes(marker)));
-			tui.stop();
-		});
-
-		it("applies vertical offsets to marker-anchored overlays", async () => {
-			const terminal = new VirtualTerminal(20, 8);
-			const tui = new TUI(terminal);
-			const marker = "\x1b_pi:offset-overlay\x07";
-			const content = new StaticOverlay([
-				"transcript 1",
-				"transcript 2",
-				"transcript 3",
-				"underlay 1",
-				"prompt edge",
-				`${marker}input`,
-				"footer 1",
-				"footer 2",
-			]);
-
-			tui.addChild(content);
-			tui.showOverlay(new StaticOverlay(["suggestion", "description"]), {
-				width: "100%",
-				aboveMarker: marker,
-				offsetY: -1,
-				nonCapturing: true,
-			});
-			tui.start();
-			await renderAndFlush(tui, terminal);
-
-			const viewport = terminal.getViewport();
-			assert.equal(viewport[2]?.trimEnd(), "suggestion");
-			assert.equal(viewport[3]?.trimEnd(), "description");
-			assert.equal(viewport[4], "prompt edge");
-			assert.equal(viewport[5], "input");
-			tui.stop();
-		});
-
-		it("anchors above fullscreen dock content", async () => {
-			const terminal = new VirtualTerminal(20, 8);
-			const tui = new TUI(terminal);
-			const marker = "\x1b_pi:fullscreen-overlay\x07";
-			const transcript = new StaticOverlay([
-				"transcript 1",
-				"transcript 2",
-				"transcript 3",
-				"transcript 4",
-				"underlay 1",
-				"underlay 2",
-			]);
-			const dock = new StaticOverlay([`${marker}input`, "footer"]);
-
-			tui.addChild(transcript);
-			tui.addChild(dock);
-			tui.start();
-			tui.enterFullscreen({ scroll: [transcript], dock, mouse: false });
-			tui.showOverlay(new StaticOverlay(["suggestion", "description"]), {
-				width: "100%",
-				aboveMarker: marker,
-				nonCapturing: true,
-			});
-			await renderAndFlush(tui, terminal);
-
-			const viewport = terminal.getViewport();
-			assert.equal(viewport[4]?.trimEnd(), "suggestion");
-			assert.equal(viewport[5]?.trimEnd(), "description");
-			assert.equal(viewport[6], "input");
-			assert.equal(viewport[7], "footer");
-			tui.stop();
-		});
-	});
-
 	describe("stacked overlays", () => {
 		it("should render multiple overlays with later ones on top", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 
 			tui.addChild(new EmptyContent());
 
@@ -630,7 +485,7 @@ describe("TUI overlay options", () => {
 
 		it("should handle overlays at different positions without interference", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 
 			tui.addChild(new EmptyContent());
 
@@ -654,7 +509,7 @@ describe("TUI overlay options", () => {
 
 		it("should properly hide overlays in stack order", async () => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 
 			tui.addChild(new EmptyContent());
 

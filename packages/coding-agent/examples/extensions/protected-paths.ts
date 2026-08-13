@@ -1,7 +1,7 @@
 /**
  * Protected Paths Extension
  *
- * Blocks edit operations to protected paths.
+ * Blocks write and edit operations to protected paths.
  * Useful for preventing accidental modifications to sensitive files.
  */
 
@@ -11,7 +11,7 @@ export default function (pi: ExtensionAPI) {
 	const protectedPaths = [".env", ".git/", "node_modules/"];
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (event.toolName !== "edit") {
+		if (event.toolName !== "write" && event.toolName !== "edit") {
 			return undefined;
 		}
 
@@ -20,7 +20,7 @@ export default function (pi: ExtensionAPI) {
 
 		if (isProtected) {
 			if (ctx.hasUI) {
-				ctx.ui.notify(`Blocked edit to protected path: ${path}`, "warning");
+				ctx.ui.notify(`Blocked write to protected path: ${path}`, "warning");
 			}
 			return { block: true, reason: `Path "${path}" is protected` };
 		}

@@ -1,7 +1,9 @@
 import { Box, type Component, Container, Markdown, type MarkdownTheme, visibleWidth } from "@earendil-works/pi-tui";
-import { parseSlashCommand } from "../../../core/slash-commands.js";
-import { getMarkdownTheme, theme } from "../theme/theme.js";
-import { isLeadingSlashCommand } from "./slash-command-message.js";
+import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import { parseSlashCommand } from "../../../core/slash-commands.ts";
+import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { createMarkdownTransform } from "./markdown-transform.ts";
+import { isLeadingSlashCommand } from "./slash-command-message.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -11,6 +13,13 @@ const COMMAND_MASK_EXTRA_WIDTH = "\uFF9E";
 const COMMAND_MASK_ZERO_WIDTH = "\u2060";
 const COMMAND_MASK_PATTERN = /\u2060|\uE000\uFF9E*/gu;
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+export interface UserMessageComponentOptions {
+	/** Horizontal padding for the message box (default: 1). */
+	outputPad?: number;
+	/** Extension-provided markdown transformers. */
+	markdownTransformers?: readonly MarkdownTransformer[];
+}
 
 class SlashCommandMarkdown implements Component {
 	private readonly markdown: Markdown;
@@ -57,23 +66,56 @@ class SlashCommandMarkdown implements Component {
  * Component that renders a user message
  */
 export class UserMessageComponent extends Container {
-	private contentBox: Box;
+	private text: string;
+	private markdownTheme: MarkdownTheme;
+	private isRecognizedSlashCommand: (name: string) => boolean;
+	private outputPad: number;
+	private markdownTransformers: readonly MarkdownTransformer[];
 
 	constructor(
 		text: string,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		isRecognizedSlashCommand: (name: string) => boolean = () => false,
+		options: UserMessageComponentOptions = {},
 	) {
 		super();
-		this.contentBox = new Box(2, 1, (content: string) => theme.getUserMessageBackgroundColor()(content));
-		this.contentBox.addChild(
-			isLeadingSlashCommand(text, isRecognizedSlashCommand)
-				? new SlashCommandMarkdown(text, markdownTheme)
-				: new Markdown(text, 0, 0, markdownTheme, {
-						color: (content: string) => theme.fg("userMessageText", content),
-					}),
+		this.text = text;
+		this.markdownTheme = markdownTheme;
+		this.isRecognizedSlashCommand = isRecognizedSlashCommand;
+		this.outputPad = options.outputPad ?? 1;
+		this.markdownTransformers = options.markdownTransformers ?? [];
+		this.rebuild();
+	}
+
+	setOutputPad(padding: number): void {
+		this.outputPad = padding;
+		this.rebuild();
+	}
+
+	private rebuild(): void {
+		this.clear();
+		const contentBox = new Box(this.outputPad, 1, (content: string) =>
+			theme.getUserMessageBackgroundColor()(content),
 		);
-		this.addChild(this.contentBox);
+		contentBox.addChild(
+			isLeadingSlashCommand(this.text, this.isRecognizedSlashCommand)
+				? new SlashCommandMarkdown(this.text, this.markdownTheme)
+				: new Markdown(
+						this.text,
+						0,
+						0,
+						this.markdownTheme,
+						{
+							color: (content: string) => theme.fg("userMessageText", content),
+						},
+						{
+							preserveOrderedListMarkers: true,
+							preserveBackslashEscapes: true,
+							transform: createMarkdownTransform("user", false, this.markdownTransformers),
+						},
+					),
+		);
+		this.addChild(contentBox);
 	}
 
 	override render(width: number): string[] {

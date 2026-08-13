@@ -10,7 +10,8 @@
  * 3. Inform the LLM where to find the complete output
  * 4. Custom rendering of tool calls and results
  *
- * The `rg` tool here wraps ripgrep with proper truncation and custom rendering.
+ * The `rg` tool here wraps ripgrep with proper truncation. Compare this to the
+ * built-in `grep` tool in src/core/tools/grep.ts for a more complete implementation.
  */
 
 import { mkdtemp, writeFile } from "node:fs/promises";
@@ -178,7 +179,7 @@ export default function (pi: ExtensionAPI) {
 						text += `\n${theme.fg("dim", line)}`;
 					}
 					if (content.text.split("\n").length > 20) {
-						text += `\n${theme.fg("muted", "... (use ipython to see full output)")}`;
+						text += `\n${theme.fg("muted", "... (use read tool to see full output)")}`;
 					}
 				}
 

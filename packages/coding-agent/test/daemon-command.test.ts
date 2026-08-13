@@ -40,7 +40,10 @@ const daemonClientMock = vi.hoisted(() => {
 		messageListenerCountAtClose: number | undefined;
 		closeListenerCountAtClose: number | undefined;
 
-		constructor(readonly socketPath: string) {
+		readonly socketPath: string;
+
+		constructor(socketPath: string) {
+			this.socketPath = socketPath;
 			instances.push(this);
 		}
 
@@ -97,7 +100,7 @@ const daemonClientMock = vi.hoisted(() => {
 	return { MockDaemonClient, behavior, instances };
 });
 
-vi.mock("../src/modes/daemon/daemon-client.js", () => ({
+vi.mock("../src/modes/daemon/daemon-client.ts", () => ({
 	DaemonClient: daemonClientMock.MockDaemonClient,
 }));
 
@@ -126,7 +129,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 	return { ...original, spawn: spawnMock.mockSpawn as never };
 });
 
-import { handleDaemonCommand } from "../src/cli/daemon-command.js";
+import { handleDaemonCommand } from "../src/cli/daemon-command.ts";
 
 describe("daemon command", () => {
 	let consoleErrorMessages: unknown[];

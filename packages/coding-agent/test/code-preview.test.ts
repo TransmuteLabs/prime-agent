@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { previewBashCommand, previewIpythonCode, previewPythonCode } from "../src/core/tools/code-preview.js";
+import { previewBashCommand, previewIpythonCode, previewPythonCode } from "../src/core/tools/code-preview.ts";
 
 describe("code preview", () => {
 	it("skips bash setup and previews the real command", () => {

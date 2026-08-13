@@ -1,6 +1,6 @@
 import { cpus } from "node:os";
-import { Semaphore } from "../../utils/semaphore.js";
-import { isForkServerEnabled } from "./fork-server.js";
+import { Semaphore } from "../../utils/semaphore.ts";
+import { isForkServerEnabled } from "./fork-server.ts";
 
 // Above core count because boots are IO-bound (cold imports), but capped so a
 // fan-out can't thrash the FS past the port-resolve window.

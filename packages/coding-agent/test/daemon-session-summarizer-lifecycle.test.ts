@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { ActiveSessionState } from "../src/modes/daemon/active-session-state.js";
-import { DaemonSessionSummarizer } from "../src/modes/daemon/daemon-session-summarizer.js";
+import type { ActiveSessionState } from "../src/modes/daemon/active-session-state.ts";
+import { DaemonSessionSummarizer } from "../src/modes/daemon/daemon-session-summarizer.ts";
 
 // The debounce the summarizer waits for after a turn settles (kept in sync with
 // SETTLE_DEBOUNCE_MS in the module).

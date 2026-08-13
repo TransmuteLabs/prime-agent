@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { SnapshotTranscriptCache } from "../src/modes/daemon/snapshot-transcript-cache.js";
+import { SnapshotTranscriptCache } from "../src/modes/daemon/snapshot-transcript-cache.ts";
 
 const tempDirs: string[] = [];
 

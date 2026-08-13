@@ -1,16 +1,18 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { setKeybindings } from "@earendil-works/pi-tui";
-import stripAnsi from "strip-ansi";
 import { describe, expect, test } from "vitest";
-import { KeybindingsManager } from "../src/core/keybindings.js";
-import { AssistantMessageComponent, thinkingRecap } from "../src/modes/interactive/components/assistant-message.js";
-import { initTheme, theme } from "../src/modes/interactive/theme/theme.js";
+import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-function createAssistantMessage(content: AssistantMessage["content"]): AssistantMessage {
+function createAssistantMessage(
+	content: AssistantMessage["content"],
+	overrides: Partial<Pick<AssistantMessage, "stopReason">> = {},
+): AssistantMessage {
 	return {
 		role: "assistant",
 		content,
@@ -25,7 +27,7 @@ function createAssistantMessage(content: AssistantMessage["content"]): Assistant
 			totalTokens: 0,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
-		stopReason: "stop",
+		stopReason: overrides.stopReason ?? "stop",
 		timestamp: Date.now(),
 	};
 }
@@ -42,25 +44,13 @@ describe("AssistantMessageComponent", () => {
 		expect(lines[lines.length - 1].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
 	});
 
-	test("ignores null content blocks from malformed provider responses", () => {
-		initTheme("dark");
-
-		const malformedContent = [null, { type: "text", text: "hello" }] as unknown as AssistantMessage["content"];
-		const component = new AssistantMessageComponent(createAssistantMessage(malformedContent));
-		expect(stripAnsi(component.render(40).join("\n"))).toContain("hello");
-
-		const updatedContent = [null, { type: "text", text: "hello again" }] as unknown as AssistantMessage["content"];
-		component.updateContent(createAssistantMessage(updatedContent));
-		expect(stripAnsi(component.render(40).join("\n"))).toContain("hello again");
-	});
-
 	test("does not add OSC 133 zone markers when assistant message contains tool calls", () => {
 		initTheme("dark");
 
 		const component = new AssistantMessageComponent(
 			createAssistantMessage([
 				{ type: "text", text: "calling tool" },
-				{ type: "toolCall", id: "tool-1", name: "ipython", arguments: { code: "open('file.txt').read()" } },
+				{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "file.txt" } },
 			]),
 		);
 		const rendered = component.render(60).join("\n");
@@ -70,253 +60,195 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered.includes(OSC133_ZONE_FINAL)).toBe(false);
 	});
 
-	test("renders an abort status for messages with tool calls", () => {
+	test("renders length stops with neutral truncation wording", () => {
 		initTheme("dark");
 
-		const message = {
-			...createAssistantMessage([
-				{ type: "toolCall" as const, id: "tool-1", name: "ipython", arguments: { code: "while True: pass" } },
-			]),
-			stopReason: "aborted" as const,
-			errorMessage: "Operation aborted",
-		};
-		const rendered = stripAnsi(new AssistantMessageComponent(message).render(80).join("\n"));
-
-		expect(rendered).toContain("Operation aborted");
-	});
-
-	test("honors initial expansion for multiline assistant errors", () => {
-		initTheme("dark");
-
-		const message = {
-			...createAssistantMessage([]),
-			stopReason: "error" as const,
-			errorMessage: [
-				"Provider request failed",
-				"Traceback (most recent call last):",
-				'  File "/tmp/internal.py", line 12, in run',
-				"RuntimeError: backend crashed",
-			].join("\n"),
-		};
-		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", { expanded: true });
-		const rendered = stripAnsi(component.render(100).join("\n"));
-
-		expect(rendered).toContain("/tmp/internal.py");
-		expect(rendered).not.toContain("Ctrl+O to expand");
-	});
-
-	test("renders auth recovery guidance inline for simple provider errors", () => {
-		initTheme("dark");
-
-		const message = {
-			...createAssistantMessage([]),
-			stopReason: "error" as const,
-			errorMessage: "401 status code (no body)\n\nRun /login to update credentials.",
-		};
-		const component = new AssistantMessageComponent(message);
-		const raw = component.render(120).join("\n");
-		const rendered = stripAnsi(raw);
-
-		expect(rendered).toContain("Error: 401 status code (no body) · Run /login to update credentials.");
-		expect(rendered).not.toContain("Ctrl+O to expand");
-		expect(raw).toContain(theme.getFgAnsi("error"));
-	});
-
-	test("renders collapsed multiline assistant errors as errors", () => {
-		initTheme("dark");
-
-		const message = {
-			...createAssistantMessage([]),
-			stopReason: "error" as const,
-			errorMessage: [
-				"Provider request failed",
-				"Traceback (most recent call last):",
-				'  File "/tmp/internal.py", line 12, in run',
-				"RuntimeError: backend crashed",
-			].join("\n"),
-		};
-		const component = new AssistantMessageComponent(message);
-		const raw = component.render(100).join("\n");
-		const rendered = stripAnsi(raw);
-
-		expect(rendered).toContain("Error: Provider request failed");
-		expect(rendered).toContain("to expand");
-		expect(raw).toContain(theme.getFgAnsi("error"));
-	});
-});
-
-describe("AssistantMessageComponent streaming identity", () => {
-	// updateContent applied incrementally (as during daemon streaming) must render
-	// byte-identical to a fresh component built from the final message. Guards the
-	// reconcile-instead-of-rebuild optimization.
-	function expectIdentity(component: AssistantMessageComponent, message: AssistantMessage, width = 90) {
-		const incremental = component.render(width);
-		const fresh = new AssistantMessageComponent(message).render(width);
-		expect(incremental).toEqual(fresh);
-	}
-
-	test("growing text block renders identically", () => {
-		initTheme("dark");
-		const corpus =
-			"## Heading\n\nSome paragraph text that wraps.\n\n- one\n- two\n\n```js\nconst a = 1;\n```\n\nEnd.";
-		const component = new AssistantMessageComponent();
-		let text = "";
-		for (let offset = 0; offset < corpus.length; offset += 5) {
-			text += corpus.slice(offset, offset + 5);
-			const message = createAssistantMessage([{ type: "text", text }]);
-			component.updateContent(message);
-			expectIdentity(component, message);
-		}
-	});
-
-	test("thinking then text then tool call renders identically", () => {
-		initTheme("dark");
-		const component = new AssistantMessageComponent();
-		const steps: AssistantMessage["content"][] = [
-			[{ type: "thinking", thinking: "Let me think" }],
-			[{ type: "thinking", thinking: "Let me think about this more carefully." }],
-			[
-				{ type: "thinking", thinking: "Let me think about this more carefully." },
-				{ type: "text", text: "Here is" },
-			],
-			[
-				{ type: "thinking", thinking: "Let me think about this more carefully." },
-				{ type: "text", text: "Here is the answer with **bold** text." },
-			],
-			[
-				{ type: "thinking", thinking: "Let me think about this more carefully." },
-				{ type: "text", text: "Here is the answer with **bold** text." },
-				{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } },
-			],
-		];
-		for (const content of steps) {
-			const message = createAssistantMessage(content);
-			component.updateContent(message);
-			expectIdentity(component, message);
-		}
-	});
-
-	test("aborted and error stop reasons render identically after streaming", () => {
-		initTheme("dark");
-		for (const final of [
-			{ stopReason: "aborted" as const, errorMessage: undefined },
-			{ stopReason: "error" as const, errorMessage: "Provider exploded" },
-		]) {
-			const component = new AssistantMessageComponent();
-			component.updateContent(createAssistantMessage([{ type: "text", text: "Partial out" }]));
-			component.render(90);
-			const message = {
-				...createAssistantMessage([{ type: "text", text: "Partial output" }]),
-				...final,
-			};
-			component.updateContent(message);
-			const incremental = component.render(90);
-			const fresh = new AssistantMessageComponent(message).render(90);
-			expect(incremental).toEqual(fresh);
-		}
-	});
-
-	test("collapsed thinking shows a bold label, recap, and bracketed hint", () => {
-		initTheme("dark");
-		setKeybindings(new KeybindingsManager());
-
-		const thinking = [
-			"**Weighing options**",
-			"",
-			"Some detail about the options.",
-			"",
-			"**Deciding the approach**",
-			"",
-			"More detail.",
-		].join("\n");
-		const message = createAssistantMessage([
-			{ type: "thinking", thinking },
-			{ type: "text", text: "Answer." },
-		]);
-		const rendered = stripAnsi(new AssistantMessageComponent(message, true).render(120).join("\n"));
-
-		expect(rendered).toContain("Thinking... · Deciding the approach (Ctrl+T to expand)");
-		expect(rendered).not.toContain("Some detail");
-
-		const expanded = stripAnsi(new AssistantMessageComponent(message, false).render(120).join("\n"));
-		expect(expanded).toContain("Thinking... (Ctrl+T to collapse)");
-		expect(expanded).toContain("Some detail about the options.");
-
-		// A whitespace-only trace falls back to the label instead of an empty recap.
-		expect(thinkingRecap("   \n\t\n", "Thinking...")).toBe("Thinking...");
-	});
-
-	test("recap text with delimiters cannot mask structural changes", () => {
-		initTheme("dark");
-		setKeybindings(new KeybindingsManager());
-
-		// Unescaped, the first recap "X|1:text:1" makes this signature identical
-		// to the next structure's (recap "X" plus a real text block), so the
-		// rebuild that renders the new text block would be skipped.
-		const component = new AssistantMessageComponent(undefined, true);
-		component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "X|1:text:1" }]));
-		component.render(120);
-
-		component.updateContent(
-			createAssistantMessage([
-				{ type: "thinking", thinking: "X" },
-				{ type: "text", text: "Visible answer." },
-			]),
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "thinking", thinking: "private reasoning" }], { stopReason: "length" }),
+			true,
 		);
-		const rendered = stripAnsi(component.render(120).join("\n"));
+		const rendered = component.render(80).join("\n");
 
-		expect(rendered).toContain("Visible answer.");
+		expect(rendered).toContain("Thinking...");
+		expect(rendered).toContain("Response was truncated before completion.");
 	});
 
-	test("collapsed thinking row truncates instead of wrapping on narrow widths", () => {
+	test("coalesces adjacent thinking blocks into one hidden thinking label", () => {
 		initTheme("dark");
-		setKeybindings(new KeybindingsManager());
 
-		const thinking = `**${"A deliberately verbose reasoning summary header that keeps going ".repeat(3).trim()}**`;
-		const message = createAssistantMessage([{ type: "thinking", thinking }]);
-		const lines = new AssistantMessageComponent(message, true)
-			.render(60)
-			.map((line) => stripAnsi(line))
-			.filter((line) => line.trim().length > 0);
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "first thought" },
+				{ type: "thinking", thinking: "" },
+				{ type: "thinking", thinking: "second thought" },
+				{ type: "text", text: "answer" },
+			]),
+			true,
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
 
-		expect(lines).toHaveLength(1);
-		expect(lines[0]).toContain("Thinking...");
-		expect(lines[0]).toContain("to expand");
+		expect(rendered.match(/Thinking\.\.\./g)).toHaveLength(1);
+		expect(rendered).toContain("answer");
 	});
 
-	test("setHideThinkingBlock and setExpanded mid-stream render identically", () => {
+	test("uses configured output padding for text and thinking", () => {
 		initTheme("dark");
-		const component = new AssistantMessageComponent();
-		const content: AssistantMessage["content"] = [
-			{ type: "thinking", thinking: "Deep thoughts here." },
-			{ type: "text", text: "Visible answer." },
-		];
-		const message = createAssistantMessage(content);
-		component.updateContent(message);
-		component.render(90);
 
-		component.setHideThinkingBlock(true);
-		const hidden = component.render(90);
-		const freshHidden = new AssistantMessageComponent(message, true).render(90);
-		expect(hidden).toEqual(freshHidden);
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "text", text: "hello" },
+				{ type: "thinking", thinking: "reasoning" },
+			]),
+			false,
+			undefined,
+			"Thinking...",
+			{ outputPad: 1 },
+		);
+		const lines = component.render(80).map((line) => stripAnsi(line));
 
-		component.setHideThinkingBlock(false);
-		const shown = component.render(90);
-		const freshShown = new AssistantMessageComponent(message, false).render(90);
-		expect(shown).toEqual(freshShown);
+		expect(lines.some((line) => line.includes(" hello"))).toBe(true);
+		expect(lines.some((line) => line.includes(" reasoning"))).toBe(true);
+
+		component.setOutputPad(0);
+		const updatedLines = component.render(80).map((line) => stripAnsi(line));
+		expect(updatedLines.some((line) => line.startsWith("hello"))).toBe(true);
+		expect(updatedLines.some((line) => line.startsWith("reasoning"))).toBe(true);
 	});
 
-	test("width change mid-stream renders identically", () => {
+	test("chains Markdown transformers in registration order", () => {
 		initTheme("dark");
-		const component = new AssistantMessageComponent();
-		const corpus = "A paragraph long enough to wrap at narrow widths with **style** and `code`.";
-		let text = "";
-		const widths = [40, 90, 60];
-		for (let offset = 0, i = 0; offset < corpus.length; offset += 8, i++) {
-			text += corpus.slice(offset, offset + 8);
-			const message = createAssistantMessage([{ type: "text", text }]);
-			component.updateContent(message);
-			expectIdentity(component, message, widths[i % widths.length]);
-		}
+		const calls: string[] = [];
+		const message = createAssistantMessage([{ type: "text", text: "The result is $x^2$." }]);
+		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", {
+			outputPad: 1,
+			markdownTransformers: [
+				(markdown, context) => {
+					calls.push("formula");
+					expect(context).toEqual({ messageType: "assistant", isStreaming: false, availableWidth: 78 });
+					return markdown.replace("$x^2$", "x²");
+				},
+				(markdown) => {
+					calls.push("suffix");
+					return `${markdown} Done.`;
+				},
+			],
+		});
+
+		expect(stripAnsi(component.render(80).join("\n"))).toContain("The result is x². Done.");
+		expect(calls).toEqual(["formula", "suffix"]);
+	});
+
+	test("identifies partial assistant Markdown as streaming", () => {
+		initTheme("dark");
+		const streamingStates: boolean[] = [];
+		const message = createAssistantMessage([{ type: "text", text: "partial" }]);
+		const component = new AssistantMessageComponent(undefined, false, undefined, "Thinking...", {
+			outputPad: 1,
+			markdownTransformers: [
+				(markdown, context) => {
+					streamingStates.push(context.isStreaming);
+					return context.isStreaming ? markdown : `${markdown} transformed`;
+				},
+			],
+		});
+
+		component.updateContent(message, true);
+		expect(stripAnsi(component.render(80).join("\n"))).not.toContain("transformed");
+
+		component.updateContent(message, false);
+		expect(stripAnsi(component.render(80).join("\n"))).toContain("partial transformed");
+		expect(streamingStates).toEqual([true, false]);
+	});
+
+	test("reapplies Markdown transformers when available width changes", () => {
+		initTheme("dark");
+		const availableWidths: number[] = [];
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "text", text: "answer" }]),
+			false,
+			undefined,
+			"Thinking...",
+			{
+				outputPad: 1,
+				markdownTransformers: [
+					(markdown, context) => {
+						availableWidths.push(context.availableWidth);
+						return `${markdown} (${context.availableWidth})`;
+					},
+				],
+			},
+		);
+
+		expect(stripAnsi(component.render(80).join("\n"))).toContain("answer (78)");
+		component.render(80);
+		expect(stripAnsi(component.render(60).join("\n"))).toContain("answer (58)");
+		expect(availableWidths).toEqual([78, 58]);
+	});
+
+	test("continues the Markdown transformer chain when a transformer throws", () => {
+		initTheme("dark");
+		const calls: string[] = [];
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "text", text: "still visible" }]),
+			false,
+			undefined,
+			"Thinking...",
+			{
+				outputPad: 1,
+				markdownTransformers: [
+					(markdown) => {
+						calls.push("first");
+						return markdown.replace("still", "remains");
+					},
+					() => {
+						calls.push("throw");
+						throw new Error("broken transformer");
+					},
+					(markdown) => {
+						calls.push("last");
+						return `${markdown} after error`;
+					},
+				],
+			},
+		);
+
+		expect(stripAnsi(component.render(80).join("\n"))).toContain("remains visible after error");
+		expect(calls).toEqual(["first", "throw", "last"]);
+	});
+
+	test("transforms text and thinking Markdown without mutating the original message", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([
+			{ type: "text", text: "answer" },
+			{ type: "thinking", thinking: "reasoning" },
+		]);
+		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", {
+			outputPad: 1,
+			markdownTransformers: [
+				(markdown, { messageType }) => {
+					return `${messageType}:${markdown}`;
+				},
+			],
+		});
+
+		const rendered = stripAnsi(component.render(80).join("\n"));
+		expect(rendered).toContain("assistant:answer");
+		expect(rendered).toContain("assistant-thinking:reasoning");
+		expect(message.content).toEqual([
+			{ type: "text", text: "answer" },
+			{ type: "thinking", thinking: "reasoning" },
+		]);
+	});
+
+	test("uses configured output padding for user messages", () => {
+		initTheme("dark");
+
+		const paddedComponent = new UserMessageComponent("hello", undefined, undefined, { outputPad: 1 });
+		const paddedLines = paddedComponent.render(40).map((line) => stripAnsi(line));
+		expect(paddedLines.some((line) => line.startsWith(" hello"))).toBe(true);
+
+		const unpaddedComponent = new UserMessageComponent("hello", undefined, undefined, { outputPad: 0 });
+		const unpaddedLines = unpaddedComponent.render(40).map((line) => stripAnsi(line));
+		expect(unpaddedLines.some((line) => line.startsWith("hello"))).toBe(true);
 	});
 });

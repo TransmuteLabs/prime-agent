@@ -10,9 +10,9 @@ import {
 	probeRunningDaemonSessions,
 	shouldStartDaemonEarly,
 	shutdownDaemonAndWait,
-} from "../src/cli/daemon-launch.js";
-import { ENV_AGENT_DIR, getDaemonLogPath, VERSION } from "../src/config.js";
-import { DAEMON_PROTOCOL_VERSION, DAEMON_SCHEMA_ID } from "../src/modes/daemon/daemon-protocol.js";
+} from "../src/cli/daemon-launch.ts";
+import { ENV_AGENT_DIR, getDaemonLogPath, VERSION } from "../src/config.ts";
+import { DAEMON_PROTOCOL_VERSION, DAEMON_SCHEMA_ID } from "../src/modes/daemon/daemon-protocol.ts";
 
 interface FakeDaemonOptions {
 	/** Sessions returned for a `list` command. */

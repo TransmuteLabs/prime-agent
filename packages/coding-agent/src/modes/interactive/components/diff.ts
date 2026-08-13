@@ -1,6 +1,6 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import * as Diff from "diff";
-import { highlightCode, theme } from "../theme/theme.js";
+import { highlightCode, theme } from "../theme/theme.ts";
 
 /**
  * Parse diff line to extract prefix, line number, and content.
@@ -230,7 +230,7 @@ export function renderRichDiff(diffText: string, contentWidth: number, options: 
 	const language = options.language;
 	// 256-color can't render subtle tints (a dark block quantizes to black), so
 	// color the text instead of the background there.
-	const useBlocks = theme.colorMode === "truecolor";
+	const useBlocks = theme.getColorMode() === "truecolor";
 	const rows: string[] = [];
 
 	for (const rawLine of diffText.split("\n")) {

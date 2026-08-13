@@ -70,7 +70,7 @@ describe("readClipboardImage", () => {
 			throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
 		});
 
-		const { readClipboardImage } = await import("../src/utils/clipboard-image.js");
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: { WAYLAND_DISPLAY: "1" } });
 		expect(result).not.toBeNull();
 		expect(result?.mimeType).toBe("image/png");
@@ -101,7 +101,7 @@ describe("readClipboardImage", () => {
 			return spawnOk(Buffer.alloc(0));
 		});
 
-		const { readClipboardImage } = await import("../src/utils/clipboard-image.js");
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: { XDG_SESSION_TYPE: "wayland" } });
 		expect(result).not.toBeNull();
 		expect(result?.mimeType).toBe("image/png");
@@ -138,7 +138,7 @@ describe("readClipboardImage", () => {
 			throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
 		});
 
-		const { readClipboardImage } = await import("../src/utils/clipboard-image.js");
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: { WSL_DISTRO_NAME: "Ubuntu" } });
 		expect(result).not.toBeNull();
 		expect(result?.mimeType).toBe("image/png");
@@ -147,28 +147,38 @@ describe("readClipboardImage", () => {
 
 	test("Non-Wayland: uses clipboard", async () => {
 		mocks.spawnSync.mockImplementation(() => {
-			throw new Error("spawnSync should not be called for non-Wayland sessions");
+			throw new Error(
+				"spawnSync should not be called for non-Wayland sessions when native clipboard returns an image",
+			);
 		});
 
 		mocks.clipboard.hasImage.mockReturnValue(true);
 		mocks.clipboard.getImageBinary.mockResolvedValue(new Uint8Array([7]));
 
-		const { readClipboardImage } = await import("../src/utils/clipboard-image.js");
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: {} });
 		expect(result).not.toBeNull();
 		expect(result?.mimeType).toBe("image/png");
 		expect(Array.from(result?.bytes ?? [])).toEqual([7]);
 	});
 
-	test("Non-Wayland: returns null when clipboard has no image", async () => {
-		mocks.spawnSync.mockImplementation(() => {
-			throw new Error("spawnSync should not be called for non-Wayland sessions");
+	test("Non-Wayland: falls back to xclip when clipboard has no image", async () => {
+		mocks.spawnSync.mockImplementation((command, args, _options) => {
+			if (command === "xclip" && args.includes("TARGETS")) {
+				return spawnOk(Buffer.from("image/png\n", "utf-8"));
+			}
+			if (command === "xclip" && args.includes("image/png")) {
+				return spawnOk(Buffer.from([8, 9]));
+			}
+			throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
 		});
 
 		mocks.clipboard.hasImage.mockReturnValue(false);
 
-		const { readClipboardImage } = await import("../src/utils/clipboard-image.js");
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: {} });
-		expect(result).toBeNull();
+		expect(result).not.toBeNull();
+		expect(result?.mimeType).toBe("image/png");
+		expect(Array.from(result?.bytes ?? [])).toEqual([8, 9]);
 	});
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DaemonClient, DaemonHello } from "../src/modes/daemon/daemon-client.js";
-import { listDaemonHeartbeats } from "../src/modes/daemon/heartbeat-catalog.js";
+import type { DaemonClient, DaemonHello } from "../src/modes/daemon/daemon-client.ts";
+import { listDaemonHeartbeats } from "../src/modes/daemon/heartbeat-catalog.ts";
 
 function hello(): DaemonHello {
 	return {

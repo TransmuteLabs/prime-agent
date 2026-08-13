@@ -22,7 +22,6 @@ const customSkill: Skill = {
 	baseDir: "/virtual",
 	sourceInfo: createSyntheticSourceInfo("/virtual/SKILL.md", { source: "sdk" }),
 	disableModelInvocation: false,
-	kind: "markdown",
 };
 
 const loader = new DefaultResourceLoader({
@@ -48,9 +47,9 @@ if (diagnostics.length > 0) {
 	console.log("Warnings:", diagnostics);
 }
 
-await createAgentSession({
+const { session } = await createAgentSession({
 	resourceLoader: loader,
 	sessionManager: SessionManager.inMemory(),
 });
-
 console.log("Session created with filtered skills");
+session.dispose();

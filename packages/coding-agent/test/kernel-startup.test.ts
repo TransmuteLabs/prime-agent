@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { KernelManager } from "../src/core/kernel/index.js";
+import { KernelManager } from "../src/core/kernel/index.ts";
 
 let tempDir = "";
 

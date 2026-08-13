@@ -1,9 +1,9 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import type { AgentSession } from "../src/core/agent-session.js";
-import { AgentSessionRuntime, type CreateAgentSessionRuntimeFactory } from "../src/core/agent-session-runtime.js";
-import type { AgentSessionServices } from "../src/core/agent-session-services.js";
-import { formatNoModelsAvailableMessage } from "../src/core/auth-guidance.js";
+import type { AgentSession } from "../src/core/agent-session.ts";
+import { AgentSessionRuntime, type CreateAgentSessionRuntimeFactory } from "../src/core/agent-session-runtime.ts";
+import type { AgentSessionServices } from "../src/core/agent-session-services.ts";
+import { formatNoModelsAvailableMessage } from "../src/core/auth-guidance.ts";
 
 const model = { provider: "prime-inference", id: "gpt-5.5" } as Model<Api>;
 

@@ -13,7 +13,7 @@ import {
 	normalizeAgentSessionMessage,
 	parseAgentSessionMessagePromptId,
 	sessionNameReservationKey,
-} from "../src/core/agent-messages.js";
+} from "../src/core/agent-messages.ts";
 
 describe("agent session bus", () => {
 	it("formats routed messages with sender and target context", () => {

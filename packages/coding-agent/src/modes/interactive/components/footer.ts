@@ -1,5 +1,5 @@
 import type { Component } from "@earendil-works/pi-tui";
-import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
+import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 
 /**
  * Footer component for the prime brand TUI.
@@ -10,7 +10,10 @@ import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provi
  * `/usage` can expose telemetry without re-plumbing.
  */
 export class FooterComponent implements Component {
-	constructor(private footerData: ReadonlyFooterDataProvider) {
+	private footerData: ReadonlyFooterDataProvider;
+
+	constructor(footerData: ReadonlyFooterDataProvider) {
+		this.footerData = footerData;
 		void this.footerData;
 	}
 

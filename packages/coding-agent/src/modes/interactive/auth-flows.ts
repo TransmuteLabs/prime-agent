@@ -8,10 +8,11 @@
  */
 
 import * as path from "node:path";
-import { getProviders, type OAuthProviderId, type OAuthSelectPrompt } from "@earendil-works/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai/compat";
+import type { OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
 import type { OverlayHandle, TUI } from "@earendil-works/pi-tui";
-import { getAuthPath, getDocsPath } from "../../config.js";
-import type { ModelRegistry } from "../../core/model-registry.js";
+import { getAuthPath, getDocsPath } from "../../config.ts";
+import type { ModelRegistry } from "../../core/model-registry.ts";
 import {
 	checkPrimeAgentTracesAccess,
 	checkPrimeInferenceAccess,
@@ -25,20 +26,20 @@ import {
 	PRIME_INFERENCE_PROVIDER_NAME,
 	type PrimeTeam,
 	resolvePrimeAgentTracesBaseUrl,
-} from "../../core/prime-inference-auth.js";
-import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.js";
-import { SERPER_CREDENTIAL_ID, SERPER_CREDENTIAL_NAME } from "../../core/websearch-credential.js";
-import { showFullPaneOverlay } from "./components/centered-overlay.js";
-import { ExtensionSelectorComponent } from "./components/extension-selector.js";
-import { LoginDialogComponent } from "./components/login-dialog.js";
+} from "../../core/prime-inference-auth.ts";
+import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
+import { SERPER_CREDENTIAL_ID, SERPER_CREDENTIAL_NAME } from "../../core/websearch-credential.ts";
+import { showFullPaneOverlay } from "./components/centered-overlay.ts";
+import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
+import { LoginDialogComponent } from "./components/login-dialog.ts";
 import {
 	type AuthSelectorCategory,
 	type AuthSelectorProvider,
 	compareAuthSelectorProviders,
 	OAuthSelectorComponent,
-} from "./components/oauth-selector.js";
-import { PrimeTeamSelectorComponent } from "./components/prime-team-selector.js";
-import { theme } from "./theme/theme.js";
+} from "./components/oauth-selector.ts";
+import { PrimeTeamSelectorComponent } from "./components/prime-team-selector.ts";
+import { theme } from "./theme/theme.ts";
 
 export type AuthenticationResult =
 	| {
@@ -121,7 +122,11 @@ export interface ProviderLoginOptions {
 }
 
 export class ProviderAuthFlows {
-	constructor(private readonly host: ProviderAuthFlowsHost) {}
+	private readonly host: ProviderAuthFlowsHost;
+
+	constructor(host: ProviderAuthFlowsHost) {
+		this.host = host;
+	}
 
 	/** Runs the provider selector followed by the matching login dialog. */
 	/**
@@ -285,7 +290,7 @@ export class ProviderAuthFlows {
 		const options: AuthSelectorProvider[] = [];
 
 		const oauthProvidersById = new Map(authStorage.getOAuthProviders().map((p) => [p.id, p]));
-		for (const providerId of authStorage.list()) {
+		for (const providerId of authStorage.listProviderIds()) {
 			const credential = authStorage.get(providerId);
 			if (!credential) {
 				continue;
@@ -865,7 +870,7 @@ export class ProviderAuthFlows {
 		};
 
 		try {
-			await this.host.modelRegistry.authStorage.login(providerId as OAuthProviderId, {
+			await this.host.modelRegistry.authStorage.login(providerId, {
 				onAuth: (info: { url: string; instructions?: string }) => {
 					dialog.showAuth(info.url, info.instructions);
 

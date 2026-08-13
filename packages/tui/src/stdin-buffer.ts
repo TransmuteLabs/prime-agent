@@ -20,6 +20,8 @@
 import { EventEmitter } from "events";
 
 const ESC = "\x1b";
+const DEFAULT_SEQUENCE_TIMEOUT_MS = 50;
+const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 
@@ -205,6 +207,29 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
 				const status = isCompleteSequence(candidate);
 
 				if (status === "complete") {
+					// WezTerm with enable_kitty_keyboard sends the Escape key press as a
+					// raw '\x1b' byte (simple text path in encode_kitty, ignoring
+					// DISAMBIGUATE_ESCAPE_CODES) and the release as a full Kitty CSI-u
+					// sequence. These arrive concatenated as '\x1b\x1b[27;...u'.
+					// The buffer would normally treat '\x1b\x1b' as a complete meta-key
+					// sequence (ESC + single char), leaving '[27;...u' to be typed as
+					// plain text. If the character immediately following '\x1b\x1b'
+					// would begin a new escape sequence, emit only the first ESC and
+					// restart from the second.
+					if (candidate === "\x1b\x1b") {
+						const nextChar = remaining[seqEnd];
+						if (
+							nextChar === "[" || // CSI
+							nextChar === "]" || // OSC
+							nextChar === "O" || // SS3
+							nextChar === "P" || // DCS
+							nextChar === "_" // APC
+						) {
+							sequences.push(ESC);
+							pos += 1;
+							break;
+						}
+					}
 					sequences.push(candidate);
 					pos += seqEnd;
 					break;
@@ -233,10 +258,15 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
 
 export type StdinBufferOptions = {
 	/**
-	 * Maximum time to wait for sequence completion (default: 10ms)
-	 * After this time, the buffer is flushed even if incomplete
+	 * Maximum time to wait for an incomplete sequence such as CSI or mouse
+	 * (default: 50ms).
 	 */
 	timeout?: number;
+	/**
+	 * Maximum time to wait after a lone ESC before treating it as Escape
+	 * (default: 10ms). Increase for high-latency Alt+key input (SSH).
+	 */
+	escapeTimeout?: number;
 };
 
 export type StdinBufferEventMap = {
@@ -252,13 +282,15 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private buffer: string = "";
 	private timeout: ReturnType<typeof setTimeout> | null = null;
 	private readonly timeoutMs: number;
+	private readonly escapeTimeoutMs: number;
 	private pasteMode: boolean = false;
 	private pasteBuffer: string = "";
 	private pendingKittyPrintableCodepoint: number | undefined;
 
 	constructor(options: StdinBufferOptions = {}) {
 		super();
-		this.timeoutMs = options.timeout ?? 10;
+		this.timeoutMs = options.timeout ?? DEFAULT_SEQUENCE_TIMEOUT_MS;
+		this.escapeTimeoutMs = options.escapeTimeout ?? DEFAULT_ESCAPE_TIMEOUT_MS;
 	}
 
 	public process(data: string | Buffer): void {
@@ -353,13 +385,14 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		}
 
 		if (this.buffer.length > 0) {
+			const timeoutMs = this.buffer === ESC ? this.escapeTimeoutMs : this.timeoutMs;
 			this.timeout = setTimeout(() => {
 				const flushed = this.flush();
 
 				for (const sequence of flushed) {
 					this.emitDataSequence(sequence);
 				}
-			}, this.timeoutMs);
+			}, timeoutMs);
 		}
 	}
 

@@ -1,12 +1,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getOAuthProvider, resetOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import { getMcpOAuthProvider, resetMcpOAuthProviders } from "@earendil-works/pi-ai/mcp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { McpManager } from "../src/core/mcp/mcp-manager.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
-import type { McpServerConfig } from "../src/core/settings-manager.js";
+import { AuthStorage } from "../src/core/auth-storage.ts";
+import { McpManager } from "../src/core/mcp/mcp-manager.ts";
+import type { McpServerConfig } from "../src/core/settings-manager.ts";
 
 describe("McpManager", () => {
 	let tempDir: string;
@@ -15,11 +14,11 @@ describe("McpManager", () => {
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "mcp-mgr-"));
 		authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		resetOAuthProviders();
+		resetMcpOAuthProviders();
 	});
 
 	afterEach(() => {
-		resetOAuthProviders();
+		resetMcpOAuthProviders();
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
@@ -48,28 +47,8 @@ describe("McpManager", () => {
 
 	it("registers an OAuth provider per built-in integration", () => {
 		new McpManager({ authStorage });
-		expect(getOAuthProvider("mcp:linear")).toBeDefined();
-		expect(getOAuthProvider("mcp:notion")).toBeDefined();
-	});
-
-	it("keeps MCP providers registered after ModelRegistry.refresh() resets the registry", () => {
-		new McpManager({ authStorage });
-		const registry = ModelRegistry.create(authStorage, join(tempDir, "models.json"));
-		registry.refresh(); // calls resetOAuthProviders(); must re-add MCP providers
-		expect(getOAuthProvider("mcp:linear")).toBeDefined();
-		expect(getOAuthProvider("mcp:notion")).toBeDefined();
-	});
-
-	it("re-registers user-declared OAuth servers after ModelRegistry.refresh via the reset hook", () => {
-		const manager = new McpManager({
-			authStorage,
-			getUserServers: () => ({ acme: { type: "http", url: "https://mcp.acme.test/mcp", oauth: true } }),
-		});
-		const registry = ModelRegistry.create(authStorage, join(tempDir, "models.json"));
-		registry.setOnOAuthProvidersReset(() => manager.registerUserProviders());
-		expect(getOAuthProvider("mcp:acme")).toBeDefined();
-		registry.refresh(); // resets registry; hook must re-add the custom provider
-		expect(getOAuthProvider("mcp:acme")).toBeDefined();
+		expect(getMcpOAuthProvider("mcp:linear")).toBeDefined();
+		expect(getMcpOAuthProvider("mcp:notion")).toBeDefined();
 	});
 
 	it("exposes only mcp.refresh when no interactive login is wired", async () => {
@@ -152,7 +131,7 @@ describe("McpManager", () => {
 		servers = { acme: { type: "http", url: "https://mcp.acme.test/mcp", oauth: true } };
 		manager.refresh();
 		expect(manager.listStatus().find((s) => s.server === "acme")).toBeDefined();
-		expect(getOAuthProvider("mcp:acme")).toBeDefined();
+		expect(getMcpOAuthProvider("mcp:acme")).toBeDefined();
 	});
 
 	it("drops the built-in provider when a catalog name is overridden without oauth", () => {
@@ -162,7 +141,7 @@ describe("McpManager", () => {
 		});
 		void manager;
 		// Built-in linear provider must be gone so we don't send the official token to the override URL.
-		expect(getOAuthProvider("mcp:linear")).toBeUndefined();
+		expect(getMcpOAuthProvider("mcp:linear")).toBeUndefined();
 	});
 
 	it("unregisters a user server's OAuth provider when it's removed on refresh()", () => {
@@ -170,10 +149,10 @@ describe("McpManager", () => {
 			acme: { type: "http", url: "https://mcp.acme.test/mcp", oauth: true },
 		};
 		const manager = new McpManager({ authStorage, getUserServers: () => servers });
-		expect(getOAuthProvider("mcp:acme")).toBeDefined();
+		expect(getMcpOAuthProvider("mcp:acme")).toBeDefined();
 
 		servers = {};
 		manager.refresh();
-		expect(getOAuthProvider("mcp:acme")).toBeUndefined();
+		expect(getMcpOAuthProvider("mcp:acme")).toBeUndefined();
 	});
 });

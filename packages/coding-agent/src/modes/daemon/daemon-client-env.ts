@@ -1,4 +1,4 @@
-import { DAEMON_CLIENT_ENV_KEYS } from "./daemon-protocol.js";
+import { DAEMON_CLIENT_ENV_KEYS } from "./daemon-protocol.ts";
 
 /** Re-filter client-sent env to the allowlist; the socket peer is untrusted. */
 export function filterClientEnv(env?: Record<string, string>): Record<string, string> | undefined {

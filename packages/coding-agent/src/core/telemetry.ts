@@ -3,12 +3,24 @@ import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSy
 import { arch, platform } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
-import { detectInstallMethod, VERSION } from "../config.js";
-import type { AgentSession, AgentSessionEvent } from "./agent-session.js";
-import type { AgentExecutionMode } from "./agent-session-config.js";
-import type { AuthCredential, AuthStatus } from "./auth-storage.js";
-import type { SettingsManager } from "./settings-manager.js";
-import { isBuiltinSlashCommandName, resolveBuiltinSlashCommandName } from "./slash-commands.js";
+import { detectInstallMethod, VERSION } from "../config.ts";
+import type { AgentSession, AgentSessionEvent } from "./agent-session.ts";
+import type { AgentExecutionMode } from "./agent-session-config.ts";
+import type { AuthCredential, AuthStatus } from "./auth-storage.ts";
+import type { SettingsManager } from "./settings-manager.ts";
+import { isBuiltinSlashCommandName, resolveBuiltinSlashCommandName } from "./slash-commands.ts";
+
+function isTruthyEnvFlag(value: string | undefined): boolean {
+	if (!value) return false;
+	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
+
+export function isInstallTelemetryEnabled(
+	settingsManager: SettingsManager,
+	telemetryEnv: string | undefined = process.env.PI_TELEMETRY,
+): boolean {
+	return telemetryEnv !== undefined ? isTruthyEnvFlag(telemetryEnv) : settingsManager.getEnableInstallTelemetry();
+}
 
 const DEFAULT_TELEMETRY_ENDPOINT = "https://api.primeintellect.ai/api/v1/agent-analytics/events";
 const TELEMETRY_STATE_FILE = "telemetry.json";
@@ -317,13 +329,15 @@ export class TelemetryClient implements TelemetrySink {
 	private readonly batchSize: number;
 	private readonly flushIntervalMs: number;
 	private readonly requestTimeoutMs: number;
+	private readonly options: TelemetryClientOptions;
 	private installationId?: string;
 	private queue: TelemetryEvent[] = [];
 	private flushTimer?: ReturnType<typeof setTimeout>;
 	private flushInFlight?: Promise<void>;
 	private disabled = false;
 
-	constructor(private readonly options: TelemetryClientOptions) {
+	constructor(options: TelemetryClientOptions) {
+		this.options = options;
 		this.endpoint = options.endpoint ?? process.env.PRIME_AGENT_TELEMETRY_ENDPOINT ?? DEFAULT_TELEMETRY_ENDPOINT;
 		this.fetchImpl = options.fetch ?? fetch;
 		this.now = options.now ?? Date.now;

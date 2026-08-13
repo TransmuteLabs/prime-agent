@@ -1,6 +1,6 @@
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 type InteractiveModePrototype = {
 	getHeartbeatArgumentCompletions(prefix: string): AutocompleteItem[] | null;

@@ -1,4 +1,4 @@
-import { type KeyId, matchesKey } from "./keys.js";
+import { type KeyId, matchesKey } from "./keys.ts";
 
 /**
  * Global keybinding registry.
@@ -8,6 +8,8 @@ export interface Keybindings {
 	// Editor navigation and editing
 	"tui.editor.cursorUp": true;
 	"tui.editor.cursorDown": true;
+	"tui.editor.historyPrevious": true;
+	"tui.editor.historyNext": true;
 	"tui.editor.cursorLeft": true;
 	"tui.editor.cursorRight": true;
 	"tui.editor.cursorWordLeft": true;
@@ -32,11 +34,6 @@ export interface Keybindings {
 	"tui.input.submit": true;
 	"tui.input.tab": true;
 	"tui.input.copy": true;
-	// Fullscreen transcript viewport
-	"tui.viewport.pageUp": true;
-	"tui.viewport.pageDown": true;
-	"tui.viewport.top": true;
-	"tui.viewport.follow": true;
 	// Generic selection actions
 	"tui.select.up": true;
 	"tui.select.down": true;
@@ -44,6 +41,21 @@ export interface Keybindings {
 	"tui.select.pageDown": true;
 	"tui.select.confirm": true;
 	"tui.select.cancel": true;
+	// Alternate-screen viewport navigation
+	"tui.altScreen.pageUp": true;
+	"tui.altScreen.pageDown": true;
+	"tui.altScreen.halfPageUp": true;
+	"tui.altScreen.halfPageDown": true;
+	"tui.altScreen.lineUp": true;
+	"tui.altScreen.lineDown": true;
+	"tui.altScreen.previousPrompt": true;
+	"tui.altScreen.nextPrompt": true;
+	"tui.altScreen.search": true;
+	"tui.altScreen.searchNext": true;
+	"tui.altScreen.searchPrevious": true;
+	"tui.altScreen.searchClose": true;
+	"tui.altScreen.top": true;
+	"tui.altScreen.bottom": true;
 }
 
 export type Keybinding = keyof Keybindings;
@@ -51,114 +63,87 @@ export type Keybinding = keyof Keybindings;
 export interface KeybindingDefinition {
 	defaultKeys: KeyId | KeyId[];
 	description?: string;
-	defaultKeyScope?: string;
 }
 
 export type KeybindingDefinitions = Record<string, KeybindingDefinition>;
 export type KeybindingsConfig = Record<string, KeyId | KeyId[] | undefined>;
 
 export const TUI_KEYBINDINGS = {
-	"tui.editor.cursorUp": { defaultKeys: "up", description: "Move cursor up", defaultKeyScope: "editor" },
-	"tui.editor.cursorDown": { defaultKeys: "down", description: "Move cursor down", defaultKeyScope: "editor" },
+	"tui.editor.cursorUp": { defaultKeys: "up", description: "Move cursor up" },
+	"tui.editor.cursorDown": { defaultKeys: "down", description: "Move cursor down" },
+	"tui.editor.historyPrevious": {
+		defaultKeys: [],
+		description: "Select previous prompt history entry",
+	},
+	"tui.editor.historyNext": {
+		defaultKeys: [],
+		description: "Select next prompt history entry",
+	},
 	"tui.editor.cursorLeft": {
 		defaultKeys: ["left", "ctrl+b"],
 		description: "Move cursor left",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.cursorRight": {
 		defaultKeys: ["right", "ctrl+f"],
 		description: "Move cursor right",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.cursorWordLeft": {
 		defaultKeys: ["alt+left", "ctrl+left", "alt+b"],
 		description: "Move cursor word left",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.cursorWordRight": {
 		defaultKeys: ["alt+right", "ctrl+right", "alt+f"],
 		description: "Move cursor word right",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.cursorLineStart": {
-		defaultKeys: ["home", "ctrl+a"],
+		defaultKeys: ["home", "ctrl+home", "ctrl+a"],
 		description: "Move to line start",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.cursorLineEnd": {
-		defaultKeys: ["end", "ctrl+e"],
+		defaultKeys: ["end", "ctrl+end", "ctrl+e"],
 		description: "Move to line end",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.jumpForward": {
 		defaultKeys: "ctrl+]",
 		description: "Jump forward to character",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.jumpBackward": {
 		defaultKeys: "ctrl+alt+]",
 		description: "Jump backward to character",
-		defaultKeyScope: "editor",
 	},
-	"tui.editor.pageUp": { defaultKeys: "pageUp", description: "Page up", defaultKeyScope: "editor" },
-	"tui.editor.pageDown": { defaultKeys: "pageDown", description: "Page down", defaultKeyScope: "editor" },
+	"tui.editor.pageUp": { defaultKeys: ["pageUp", "ctrl+pageUp"], description: "Page up" },
+	"tui.editor.pageDown": { defaultKeys: ["pageDown", "ctrl+pageDown"], description: "Page down" },
 	"tui.editor.deleteCharBackward": {
 		defaultKeys: "backspace",
 		description: "Delete character backward",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.deleteCharForward": {
 		defaultKeys: ["delete", "ctrl+d"],
 		description: "Delete character forward",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.deleteWordBackward": {
 		defaultKeys: ["ctrl+w", "alt+backspace"],
 		description: "Delete word backward",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.deleteWordForward": {
 		defaultKeys: ["alt+d", "alt+delete"],
 		description: "Delete word forward",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.deleteToLineStart": {
 		defaultKeys: "ctrl+u",
 		description: "Delete to line start",
-		defaultKeyScope: "editor",
 	},
 	"tui.editor.deleteToLineEnd": {
 		defaultKeys: "ctrl+k",
 		description: "Delete to line end",
-		defaultKeyScope: "editor",
 	},
-	"tui.editor.yank": { defaultKeys: "ctrl+y", description: "Yank", defaultKeyScope: "editor" },
-	"tui.editor.yankPop": { defaultKeys: "alt+y", description: "Yank pop", defaultKeyScope: "editor" },
-	"tui.editor.undo": { defaultKeys: "ctrl+-", description: "Undo", defaultKeyScope: "editor" },
-	"tui.input.newLine": {
-		defaultKeys: "shift+enter",
-		description: "Insert newline",
-		defaultKeyScope: "editor",
-	},
-	"tui.input.submit": { defaultKeys: "enter", description: "Submit input", defaultKeyScope: "editor" },
-	"tui.input.tab": { defaultKeys: "tab", description: "Tab / autocomplete", defaultKeyScope: "editor" },
-	"tui.input.copy": { defaultKeys: "ctrl+c", description: "Copy selection", defaultKeyScope: "editor" },
-	"tui.viewport.pageUp": {
-		defaultKeys: "pageUp",
-		description: "Scroll transcript up a page (fullscreen)",
-	},
-	"tui.viewport.pageDown": {
-		defaultKeys: "pageDown",
-		description: "Scroll transcript down a page (fullscreen)",
-	},
-	"tui.viewport.top": {
-		defaultKeys: "shift+alt+up",
-		description: "Scroll transcript to top (fullscreen)",
-	},
-	"tui.viewport.follow": {
-		defaultKeys: "ctrl+shift+down",
-		description: "Scroll to bottom and follow output (fullscreen)",
-	},
+	"tui.editor.yank": { defaultKeys: "ctrl+y", description: "Yank" },
+	"tui.editor.yankPop": { defaultKeys: "alt+y", description: "Yank pop" },
+	"tui.editor.undo": { defaultKeys: "ctrl+-", description: "Undo" },
+	"tui.input.newLine": { defaultKeys: ["shift+enter", "ctrl+j"], description: "Insert newline" },
+	"tui.input.submit": { defaultKeys: "enter", description: "Submit input" },
+	"tui.input.tab": { defaultKeys: "tab", description: "Tab / autocomplete" },
+	"tui.input.copy": { defaultKeys: "ctrl+c", description: "Copy selection" },
 	"tui.select.up": { defaultKeys: "up", description: "Move selection up" },
 	"tui.select.down": { defaultKeys: "down", description: "Move selection down" },
 	"tui.select.pageUp": { defaultKeys: "pageUp", description: "Selection page up" },
@@ -171,6 +156,57 @@ export const TUI_KEYBINDINGS = {
 		defaultKeys: ["escape", "ctrl+c"],
 		description: "Cancel selection",
 	},
+	// These intentionally shadow the unmodified editor bindings in fullscreen mode.
+	"tui.altScreen.pageUp": {
+		defaultKeys: "pageUp",
+		description: "Scroll viewport up one page",
+	},
+	"tui.altScreen.pageDown": {
+		defaultKeys: "pageDown",
+		description: "Scroll viewport down one page",
+	},
+	"tui.altScreen.halfPageUp": {
+		defaultKeys: [],
+		description: "Scroll viewport up half a page",
+	},
+	"tui.altScreen.halfPageDown": {
+		defaultKeys: [],
+		description: "Scroll viewport down half a page",
+	},
+	"tui.altScreen.lineUp": {
+		defaultKeys: [],
+		description: "Scroll viewport up one line",
+	},
+	"tui.altScreen.lineDown": {
+		defaultKeys: [],
+		description: "Scroll viewport down one line",
+	},
+	"tui.altScreen.previousPrompt": {
+		defaultKeys: "ctrl+shift+up",
+		description: "Jump to previous semantic prompt",
+	},
+	"tui.altScreen.nextPrompt": {
+		defaultKeys: "ctrl+shift+down",
+		description: "Jump to next semantic prompt",
+	},
+	"tui.altScreen.search": {
+		defaultKeys: "ctrl+shift+f",
+		description: "Search the primary scroll view",
+	},
+	"tui.altScreen.searchNext": {
+		defaultKeys: ["enter", "ctrl+g"],
+		description: "Select the next search match",
+	},
+	"tui.altScreen.searchPrevious": {
+		defaultKeys: ["shift+enter", "ctrl+shift+g"],
+		description: "Select the previous search match",
+	},
+	"tui.altScreen.searchClose": {
+		defaultKeys: "escape",
+		description: "Close transcript search",
+	},
+	"tui.altScreen.top": { defaultKeys: "home", description: "Scroll viewport to top" },
+	"tui.altScreen.bottom": { defaultKeys: "end", description: "Scroll viewport to bottom" },
 } as const satisfies KeybindingDefinitions;
 
 export interface KeybindingConflict {
@@ -208,25 +244,17 @@ export class KeybindingsManager {
 		this.keysById.clear();
 		this.conflicts = [];
 
-		const explicitClaims = new Map<KeyId, Set<Keybinding>>();
-		const addedClaims = new Map<KeyId, Set<Keybinding>>();
+		const userClaims = new Map<KeyId, Set<Keybinding>>();
 		for (const [keybinding, keys] of Object.entries(this.userBindings)) {
-			const definition = this.definitions[keybinding];
-			if (!definition) continue;
-			const defaults = new Set(normalizeKeys(definition.defaultKeys));
+			if (!(keybinding in this.definitions)) continue;
 			for (const key of normalizeKeys(keys)) {
-				const explicitClaimants = explicitClaims.get(key) ?? new Set<Keybinding>();
-				explicitClaimants.add(keybinding as Keybinding);
-				explicitClaims.set(key, explicitClaimants);
-				if (!defaults.has(key)) {
-					const addedClaimants = addedClaims.get(key) ?? new Set<Keybinding>();
-					addedClaimants.add(keybinding as Keybinding);
-					addedClaims.set(key, addedClaimants);
-				}
+				const claimants = userClaims.get(key) ?? new Set<Keybinding>();
+				claimants.add(keybinding as Keybinding);
+				userClaims.set(key, claimants);
 			}
 		}
 
-		for (const [key, keybindings] of explicitClaims) {
+		for (const [key, keybindings] of userClaims) {
 			if (keybindings.size > 1) {
 				this.conflicts.push({ key, keybindings: [...keybindings] });
 			}
@@ -234,15 +262,7 @@ export class KeybindingsManager {
 
 		for (const [id, definition] of Object.entries(this.definitions)) {
 			const userKeys = this.userBindings[id];
-			const keys =
-				userKeys === undefined
-					? normalizeKeys(definition.defaultKeys).filter((key) => {
-							if (!definition.defaultKeyScope) return true;
-							return ![...(addedClaims.get(key) ?? [])].some(
-								(claimant) => this.definitions[claimant]?.defaultKeyScope === definition.defaultKeyScope,
-							);
-						})
-					: normalizeKeys(userKeys);
+			const keys = userKeys === undefined ? normalizeKeys(definition.defaultKeys) : normalizeKeys(userKeys);
 			this.keysById.set(id as Keybinding, keys);
 		}
 	}

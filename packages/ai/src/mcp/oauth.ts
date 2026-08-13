@@ -2,14 +2,15 @@
 // One provider per server, registered as `mcp:<server>` so it reuses auth.json. Node-only (callback server).
 
 import type { Server } from "node:http";
-import { oauthErrorHtml, oauthSuccessHtml } from "../utils/oauth/oauth-page.js";
-import { generatePKCE } from "../utils/oauth/pkce.js";
-import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "../utils/oauth/types.js";
+import { oauthErrorHtml, oauthSuccessHtml } from "../auth/oauth/oauth-page.ts";
+import { generatePKCE } from "../auth/oauth/pkce.ts";
+import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../auth/types.ts";
+import { getProviderEnvValue } from "../utils/provider-env.ts";
 
-const CALLBACK_HOST = process.env.PI_OAUTH_CALLBACK_HOST || "127.0.0.1";
+const CALLBACK_HOST = getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1";
 // A range (not one port) so a leaked/concurrent login can't wedge all logins with EADDRINUSE.
 // Distinct from the Anthropic callback port (53692). All candidates are registered as redirect URIs.
-const CALLBACK_PORT_BASE = Number(process.env.PI_MCP_OAUTH_CALLBACK_PORT || 53700);
+const CALLBACK_PORT_BASE = Number(getProviderEnvValue("PI_MCP_OAUTH_CALLBACK_PORT") || 53700);
 const CALLBACK_PORT_COUNT = 10;
 const CALLBACK_PATH = "/callback";
 const CALLBACK_PORTS = Array.from({ length: CALLBACK_PORT_COUNT }, (_, i) => CALLBACK_PORT_BASE + i);
@@ -40,7 +41,7 @@ export interface McpOAuthConfig {
 }
 
 /** Extra fields we persist alongside the standard credential triple. */
-interface McpCredentials extends OAuthCredentials {
+interface McpCredentials extends OAuthCredential {
 	tokenEndpoint?: string;
 	clientId?: string;
 }
@@ -215,17 +216,19 @@ function parseRedirectInput(input: string, expectedState: string): { code: strin
 async function exchangeToken(
 	tokenEndpoint: string,
 	params: Record<string, string>,
+	signal?: AbortSignal,
 ): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
 	const res = await fetch(tokenEndpoint, {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
 		body: new URLSearchParams(params).toString(),
+		signal,
 	});
 	const text = await res.text();
 	if (!res.ok) {
 		throw new Error(`Token request to ${tokenEndpoint} failed: ${res.status} ${text}`);
 	}
-	return JSON.parse(text);
+	return JSON.parse(text) as { access_token: string; refresh_token?: string; expires_in?: number };
 }
 
 function toCredentials(
@@ -235,6 +238,7 @@ function toCredentials(
 	previousRefresh?: string,
 ): McpCredentials {
 	return {
+		type: "oauth",
 		access: token.access_token,
 		// Some servers omit refresh_token on refresh; keep the prior one.
 		refresh: token.refresh_token ?? previousRefresh ?? "",
@@ -246,13 +250,13 @@ function toCredentials(
 	};
 }
 
-/** Build a provider for one MCP server. Register it with registerOAuthProvider(). */
-export function createMcpOAuthProvider(config: McpOAuthConfig): OAuthProviderInterface {
+/** Build OAuthAuth for one MCP server. Register it with registerMcpOAuthProvider(). */
+export function createMcpOAuthProvider(config: McpOAuthConfig): OAuthAuth & { id: string; usesCallbackServer: true } {
 	const label = config.label ?? config.server;
 
-	async function login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+	async function login(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 		const meta = await discover(config.url);
-		callbacks.onProgress?.(`Discovered ${meta.issuer ?? new URL(config.url).origin}`);
+		interaction.notify({ type: "progress", message: `Discovered ${meta.issuer ?? new URL(config.url).origin}` });
 
 		let clientId = config.clientId;
 		if (!clientId) {
@@ -262,7 +266,7 @@ export function createMcpOAuthProvider(config: McpOAuthConfig): OAuthProviderInt
 						`Set a pre-registered client id for this server.`,
 				);
 			}
-			callbacks.onProgress?.("Registering OAuth client…");
+			interaction.notify({ type: "progress", message: "Registering OAuth client…" });
 			clientId = await registerClient(meta.registration_endpoint, `Prime Agent (${label})`);
 		}
 
@@ -272,6 +276,10 @@ export function createMcpOAuthProvider(config: McpOAuthConfig): OAuthProviderInt
 		const state = randomState();
 		const scope = config.scopes ?? meta.scopes_supported?.join(" ");
 		const cb = await startCallbackServer(label);
+		const onAbort = () => cb.cancel();
+		interaction.signal.addEventListener("abort", onAbort, { once: true });
+		if (interaction.signal.aborted) onAbort();
+		const manualAbort = new AbortController();
 		try {
 			const authParams = new URLSearchParams({
 				client_id: clientId,
@@ -283,56 +291,67 @@ export function createMcpOAuthProvider(config: McpOAuthConfig): OAuthProviderInt
 			});
 			if (scope) authParams.set("scope", scope);
 
-			callbacks.onAuth({
+			interaction.notify({
+				type: "auth_url",
 				url: `${meta.authorization_endpoint}?${authParams.toString()}`,
 				instructions:
 					"Complete login in your browser. If the browser is on another machine, paste the final redirect URL here.",
 			});
 
 			// Race the local callback server against a manual paste (browser on
-			// another machine). The login dialog supplies onManualCodeInput; when
-			// absent we fall back to a blocking prompt after the callback resolves.
-			let result: { code: string; state: string } | null;
+			// another machine).
+			let result: { code: string; state: string } | null = null;
 			let manualCancelled = false;
 			let manualError: Error | undefined;
-			if (callbacks.onManualCodeInput) {
-				// Manual paste races the browser callback. A real paste cancels the
-				// callback waiter (we're done). On manual cancellation we still settle
-				// the waiter to avoid hanging when no redirect arrives — but only after
-				// a short grace period so an in-flight browser redirect can win first.
-				const manual = callbacks
-					.onManualCodeInput()
-					.then((input) => {
-						const parsed = parseRedirectInput(input, state); // may throw a validation error
+			let manualInput: string | undefined;
+
+			const manualPromise = interaction
+				.prompt({
+					type: "manual_code",
+					message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
+					placeholder: cb.redirectUri,
+					signal: manualAbort.signal,
+				})
+				.then((input) => {
+					manualInput = input;
+					try {
+						result = parseRedirectInput(input, state);
 						cb.cancel();
-						return parsed;
-					})
-					.catch(async (err) => {
-						// A validation error on a real paste (bad state / no code) is a genuine
-						// failure to surface; a UI cancellation is not. .catch also prevents an
-						// unhandled rejection when the callback wins the race.
+					} catch (err) {
 						if (err instanceof Error && /state mismatch|authorization code/i.test(err.message)) {
 							manualError = err;
 						} else {
-							manualCancelled = true;
+							manualError = err instanceof Error ? err : new Error(String(err));
 						}
-						await new Promise((r) => setTimeout(r, 500));
 						cb.cancel();
-						return null;
-					});
-				const fromCallback = await cb.waitForCode();
-				result = fromCallback ?? (await manual);
-				if (!result && manualError) throw manualError;
+					}
+				})
+				.catch(async (err) => {
+					if (err instanceof Error && /state mismatch|authorization code/i.test(err.message)) {
+						manualError = err;
+					} else {
+						manualCancelled = true;
+					}
+					// Grace period so an in-flight browser redirect can win first.
+					await new Promise((r) => setTimeout(r, 500));
+					cb.cancel();
+				});
+
+			const fromCallback = await cb.waitForCode();
+			if (fromCallback) {
+				result = fromCallback;
 			} else {
-				result = await cb.waitForCode();
-				if (!result) {
-					const input = await callbacks.onPrompt({
-						message: "Paste the authorization code or full redirect URL:",
-						placeholder: cb.redirectUri,
-					});
-					result = parseRedirectInput(input, state);
+				await manualPromise;
+				if (!result && manualInput) {
+					try {
+						result = parseRedirectInput(manualInput, state);
+					} catch (err) {
+						if (err instanceof Error) throw err;
+						throw new Error(String(err));
+					}
 				}
 			}
+			if (!result && manualError) throw manualError;
 			if (!result) {
 				throw new Error(manualCancelled ? "Login cancelled" : "Missing authorization code");
 			}
@@ -340,32 +359,42 @@ export function createMcpOAuthProvider(config: McpOAuthConfig): OAuthProviderInt
 				throw new Error("OAuth state mismatch");
 			}
 
-			callbacks.onProgress?.("Exchanging authorization code for tokens…");
-			const token = await exchangeToken(meta.token_endpoint, {
-				grant_type: "authorization_code",
-				code: result.code,
-				redirect_uri: cb.redirectUri,
-				client_id: clientId,
-				code_verifier: verifier,
-			});
+			interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens…" });
+			const token = await exchangeToken(
+				meta.token_endpoint,
+				{
+					grant_type: "authorization_code",
+					code: result.code,
+					redirect_uri: cb.redirectUri,
+					client_id: clientId,
+					code_verifier: verifier,
+				},
+				interaction.signal,
+			);
 			return toCredentials(token, meta.token_endpoint, clientId);
 		} finally {
+			interaction.signal.removeEventListener("abort", onAbort);
+			manualAbort.abort();
 			cb.server.close();
 		}
 	}
 
-	async function refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+	async function refresh(credentials: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential> {
 		const creds = credentials as McpCredentials;
 		const tokenEndpoint = creds.tokenEndpoint ?? (await discover(config.url)).token_endpoint;
 		const clientId = creds.clientId ?? config.clientId;
 		if (!creds.refresh) {
 			throw new Error(`No refresh token stored for ${label}; re-run /mcp login ${config.server}`);
 		}
-		const token = await exchangeToken(tokenEndpoint, {
-			grant_type: "refresh_token",
-			refresh_token: creds.refresh,
-			...(clientId ? { client_id: clientId } : {}),
-		});
+		const token = await exchangeToken(
+			tokenEndpoint,
+			{
+				grant_type: "refresh_token",
+				refresh_token: creds.refresh,
+				...(clientId ? { client_id: clientId } : {}),
+			},
+			signal,
+		);
 		return toCredentials(token, tokenEndpoint, clientId ?? "", creds.refresh);
 	}
 
@@ -374,7 +403,7 @@ export function createMcpOAuthProvider(config: McpOAuthConfig): OAuthProviderInt
 		name: label,
 		usesCallbackServer: true,
 		login,
-		refreshToken,
-		getApiKey: (credentials) => credentials.access,
+		refresh,
+		toAuth: async (credentials) => ({ apiKey: credentials.access }),
 	};
 }

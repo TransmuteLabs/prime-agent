@@ -1,13 +1,12 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Container, type Terminal, Text, TUI } from "@earendil-works/pi-tui";
-import stripAnsi from "strip-ansi";
+import { Container, type Terminal, Text, type TUI, TuiMainScreen } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createEditToolDefinition } from "../src/core/tools/edit.js";
-import { computeEditsDiff, type Edit } from "../src/core/tools/edit-diff.js";
-import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import { createEditToolDefinition } from "../src/core/tools/edit.ts";
+import { computeEditsDiff, type Edit } from "../src/core/tools/edit-diff.ts";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 class FakeTerminal implements Terminal {
 	columns = 80;
@@ -24,25 +23,15 @@ class FakeTerminal implements Terminal {
 	moveBy(_lines: number): void {}
 	hideCursor(): void {}
 	showCursor(): void {}
+	leaveAltScreen(): void {}
 	clearLine(): void {}
 	clearFromCursor(): void {}
 	clearScreen(): void {}
 	setTitle(_title: string): void {}
 	setProgress(_active: boolean): void {}
-	altScreenActive = false;
-	enterAltScreen(): void {
-		this.altScreenActive = true;
-	}
-	leaveAltScreen(): void {
-		this.altScreenActive = false;
-	}
-	mouseTrackingActive = false;
-	setMouseTracking(enabled: boolean): void {
-		this.mouseTrackingActive = enabled;
-	}
 
 	get fullClearCount(): number {
-		return this.writes.filter((write) => write.includes("\x1b[2J\x1b[H")).length;
+		return this.writes.filter((write) => write.includes("\x1b[2J\x1b[H\x1b[3J")).length;
 	}
 }
 
@@ -62,7 +51,7 @@ async function waitForRenderedText(
 		onRetry?.();
 		await waitForRender();
 		lastRender = getRender();
-		if (stripAnsi(lastRender).includes(expectedText)) {
+		if (lastRender.includes(expectedText)) {
 			return lastRender;
 		}
 	}
@@ -106,7 +95,7 @@ describe("edit tool TUI rendering", () => {
 		}
 
 		const terminal = new FakeTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const root = new Container();
 		for (let i = 0; i < 200; i++) {
 			root.addChild(new Text(`history ${i}`, 0, 0));
@@ -126,7 +115,6 @@ describe("edit tool TUI rendering", () => {
 		tui.start();
 		await waitForRender();
 
-		component.setExpanded(true);
 		component.setArgsComplete();
 		tui.requestRender();
 		await waitForRender();
@@ -137,9 +125,8 @@ describe("edit tool TUI rendering", () => {
 			"line 50 changed",
 			() => tui.requestRender(true),
 		);
-		const callOnlyRenderText = stripAnsi(callOnlyRender);
-		expect(callOnlyRenderText).toContain("edit");
-		expect(callOnlyRenderText).toContain("line 950 changed");
+		expect(callOnlyRender).toContain("edit");
+		expect(callOnlyRender).toContain("line 950 changed");
 
 		const redrawsBeforeResult = tui.fullRedraws;
 		const clearsBeforeResult = terminal.fullClearCount;
@@ -157,7 +144,7 @@ describe("edit tool TUI rendering", () => {
 		expect(tui.fullRedraws).toBe(redrawsBeforeResult);
 		expect(terminal.fullClearCount).toBe(clearsBeforeResult);
 
-		const settledRender = stripAnsi(component.render(80).join("\n"));
+		const settledRender = component.render(80).join("\n");
 		expect(settledRender).toContain("line 50 changed");
 		expect(settledRender).toContain("line 950 changed");
 		expect(settledRender).not.toContain("Successfully replaced");
@@ -182,7 +169,7 @@ describe("edit tool TUI rendering", () => {
 		await rm(filePath, { force: true });
 
 		const terminal = new FakeTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const component = new ToolExecutionComponent(
 			"edit",
 			"tool-call-replay",
@@ -196,7 +183,6 @@ describe("edit tool TUI rendering", () => {
 		tui.start();
 		await waitForRender();
 
-		component.setExpanded(true);
 		component.updateResult(
 			{
 				content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${filePath}.` }],
@@ -208,7 +194,7 @@ describe("edit tool TUI rendering", () => {
 		await waitForRender();
 		await waitForRender();
 
-		const rendered = stripAnsi(component.render(80).join("\n"));
+		const rendered = component.render(80).join("\n");
 		expect(rendered).toContain("line 50 changed");
 		expect(rendered).toContain("line 150 changed");
 	});
@@ -220,7 +206,7 @@ describe("edit tool TUI rendering", () => {
 		await writeFile(filePath, "line 0\nline 1\n", "utf8");
 
 		const terminal = new FakeTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const component = new ToolExecutionComponent(
 			"edit",
 			"tool-call-2",

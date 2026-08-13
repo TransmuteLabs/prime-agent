@@ -1,6 +1,8 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { EditorPasteSnapshot } from "@earendil-works/pi-tui";
 
+export type { EditorPasteSnapshot };
+
 export interface PromptStash {
 	text: string;
 	expandedText?: string;

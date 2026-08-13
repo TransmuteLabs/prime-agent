@@ -1,5 +1,5 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { theme } from "../theme/theme.js";
+import { theme } from "../theme/theme.ts";
 
 const LABEL = "Hint:";
 const SHIMMER_RADIUS = 1;
@@ -22,8 +22,11 @@ function renderLabelShimmer(characters: string[], frame: number): string {
 
 export class FeatureHintComponent implements Component {
 	private frame = 0;
+	private readonly text: string;
 
-	constructor(private readonly text: string) {}
+	constructor(text: string) {
+		this.text = text;
+	}
 
 	advance(): void {
 		this.frame++;

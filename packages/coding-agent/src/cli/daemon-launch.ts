@@ -8,23 +8,23 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { appendRotatingLog, expandTildePath, getClientErrorLogPath, getDaemonLogPath, VERSION } from "../config.js";
-import { ORPHAN_PROCESS_JOURNAL_ENV } from "../core/orphan-process-journal.js";
-import { getProcessStartId, SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../core/session-lease.js";
-import { DaemonClient, type DaemonHello } from "../modes/daemon/daemon-client.js";
-import { DAEMON_PROTOCOL_VERSION, DAEMON_SCHEMA_ID } from "../modes/daemon/daemon-protocol.js";
-import { getDaemonRuntimeIdentity } from "../modes/daemon/daemon-runtime-identity.js";
-import { isSessionSummaryBusy, type SessionSummary } from "../modes/daemon/daemon-session-list.js";
-import { defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.js";
+import { appendRotatingLog, expandTildePath, getClientErrorLogPath, getDaemonLogPath, VERSION } from "../config.ts";
+import { ORPHAN_PROCESS_JOURNAL_ENV } from "../core/orphan-process-journal.ts";
+import { getProcessStartId, SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../core/session-lease.ts";
+import { DaemonClient, type DaemonHello } from "../modes/daemon/daemon-client.ts";
+import { DAEMON_PROTOCOL_VERSION, DAEMON_SCHEMA_ID } from "../modes/daemon/daemon-protocol.ts";
+import { getDaemonRuntimeIdentity } from "../modes/daemon/daemon-runtime-identity.ts";
+import { isSessionSummaryBusy, type SessionSummary } from "../modes/daemon/daemon-session-list.ts";
+import { defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.ts";
 import {
 	DAEMON_WORKER_ACTIVE_SESSION_ID_ENV,
 	DAEMON_WORKER_RECOVERY_JOURNAL_ENV,
 	DAEMON_WORKER_ROLE_ENV,
 	DAEMON_WORKER_SUPERVISOR_SOCKET_ENV,
 	DAEMON_WORKER_TOKEN_ENV,
-} from "../modes/daemon/daemon-worker-protocol.js";
-import { isHelpCommandRequest, PUBLIC_COMMAND_NAMES, REMOVED_COMMAND_NAMES } from "./command-registry.js";
-import { createCliSubprocessEnv, formatCurrentCliCommand } from "./subprocess-launch.js";
+} from "../modes/daemon/daemon-worker-protocol.ts";
+import { isHelpCommandRequest, PUBLIC_COMMAND_NAMES, REMOVED_COMMAND_NAMES } from "./command-registry.ts";
+import { createCliSubprocessEnv, formatCurrentCliCommand } from "./subprocess-launch.ts";
 
 const DAEMON_STARTUP_TIMEOUT_MS = 30_000;
 const DAEMON_STARTUP_LOG_TAIL_BYTES = 4 * 1024;
@@ -148,10 +148,9 @@ async function queryActiveDaemonSessions(
 
 /** Thrown when a stale-version daemon can't be replaced. The message is user-facing. */
 export class StaleDaemonError extends Error {
-	constructor(
-		readonly socketPath: string,
-		hello?: DaemonHello,
-	) {
+	readonly socketPath: string;
+
+	constructor(socketPath: string, hello?: DaemonHello) {
 		const daemonIdentity = hello
 			? `Daemon: v${hello.appVersion ?? "unknown"}, protocol ${hello.protocol.version}, schema ${hello.schemaId ?? "legacy"}, ` +
 				`build ${hello.runtime?.buildId ?? "unknown"}, PID ${hello.supervisorPid ?? "unknown"}, ` +
@@ -164,6 +163,7 @@ export class StaleDaemonError extends Error {
 				`executable ${client.launcherPath ?? client.entrypointPath ?? client.executablePath}\n\nRun:\n` +
 				`${formatCurrentCliCommand(["shutdown", "--force"])}\n\nThen retry the original command.`,
 		);
+		this.socketPath = socketPath;
 		this.name = "StaleDaemonError";
 	}
 }

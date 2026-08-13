@@ -1,8 +1,8 @@
-import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
-import { type AssistantMessage, fauxAssistantMessage, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHarness, type Harness } from "./harness.js";
+import { createHarness, type Harness } from "./harness.ts";
 
 function normalizeEventOrder(events: Harness["events"]): string[] {
 	const normalized: string[] = [];
@@ -20,34 +20,6 @@ function normalizeEventOrder(events: Harness["events"]): string[] {
 	}
 	return normalized;
 }
-
-function structuredProviderFailure(kind: "auth" | "invalid_request" | "refusal"): AssistantMessage {
-	return {
-		...fauxAssistantMessage("", {
-			stopReason: "error",
-			errorMessage: `provider ${kind} failure`,
-		}),
-		diagnostics: [
-			{
-				type: "provider_stream_failure",
-				timestamp: Date.now(),
-				details: { kind },
-			},
-		],
-	};
-}
-
-type SessionRetryCompactionInternals = {
-	_retryAttempt: number;
-	_retryPromise: Promise<void> | undefined;
-	_retryResolve: (() => void) | undefined;
-	_autoCompactionAbortController: AbortController | undefined;
-	_postCompactionContinuationScheduled: boolean;
-	_processAgentEvent: (event: AgentEvent) => Promise<void>;
-	_checkCompaction: (message: AssistantMessage) => Promise<boolean>;
-	_schedulePostCompactionContinue: () => void;
-	_cancelPostCompactionContinue: () => void;
-};
 
 describe("AgentSession retry and event characterization", () => {
 	const harnesses: Harness[] = [];
@@ -75,6 +47,7 @@ describe("AgentSession retry and event characterization", () => {
 		await harness.session.prompt("test");
 
 		expect(retryEvents).toEqual(["start:1", "end:true"]);
+		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, false]);
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.session.isRetrying).toBe(false);
 	});
@@ -118,6 +91,7 @@ describe("AgentSession retry and event characterization", () => {
 		await harness.session.prompt("test");
 
 		expect(retryEvents).toEqual(["start:1", "start:2", "end:false"]);
+		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, true, false]);
 		expect(harness.faux.state.callCount).toBe(3);
 		expect(harness.session.isRetrying).toBe(false);
 	});
@@ -147,33 +121,6 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.session.isRetrying).toBe(false);
 	});
 
-	it("accepted agent message prompts keep retry state queued after returning", async () => {
-		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 40 } } });
-		harnesses.push(harness);
-		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
-			fauxAssistantMessage("recovered"),
-		]);
-		const sawRetryStart = new Promise<void>((resolve) => {
-			const unsubscribe = harness.session.subscribe((event) => {
-				if (event.type === "auto_retry_start") {
-					unsubscribe();
-					resolve();
-				}
-			});
-		});
-
-		await harness.session.acceptAgentMessagePrompt("agent-to-agent payload", { expandPromptTemplates: false });
-		await sawRetryStart;
-
-		expect(harness.session.isRetrying).toBe(true);
-		expect(harness.session.hasAcceptedPromptInFlight).toBe(true);
-		await expect(
-			harness.session.prompt("second", { queueIfBusy: true, streamingBehavior: "followUp" }),
-		).resolves.toBeUndefined();
-		expect(harness.session.queuedActionCount).toBe(1);
-	});
-
 	it("does not retry when retry is disabled", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: false } } });
 		harnesses.push(harness);
@@ -185,161 +132,15 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 	});
 
-	it("does not retry faux provider queue exhaustion", async () => {
+	it("does not retry non-retryable errors", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
 		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_api_key" })]);
 
 		await harness.session.prompt("test");
 
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
-		expect(harness.session.isRetrying).toBe(false);
-	});
-
-	it("does not retry local agent lifecycle listener failures", async () => {
-		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
-		harnesses.push(harness);
-		let unsubscribe = () => {};
-		unsubscribe = harness.session.agent.subscribe((event) => {
-			if (event.type === "message_start" && event.message.role === "assistant") {
-				unsubscribe();
-				throw new Error("local listener failed");
-			}
-		});
-		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("retry should not happen")]);
-
-		await harness.session.prompt("test");
-
-		const lastMessage = harness.session.messages.at(-1);
-		expect(harness.faux.state.callCount).toBe(1);
-		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
-		expect(harness.session.isRetrying).toBe(false);
-		expect(lastMessage?.role).toBe("assistant");
-		if (lastMessage?.role === "assistant") {
-			expect(lastMessage.diagnostics?.some((diagnostic) => diagnostic.type === "agent_lifecycle_failure")).toBe(
-				true,
-			);
-		}
-	});
-
-	for (const [name, errorMessage] of [
-		["network finish reason", "Provider finish_reason: network_error"],
-		["content-filter finish reason", "Provider finish_reason: content_filter"],
-		["empty response", "Provider returned an empty response"],
-		["cybersecurity policy flag", "Your request was flagged for cybersecurity risk and cannot be processed."],
-		["usage policy flag", "flagged as potentially violating our usage policy"],
-		["prose-form transient 5xx", "An error occurred while processing your request. You can retry your request."],
-	] as const) {
-		it(`retries ${name}`, async () => {
-			const harness = await createHarness({
-				settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
-			});
-			harnesses.push(harness);
-			harness.setResponses([
-				fauxAssistantMessage("", { stopReason: "error", errorMessage }),
-				fauxAssistantMessage("recovered"),
-			]);
-
-			await harness.session.prompt("test");
-
-			expect(harness.faux.state.callCount).toBe(2);
-			expect(harness.eventsOfType("auto_retry_start").map((event) => event.attempt)).toEqual([1]);
-			expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
-			expect(harness.session.isRetrying).toBe(false);
-		});
-	}
-
-	it("retries generic provider errors", async () => {
-		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
-		harnesses.push(harness);
-		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_api_key" }),
-			fauxAssistantMessage("recovered"),
-		]);
-
-		await harness.session.prompt("test");
-
-		expect(harness.faux.state.callCount).toBe(2);
-		expect(harness.eventsOfType("auto_retry_start").map((event) => event.attempt)).toEqual([1]);
-		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
-	});
-
-	for (const kind of ["auth", "invalid_request", "refusal"] as const) {
-		it(`retries structured permanent provider ${kind} failures once`, async () => {
-			const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
-			harnesses.push(harness);
-			harness.setResponses([
-				structuredProviderFailure(kind),
-				structuredProviderFailure(kind),
-				fauxAssistantMessage("unused"),
-			]);
-
-			await harness.session.prompt("test");
-
-			expect(harness.faux.state.callCount).toBe(2);
-			expect(harness.eventsOfType("auto_retry_start").map((event) => event.attempt)).toEqual([1]);
-			expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([false]);
-			expect(harness.session.isRetrying).toBe(false);
-		});
-	}
-
-	it("keeps retry state active when overflow compaction will retry", async () => {
-		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
-		harnesses.push(harness);
-		const internals = harness.session as unknown as SessionRetryCompactionInternals;
-		const originalCheckCompaction = internals._checkCompaction.bind(harness.session);
-		const overflowMessage = fauxAssistantMessage("", {
-			stopReason: "error",
-			errorMessage: "prompt is too long",
-		});
-		internals._retryAttempt = 1;
-		internals._retryPromise = new Promise<void>((resolve) => {
-			internals._retryResolve = resolve;
-		});
-		internals._checkCompaction = async () => true;
-
-		try {
-			await internals._processAgentEvent({ type: "agent_end", messages: [overflowMessage] } as AgentEvent);
-
-			expect(internals._retryAttempt).toBe(1);
-			expect(harness.session.isRetrying).toBe(true);
-			expect(harness.eventsOfType("auto_retry_end")).toEqual([]);
-		} finally {
-			internals._checkCompaction = originalCheckCompaction;
-			harness.session.abortRetry();
-		}
-	});
-
-	it("cancels overflow-compaction retry continuation when abortRetry is called", async () => {
-		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
-		harnesses.push(harness);
-		const internals = harness.session as unknown as SessionRetryCompactionInternals;
-		const compactionAbortController = new AbortController();
-		internals._retryAttempt = 1;
-		internals._retryPromise = new Promise<void>((resolve) => {
-			internals._retryResolve = resolve;
-		});
-		internals._autoCompactionAbortController = compactionAbortController;
-		internals._schedulePostCompactionContinue();
-
-		try {
-			expect(internals._postCompactionContinuationScheduled).toBe(true);
-
-			harness.session.abortRetry();
-
-			expect(compactionAbortController.signal.aborted).toBe(true);
-			expect(internals._postCompactionContinuationScheduled).toBe(false);
-			expect(internals._retryAttempt).toBe(0);
-			expect(harness.session.isRetrying).toBe(false);
-			expect(harness.eventsOfType("auto_retry_end").at(-1)).toMatchObject({
-				success: false,
-				attempt: 1,
-				finalError: "Retry cancelled",
-			});
-		} finally {
-			internals._autoCompactionAbortController = undefined;
-			internals._cancelPostCompactionContinue();
-		}
 	});
 
 	it("cancels retry sleep when abortRetry is called", async () => {
@@ -395,7 +196,6 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.faux.state.callCount).toBe(3);
 		expect(toolRuns).toEqual(["hello"]);
 		expect(harness.session.isStreaming).toBe(false);
-		harness.appendResponses([fauxAssistantMessage("follow-up answer")]);
 		await harness.session.prompt("follow-up");
 		expect(harness.faux.state.callCount).toBe(4);
 	});
@@ -453,6 +253,7 @@ describe("AgentSession retry and event characterization", () => {
 			"message_end:assistant",
 			"turn_end",
 			"agent_end",
+			"agent_settled",
 		]);
 	});
 
@@ -498,6 +299,7 @@ describe("AgentSession retry and event characterization", () => {
 			"message_end:assistant",
 			"turn_end",
 			"agent_end",
+			"agent_settled",
 		]);
 	});
 
@@ -522,13 +324,14 @@ describe("AgentSession retry and event characterization", () => {
 	});
 
 	it("emits agent_end for error responses", async () => {
-		const harness = await createHarness({ settings: { retry: { enabled: false } } });
+		const harness = await createHarness();
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "broken" })]);
 
 		await harness.session.prompt("hi");
 
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_end");
+		expect(harness.eventsOfType("agent_end")).toHaveLength(1);
+		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_settled");
 	});
 
 	it("emits agent_end for aborted runs and persists the aborted assistant message", async () => {
@@ -550,7 +353,8 @@ describe("AgentSession retry and event characterization", () => {
 		await harness.session.abort();
 		await promptPromise;
 
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_end");
+		expect(harness.eventsOfType("agent_end")).toHaveLength(1);
+		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_settled");
 		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
 		expect(lastMessage?.role).toBe("assistant");
 		if (lastMessage?.role === "assistant") {

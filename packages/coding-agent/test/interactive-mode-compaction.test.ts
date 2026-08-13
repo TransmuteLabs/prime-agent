@@ -1,140 +1,85 @@
-import { Container } from "@earendil-works/pi-tui";
-import stripAnsi from "strip-ansi";
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { AgentActivityTracker } from "../src/modes/interactive/agent-activity.js";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
-
-const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
-	this: unknown,
-	event: Record<string, unknown>,
-) => Promise<void>;
-
-const startCompactionLoader = Reflect.get(InteractiveMode.prototype, "startCompactionLoader") as (
-	this: unknown,
-	reason: string,
-	customInstructions?: string,
-) => void;
-
-function createFakeThis(overrides: Record<string, unknown> = {}) {
-	return {
-		isInitialized: true,
-		footer: { invalidate: vi.fn() },
-		updateConnectionStateFromEvent: vi.fn(),
-		activityTracker: new AgentActivityTracker(),
-		updateWorkingLoaderMessage: vi.fn(),
-		autoCompactionLoader: undefined,
-		retryLoader: undefined,
-		startCompactionLoader(this: Record<string, unknown>, reason: string, customInstructions?: string) {
-			startCompactionLoader.call(this, reason, customInstructions);
-		},
-		workingVisible: true,
-		stopWorkingLoader: vi.fn(),
-		syncWorkingLoader: vi.fn(),
-		defaultEditor: {},
-		statusContainer: { clear: vi.fn() },
-		chatContainer: { clear: vi.fn() },
-		rebuildChatFromMessages: vi.fn(function (this: { chatContainer: { clear(): void } }) {
-			this.chatContainer.clear();
-			return Promise.resolve();
-		}),
-		addMessageToChat: vi.fn(),
-		refreshConnectionContextUsage: vi.fn().mockResolvedValue(undefined),
-		showError: vi.fn(),
-		showWarning: vi.fn(),
-		showStatus: vi.fn(),
-		settingsManager: { getShowTerminalProgress: () => false },
-		ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
-		...overrides,
-	};
-}
+import { describe, expect, test, vi } from "vitest";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 describe("InteractiveMode compaction events", () => {
-	beforeAll(() => initTheme("dark"));
+	test("rebuilds chat and appends a synthetic compaction summary at the bottom", async () => {
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			autoCompactionEscapeHandler: undefined as (() => void) | undefined,
+			autoCompactionLoader: undefined,
+			defaultEditor: {},
+			statusContainer: { clear: vi.fn() },
+			chatContainer: { clear: vi.fn() },
+			rebuildChatFromMessages: vi.fn(),
+			addMessageToChat: vi.fn(),
+			showError: vi.fn(),
+			showStatus: vi.fn(),
+			clearStatusIndicator: vi.fn(),
+			flushCompactionQueue: vi.fn().mockResolvedValue(undefined),
+			settingsManager: { getShowTerminalProgress: () => false },
+			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
+		};
 
-	test("shows an automatic compaction loader for the full operation", async () => {
-		const statusContainer = new Container();
-		const fakeThis = createFakeThis({ statusContainer });
-
-		await handleEvent.call(fakeThis, { type: "compaction_start", reason: "threshold" });
-
-		expect(stripAnsi(statusContainer.render(80).join("\n"))).toContain("Auto-compacting");
-		expect(fakeThis.ui.requestRender).toHaveBeenCalled();
-
-		await handleEvent.call(fakeThis, {
-			type: "compaction_end",
-			reason: "threshold",
-			result: undefined,
-			aborted: true,
-			willRetry: false,
-		});
-		expect(statusContainer.children).toHaveLength(0);
-	});
-
-	test.each([
-		{ name: "rebuilds successful compaction from its single persisted summary", refresh: "succeeds" },
-		{ name: "keeps stale chat and reports a failed post-compaction refresh", refresh: "fails" },
-	] as const)("$name", async ({ refresh }) => {
-		const fakeThis = createFakeThis(
-			refresh === "fails"
-				? { rebuildChatFromMessages: vi.fn().mockRejectedValue(new Error("context unavailable")) }
-				: {},
-		);
-
-		await handleEvent.call(fakeThis, {
-			type: "compaction_end",
-			reason: "requested",
-			result: { tokensBefore: 123, summary: "summary" },
-			aborted: false,
-			willRetry: false,
-		});
-
-		expect(fakeThis.chatContainer.clear).toHaveBeenCalledTimes(refresh === "succeeds" ? 1 : 0);
-		expect(fakeThis.rebuildChatFromMessages).toHaveBeenCalledOnce();
-		expect(fakeThis.addMessageToChat).not.toHaveBeenCalled();
-		if (refresh === "fails") {
-			expect(fakeThis.showError).toHaveBeenCalledWith(
-				"Compaction succeeded, but the transcript could not be refreshed: context unavailable",
-			);
-		} else {
-			expect(fakeThis.showError).not.toHaveBeenCalled();
-		}
-	});
-
-	test("shows manual warning-severity outcomes as warnings, not errors", async () => {
-		const fakeThis = createFakeThis();
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event: {
+				type: "compaction_end";
+				reason: "manual" | "threshold" | "overflow";
+				result: { tokensBefore: number; summary: string } | undefined;
+				aborted: boolean;
+				willRetry: boolean;
+				errorMessage?: string;
+			},
+		) => Promise<void>;
 
 		await handleEvent.call(fakeThis, {
 			type: "compaction_end",
 			reason: "manual",
-			result: undefined,
+			result: {
+				tokensBefore: 123,
+				summary: "summary",
+			},
 			aborted: false,
 			willRetry: false,
-			errorMessage: "Session is too short to compact",
-			errorSeverity: "warning",
 		});
 
-		expect(fakeThis.showWarning).toHaveBeenCalledWith("Session is too short to compact");
-		expect(fakeThis.showError).not.toHaveBeenCalled();
+		expect(fakeThis.chatContainer.clear).toHaveBeenCalledTimes(1);
+		expect(fakeThis.rebuildChatFromMessages).toHaveBeenCalledTimes(1);
+		expect(fakeThis.addMessageToChat).toHaveBeenCalledTimes(1);
+		expect(fakeThis.addMessageToChat).toHaveBeenCalledWith(
+			expect.objectContaining({
+				role: "compactionSummary",
+				tokensBefore: 123,
+				summary: "summary",
+			}),
+		);
+		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
 	});
 
-	test("restores the compaction loader from state when no start event was seen", () => {
-		const statusContainer = new Container();
-		const fakeThis = createFakeThis({
-			statusContainer,
-			connectionState: { isCompacting: true },
-			isAgentCompacting() {
-				return true;
+	test("preserves steering behavior when flushing into an active agent run", async () => {
+		const fakeThis = {
+			compactionQueuedMessages: [{ text: "change direction", mode: "steer" as const }],
+			session: {
+				clearQueue: vi.fn(),
+				prompt: vi.fn().mockResolvedValue(undefined),
+				steer: vi.fn().mockResolvedValue(undefined),
+				followUp: vi.fn().mockResolvedValue(undefined),
 			},
-			loadingAnimation: undefined,
-			workingVisible: true,
-			isAgentStreaming: () => false,
-			stopWorkingLoader: vi.fn(),
-			startWorkingLoader: vi.fn(),
-		});
+			isExtensionCommand: vi.fn().mockReturnValue(false),
+			updatePendingMessagesDisplay: vi.fn(),
+			showError: vi.fn(),
+		};
 
-		(Reflect.get(InteractiveMode.prototype, "syncWorkingLoader") as (this: unknown) => void).call(fakeThis);
+		const flushCompactionQueue = Reflect.get(InteractiveMode.prototype, "flushCompactionQueue") as (
+			this: typeof fakeThis,
+			options?: { willRetry?: boolean },
+		) => Promise<void>;
 
-		expect(stripAnsi(statusContainer.render(80).join("\n"))).toContain("Compacting context");
+		await flushCompactionQueue.call(fakeThis, { willRetry: false });
+
+		expect(fakeThis.session.prompt).toHaveBeenCalledWith("change direction", { streamingBehavior: "steer" });
+		expect(fakeThis.compactionQueuedMessages).toEqual([]);
+		expect(fakeThis.showError).not.toHaveBeenCalled();
 	});
 });

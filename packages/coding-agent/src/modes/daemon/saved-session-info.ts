@@ -1,6 +1,16 @@
-import type { SessionInfo } from "../../core/session-manager.js";
-import type { AgentConnectionSavedSessionInfo } from "../agent-connection/types.js";
-import type { DaemonSavedSessionInfo } from "./daemon-protocol.js";
+import type { SessionInfo } from "../../core/session-manager.ts";
+import type { AgentConnectionSavedSessionInfo } from "../agent-connection/types.ts";
+import type { DaemonSavedSessionInfo } from "./daemon-protocol.ts";
+
+function toSavedSessionState(state: SessionInfo["state"]): DaemonSavedSessionInfo["state"] {
+	if (!state) {
+		return undefined;
+	}
+	if (state.status === "active" || state.status === "archived" || state.status === "crash") {
+		return { status: state.status };
+	}
+	return undefined;
+}
 
 export function serializeSavedSessionInfo(session: SessionInfo): DaemonSavedSessionInfo {
 	return {
@@ -8,7 +18,7 @@ export function serializeSavedSessionInfo(session: SessionInfo): DaemonSavedSess
 		id: session.id,
 		cwd: session.cwd,
 		name: session.name,
-		state: session.state,
+		state: toSavedSessionState(session.state),
 		parentSessionPath: session.parentSessionPath,
 		rlmDepth: session.rlmDepth,
 		created: session.created.toISOString(),

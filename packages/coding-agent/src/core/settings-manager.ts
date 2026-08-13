@@ -1,23 +1,25 @@
-import type { ServiceTier, Transport } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { Transport } from "@earendil-works/pi-ai";
+import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
+import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
-import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
+import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
+import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
 const RECENT_MODELS_LIMIT = 20;
 export const DEFAULT_IDLE_EVICTION_MINUTES = 90;
+
+/** Local ServiceTier until pi-ai re-exports it. */
+export type ServiceTier = "auto" | "default" | "flex" | "scale" | "priority" | null;
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
 	keepRecentTokens?: number; // default: 20000
 	agentCallable?: boolean; // default: true - expose the compact skill so the model can request compaction
-}
-
-export interface BranchSummarySettings {
-	reserveTokens?: number; // default: 16384 (tokens reserved for prompt + LLM response)
-	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
 }
 
 export interface AutoRefineSettings {
@@ -27,73 +29,18 @@ export interface AutoRefineSettings {
 	cooldownMs?: number; // default: 20 minutes
 }
 
-export interface ProviderRetrySettings {
-	timeoutMs?: number; // SDK/provider request timeout in milliseconds
-	maxRetries?: number; // SDK/provider retry attempts
-	maxRetryDelayMs?: number; // default: 60000 (max server-requested delay before failing)
+export interface AgentTracesSettings {
+	enabled?: boolean;
 }
 
-export interface RetrySettings {
-	enabled?: boolean; // default: true
-	maxRetries?: number; // default: 3
-	baseDelayMs?: number; // default: 2000 (exponential backoff: 2s, 4s, 8s)
-	provider?: ProviderRetrySettings;
+export interface TelemetrySettings {
+	enabled?: boolean;
+	noticeShown?: boolean;
 }
-
-export interface TerminalSettings {
-	showImages?: boolean; // default: true (show image type and dimensions)
-	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
-	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
-	fullscreen?: boolean; // default: true (alternate-screen rendering with scrollable transcript)
-	fullscreenMouse?: boolean; // default: true (wheel scrolling in fullscreen; disable if it breaks selection)
-}
-
-export interface ImageSettings {
-	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
-	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
-}
-
-export interface ThinkingBudgetsSettings {
-	minimal?: number;
-	low?: number;
-	medium?: number;
-	high?: number;
-}
-
-export interface MarkdownSettings {
-	codeBlockIndent?: string; // default: "  "
-}
-
-export interface BundledSkillsSettings {
-	websearch?: boolean; // default: true
-}
-
-export interface WarningSettings {
-	anthropicExtraUsage?: boolean; // default: true
-}
-
-export type TransportSetting = Transport;
 
 /**
- * Package source for npm/git packages.
- * - String form: load all resources from the package
- * - Object form: filter which resources to load
- */
-export type PackageSource =
-	| string
-	| {
-			source: string;
-			extensions?: string[];
-			skills?: string[];
-			prompts?: string[];
-			themes?: string[];
-	  };
-
-/**
- * Remote/local MCP server an integration connects to. Built-in integrations
- * (Linear/Notion) are defined in the ai/mcp catalog; this is for user-declared
- * servers. The kernel-side integration package reads creds from auth.json
- * (`mcp:<name>`); login/refresh run host-side.
+ * Remote/local MCP server an integration connects to; this is for user-declared
+ * servers.
  */
 export type McpServerConfig =
 	| {
@@ -119,13 +66,88 @@ export type McpServerConfig =
 			disabledTools?: string[];
 	  };
 
+export interface BranchSummarySettings {
+	reserveTokens?: number; // default: 16384 (tokens reserved for prompt + LLM response)
+	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
+}
+
+export interface ProviderRetrySettings {
+	timeoutMs?: number; // SDK/provider request timeout in milliseconds
+	maxRetries?: number; // SDK/provider retry attempts
+	maxRetryDelayMs?: number; // default: 60000 (max server-requested delay before failing)
+}
+
+export interface RetrySettings {
+	enabled?: boolean; // default: true
+	maxRetries?: number; // default: 3
+	baseDelayMs?: number; // default: 2000 (exponential backoff: 2s, 4s, 8s)
+	provider?: ProviderRetrySettings;
+}
+
+export type TuiMode = RendererTuiMode;
+export type FullscreenExitOutput = "transcript" | "resume-hint";
+
+export interface TerminalSettings {
+	showImages?: boolean; // default: true (only relevant if terminal supports images)
+	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
+	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
+	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
+	fullscreen?: boolean; // default: true (alternate-screen rendering with scrollable transcript)
+	fullscreenMouse?: boolean; // default: true (wheel scrolling in fullscreen; disable if it breaks selection)
+}
+
+export interface ImageSettings {
+	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
+	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
+}
+
+export interface ThinkingBudgetsSettings {
+	minimal?: number;
+	low?: number;
+	medium?: number;
+	high?: number;
+}
+
+export type MermaidRenderingMode = "off" | "final" | "streaming";
+
+export interface MarkdownSettings {
+	codeBlockIndent?: string; // default: "  "
+	mermaid?: MermaidRenderingMode; // default: "streaming"
+}
+
+export interface WarningSettings {
+	anthropicExtraUsage?: boolean; // default: true
+}
+
+export type DefaultProjectTrust = "ask" | "always" | "never";
+
+export type TransportSetting = Transport;
+
+/**
+ * Package source for npm/git packages.
+ * - String form: load all resources from the package
+ * - Object form: filter which resources to load
+ * - autoload=false: start empty and only apply explicit resource patterns
+ */
+export type PackageSource =
+	| string
+	| {
+			source: string;
+			autoload?: boolean;
+			extensions?: string[];
+			skills?: string[];
+			prompts?: string[];
+			themes?: string[];
+	  };
+
 export interface Settings {
+	lastChangelogVersion?: string;
 	onboardingShown?: boolean;
-	onboardingCompleted?: boolean;
+	onboardingCompleted?: boolean; // legacy alias for onboardingShown
 	defaultProvider?: string;
 	defaultModel?: string;
 	recentModels?: string[]; // "provider/id" keys, most-recently-used first
-	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	defaultThinkingLevel?: ThinkingLevel;
 	defaultServiceTier?: ServiceTier;
 	rlmMaxDepth?: number; // default for new sessions; unset falls through to RLM_MAX_DEPTH, then 1
 	idleEvictionMinutes?: number | "off"; // global daemon policy; default: 90
@@ -140,73 +162,90 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
-	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows)
+	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
+	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
+	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
+	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
-	mcpServers?: Record<string, McpServerConfig>; // User-declared MCP servers (name → config); built-ins are in the ai/mcp catalog
+	mcpServers?: Record<string, McpServerConfig>; // User-declared MCP servers (name → config)
+	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
+	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
+	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
+	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	extensions?: string[]; // Array of local extension file paths or directories
 	skills?: string[]; // Array of local skill file paths or directories
 	prompts?: string[]; // Array of local prompt template paths or directories
 	themes?: string[]; // Array of local theme file paths or directories
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
-	bundledSkills?: BundledSkillsSettings; // Configure built-in skills shipped with Prime Agent
-	enableBuiltinSkills?: boolean; // default: true - load built-in skills shipped with prime-agent
+	enableBuiltinSkills?: boolean; // default: true - load built-in skills shipped with the CLI
 	terminal?: TerminalSettings;
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
-	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default: "user-only"
+	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
+	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
 	editorPaddingX?: number; // Horizontal padding for input editor (default: 0)
+	outputPad?: 0 | 1; // Horizontal padding for chat message output (default: 1)
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
+	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
+	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	tuiMode?: TuiMode; // default: "regular"
+	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
+	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 }
 
-export interface AgentTracesSettings {
-	enabled?: boolean;
+function isMergeableObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export interface TelemetrySettings {
-	enabled?: boolean;
-	noticeShown?: boolean;
-}
+function deepMergeObjects(base: Record<string, unknown>, overrides: Record<string, unknown>): Record<string, unknown> {
+	const result = { ...base };
 
-/** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
-function deepMergeSettings(base: Settings, overrides: Settings): Settings {
-	const result: Settings = { ...base };
-
-	for (const key of Object.keys(overrides) as (keyof Settings)[]) {
+	for (const key of Object.keys(overrides)) {
 		const overrideValue = overrides[key];
-		const baseValue = base[key];
-
 		if (overrideValue === undefined) {
 			continue;
 		}
 
-		// For nested objects, merge recursively
-		if (
-			typeof overrideValue === "object" &&
-			overrideValue !== null &&
-			!Array.isArray(overrideValue) &&
-			typeof baseValue === "object" &&
-			baseValue !== null &&
-			!Array.isArray(baseValue)
-		) {
-			(result as Record<string, unknown>)[key] = { ...baseValue, ...overrideValue };
-		} else {
-			// For primitives and arrays, override value wins
-			(result as Record<string, unknown>)[key] = overrideValue;
-		}
+		const baseValue = base[key];
+		result[key] =
+			isMergeableObject(baseValue) && isMergeableObject(overrideValue)
+				? deepMergeObjects(baseValue, overrideValue)
+				: overrideValue;
 	}
 
 	return result;
 }
 
+/** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
+function deepMergeSettings(base: Settings, overrides: Settings): Settings {
+	return deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
+}
+
+function parseTimeoutSetting(value: unknown, settingName: string): number | undefined {
+	const timeoutMs = parseHttpIdleTimeoutMs(value);
+	if (timeoutMs !== undefined) {
+		return timeoutMs;
+	}
+	if (value !== undefined) {
+		throw new Error(`Invalid ${settingName} setting: ${String(value)}`);
+	}
+	return undefined;
+}
+
 export type SettingsScope = "global" | "project";
+
+export interface SettingsManagerCreateOptions {
+	projectTrusted?: boolean;
+}
 
 export interface SettingsStorage {
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void;
@@ -222,8 +261,10 @@ export class FileSettingsStorage implements SettingsStorage {
 	private projectSettingsPath: string;
 
 	constructor(cwd: string, agentDir: string) {
-		this.globalSettingsPath = join(agentDir, "settings.json");
-		this.projectSettingsPath = join(cwd, CONFIG_DIR_NAME, "settings.json");
+		const resolvedCwd = resolvePath(cwd);
+		const resolvedAgentDir = resolvePath(agentDir);
+		this.globalSettingsPath = join(resolvedAgentDir, "settings.json");
+		this.projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME, "settings.json");
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -306,7 +347,7 @@ export class SettingsManager {
 	private globalSettings: Settings;
 	private projectSettings: Settings;
 	private settings: Settings;
-	private runtimeOverrides: Settings = {};
+	private projectTrusted: boolean;
 	private modifiedFields = new Set<keyof Settings>(); // Track global fields modified during session
 	private modifiedNestedFields = new Map<keyof Settings, Set<string>>(); // Track global nested field modifications
 	private modifiedProjectFields = new Set<keyof Settings>(); // Track project fields modified during session
@@ -323,10 +364,12 @@ export class SettingsManager {
 		globalLoadError: Error | null = null,
 		projectLoadError: Error | null = null,
 		initialErrors: SettingsError[] = [],
+		projectTrusted = true,
 	) {
 		this.storage = storage;
 		this.globalSettings = initialGlobal;
 		this.projectSettings = initialProject;
+		this.projectTrusted = projectTrusted;
 		this.globalSettingsLoadError = globalLoadError;
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
@@ -334,15 +377,20 @@ export class SettingsManager {
 	}
 
 	/** Create a SettingsManager that loads from files */
-	static create(cwd: string, agentDir: string = getAgentDir()): SettingsManager {
+	static create(
+		cwd: string,
+		agentDir: string = getAgentDir(),
+		options: SettingsManagerCreateOptions = {},
+	): SettingsManager {
 		const storage = new FileSettingsStorage(cwd, agentDir);
-		return SettingsManager.fromStorage(storage);
+		return SettingsManager.fromStorage(storage, options);
 	}
 
 	/** Create a SettingsManager from an arbitrary storage backend */
-	static fromStorage(storage: SettingsStorage): SettingsManager {
+	static fromStorage(storage: SettingsStorage, options: SettingsManagerCreateOptions = {}): SettingsManager {
+		const projectTrusted = options.projectTrusted ?? true;
 		const globalLoad = SettingsManager.tryLoadFromStorage(storage, "global");
-		const projectLoad = SettingsManager.tryLoadFromStorage(storage, "project");
+		const projectLoad = SettingsManager.tryLoadFromStorage(storage, "project", projectTrusted);
 		const initialErrors: SettingsError[] = [];
 		if (globalLoad.error) {
 			initialErrors.push({ scope: "global", error: globalLoad.error });
@@ -358,18 +406,23 @@ export class SettingsManager {
 			globalLoad.error,
 			projectLoad.error,
 			initialErrors,
+			projectTrusted,
 		);
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
-	static inMemory(settings: Partial<Settings> = {}): SettingsManager {
+	static inMemory(settings: Partial<Settings> = {}, options: SettingsManagerCreateOptions = {}): SettingsManager {
 		const storage = new InMemorySettingsStorage();
 		const initialSettings = SettingsManager.migrateSettings(structuredClone(settings) as Record<string, unknown>);
 		storage.withLock("global", () => JSON.stringify(initialSettings, null, 2));
-		return SettingsManager.fromStorage(storage);
+		return SettingsManager.fromStorage(storage, options);
 	}
 
-	private static loadFromStorage(storage: SettingsStorage, scope: SettingsScope): Settings {
+	private static loadFromStorage(storage: SettingsStorage, scope: SettingsScope, projectTrusted = true): Settings {
+		if (scope === "project" && !projectTrusted) {
+			return {};
+		}
+
 		let content: string | undefined;
 		storage.withLock(scope, (current) => {
 			content = current;
@@ -386,9 +439,10 @@ export class SettingsManager {
 	private static tryLoadFromStorage(
 		storage: SettingsStorage,
 		scope: SettingsScope,
+		projectTrusted = true,
 	): { settings: Settings; error: Error | null } {
 		try {
-			return { settings: SettingsManager.loadFromStorage(storage, scope), error: null };
+			return { settings: SettingsManager.loadFromStorage(storage, scope, projectTrusted), error: null };
 		} catch (error) {
 			return { settings: {}, error: error as Error };
 		}
@@ -453,6 +507,7 @@ export class SettingsManager {
 			delete retrySettings.maxDelayMs;
 		}
 
+		// Migrate legacy telemetry boolean -> object form
 		if (typeof settings.telemetry === "boolean") {
 			settings.telemetry = { enabled: settings.telemetry };
 		} else if (
@@ -473,6 +528,35 @@ export class SettingsManager {
 		return structuredClone(this.projectSettings);
 	}
 
+	isProjectTrusted(): boolean {
+		return this.projectTrusted;
+	}
+
+	setProjectTrusted(trusted: boolean): void {
+		if (this.projectTrusted === trusted) {
+			return;
+		}
+
+		this.projectTrusted = trusted;
+		this.modifiedProjectFields.clear();
+		this.modifiedProjectNestedFields.clear();
+
+		if (!trusted) {
+			this.projectSettings = {};
+			this.projectSettingsLoadError = null;
+			this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+			return;
+		}
+
+		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project", trusted);
+		this.projectSettings = projectLoad.settings;
+		this.projectSettingsLoadError = projectLoad.error;
+		if (projectLoad.error) {
+			this.recordError("project", projectLoad.error);
+		}
+		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+	}
+
 	async reload(): Promise<void> {
 		await this.writeQueue;
 		const globalLoad = SettingsManager.tryLoadFromStorage(this.storage, "global");
@@ -489,7 +573,7 @@ export class SettingsManager {
 		this.modifiedProjectFields.clear();
 		this.modifiedProjectNestedFields.clear();
 
-		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project");
+		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project", this.projectTrusted);
 		if (!projectLoad.error) {
 			this.projectSettings = projectLoad.settings;
 			this.projectSettingsLoadError = null;
@@ -503,7 +587,6 @@ export class SettingsManager {
 
 	/** Apply additional overrides on top of current settings */
 	applyOverrides(overrides: Partial<Settings>): void {
-		this.runtimeOverrides = deepMergeSettings(this.runtimeOverrides, overrides);
 		this.settings = deepMergeSettings(this.settings, overrides);
 	}
 
@@ -529,6 +612,12 @@ export class SettingsManager {
 		}
 	}
 
+	private assertProjectTrustedForWrite(): void {
+		if (!this.projectTrusted) {
+			throw new Error("Project is not trusted; refusing to write project settings");
+		}
+	}
+
 	private recordError(scope: SettingsScope, error: unknown): void {
 		const normalizedError = error instanceof Error ? error : new Error(String(error));
 		this.errors.push({ scope, error: normalizedError });
@@ -548,6 +637,9 @@ export class SettingsManager {
 	private enqueueWrite(scope: SettingsScope, task: () => void): void {
 		this.writeQueue = this.writeQueue
 			.then(() => {
+				if (scope === "project") {
+					this.assertProjectTrustedForWrite();
+				}
 				task();
 				this.clearModifiedScope(scope);
 			})
@@ -599,12 +691,6 @@ export class SettingsManager {
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 
 		if (this.globalSettingsLoadError) {
-			this.recordError(
-				"global",
-				new Error(
-					`Global settings not saved: settings file failed to parse: ${this.globalSettingsLoadError.message}`,
-				),
-			);
 			return;
 		}
 
@@ -618,16 +704,11 @@ export class SettingsManager {
 	}
 
 	private saveProjectSettings(settings: Settings): void {
+		this.assertProjectTrustedForWrite();
 		this.projectSettings = structuredClone(settings);
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 
 		if (this.projectSettingsLoadError) {
-			this.recordError(
-				"project",
-				new Error(
-					`Project settings not saved: settings file failed to parse: ${this.projectSettingsLoadError.message}`,
-				),
-			);
 			return;
 		}
 
@@ -639,43 +720,37 @@ export class SettingsManager {
 		});
 	}
 
+	private updateProjectSettings(field: keyof Settings, update: (settings: Settings) => void): void {
+		this.assertProjectTrustedForWrite();
+		const projectSettings = structuredClone(this.projectSettings);
+		update(projectSettings);
+		this.markProjectModified(field);
+		this.saveProjectSettings(projectSettings);
+	}
+
 	async flush(): Promise<void> {
 		await this.writeQueue;
 	}
 
-	drainErrors(scope?: SettingsScope): SettingsError[] {
-		if (!scope) {
-			const drained = [...this.errors];
-			this.errors = [];
-			return drained;
-		}
-		const drained = this.errors.filter((entry) => entry.scope === scope);
-		this.errors = this.errors.filter((entry) => entry.scope !== scope);
+	drainErrors(): SettingsError[] {
+		const drained = [...this.errors];
+		this.errors = [];
 		return drained;
 	}
 
-	getOnboardingShown(): boolean {
-		return this.settings.onboardingShown ?? this.settings.onboardingCompleted ?? false;
+	getLastChangelogVersion(): string | undefined {
+		return this.settings.lastChangelogVersion;
 	}
 
-	setOnboardingShown(shown: boolean): void {
-		this.globalSettings.onboardingShown = shown;
-		this.markModified("onboardingShown");
+	setLastChangelogVersion(version: string): void {
+		this.globalSettings.lastChangelogVersion = version;
+		this.markModified("lastChangelogVersion");
 		this.save();
 	}
 
 	getSessionDir(): string | undefined {
 		const sessionDir = this.settings.sessionDir;
-		if (!sessionDir) {
-			return sessionDir;
-		}
-		if (sessionDir === "~") {
-			return homedir();
-		}
-		if (sessionDir.startsWith("~/")) {
-			return join(homedir(), sessionDir.slice(2));
-		}
-		return sessionDir;
+		return sessionDir ? normalizePath(sessionDir) : sessionDir;
 	}
 
 	getDefaultProvider(): string | undefined {
@@ -708,16 +783,6 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getRecentModels(): string[] {
-		return this.settings.recentModels ?? [];
-	}
-
-	private recordModelUseInternal(provider: string, modelId: string): void {
-		const key = `${provider}/${modelId}`;
-		const next = [key, ...this.getRecentModels().filter((k) => k !== key)];
-		this.globalSettings.recentModels = next.slice(0, RECENT_MODELS_LIMIT);
-	}
-
 	getSteeringMode(): "all" | "one-at-a-time" {
 		return this.settings.steeringMode || "one-at-a-time";
 	}
@@ -738,8 +803,15 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getThemeSetting(): string | undefined {
+		const value = this.settings.theme;
+		if (typeof value === "string") return value;
+		return undefined;
+	}
+
 	getTheme(): string | undefined {
-		return this.settings.theme;
+		const theme = this.getThemeSetting();
+		return theme?.includes("/") ? undefined : theme;
 	}
 
 	setTheme(theme: string): void {
@@ -748,11 +820,113 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getDefaultThinkingLevel(): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | undefined {
+	getDefaultThinkingLevel(): ThinkingLevel | undefined {
 		return this.settings.defaultThinkingLevel;
 	}
 
-	setDefaultThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"): void {
+	/** Global daemon idle eviction policy in minutes, or "off". Default 90. */
+	getIdleEvictionMinutes(): number | "off" {
+		const value: unknown = this.globalSettings.idleEvictionMinutes;
+		if (value === "off") return "off";
+		if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+		return DEFAULT_IDLE_EVICTION_MINUTES;
+	}
+
+	setIdleEvictionMinutes(value: number | "off"): void {
+		if (value !== "off" && (!Number.isFinite(value) || value <= 0)) {
+			throw new Error("Idle eviction minutes must be a positive number or off");
+		}
+		this.globalSettings.idleEvictionMinutes = value;
+		this.markModified("idleEvictionMinutes");
+		this.save();
+	}
+
+	getEnableBuiltinSkills(): boolean {
+		return this.settings.enableBuiltinSkills ?? true;
+	}
+
+	setEnableBuiltinSkills(enabled: boolean): void {
+		this.globalSettings.enableBuiltinSkills = enabled;
+		this.markModified("enableBuiltinSkills");
+		this.save();
+	}
+
+	getAgentTracesEnabled(): boolean {
+		return this.settings.agentTraces?.enabled ?? false;
+	}
+
+	setAgentTracesEnabled(enabled: boolean): void {
+		if (!this.globalSettings.agentTraces) {
+			this.globalSettings.agentTraces = {};
+		}
+		this.globalSettings.agentTraces.enabled = enabled;
+		this.markModified("agentTraces", "enabled");
+		this.save();
+	}
+
+	getTelemetryEnabled(): boolean {
+		const globalEnabled = this.globalSettings.telemetry?.enabled ?? true;
+		const projectEnabled = this.projectSettings.telemetry?.enabled ?? true;
+		const mergedEnabled = this.settings.telemetry?.enabled ?? true;
+		return globalEnabled && projectEnabled && mergedEnabled;
+	}
+
+	private getOrCreateGlobalTelemetrySettings(): TelemetrySettings {
+		const telemetry = this.globalSettings.telemetry;
+		if (typeof telemetry !== "object" || telemetry === null || Array.isArray(telemetry)) {
+			this.globalSettings.telemetry = {};
+		}
+		return this.globalSettings.telemetry as TelemetrySettings;
+	}
+
+	setTelemetryEnabled(enabled: boolean): void {
+		this.getOrCreateGlobalTelemetrySettings().enabled = enabled;
+		this.markModified("telemetry", "enabled");
+		this.save();
+	}
+
+	getTelemetryNoticeShown(): boolean {
+		return this.settings.telemetry?.noticeShown ?? false;
+	}
+
+	setTelemetryNoticeShown(shown: boolean): void {
+		this.getOrCreateGlobalTelemetrySettings().noticeShown = shown;
+		this.markModified("telemetry", "noticeShown");
+		this.save();
+	}
+
+	getAutoRefineSettings(): { enabled: boolean; turnInterval: number; compact: boolean; cooldownMs: number } {
+		const turnInterval = this.settings.autoRefine?.turnInterval;
+		const cooldownMs = this.settings.autoRefine?.cooldownMs;
+		return {
+			enabled: this.settings.autoRefine?.enabled ?? true,
+			turnInterval: Math.max(
+				1,
+				typeof turnInterval === "number" && Number.isFinite(turnInterval) ? turnInterval : 25,
+			),
+			compact: this.settings.autoRefine?.compact ?? true,
+			cooldownMs: Math.max(
+				0,
+				typeof cooldownMs === "number" && Number.isFinite(cooldownMs) ? cooldownMs : 20 * 60_000,
+			),
+		};
+	}
+
+	getMcpServers(): Record<string, McpServerConfig> | undefined {
+		return this.settings.mcpServers;
+	}
+
+	getRecentModels(): string[] {
+		return this.settings.recentModels ?? [];
+	}
+
+	private recordModelUseInternal(provider: string, modelId: string): void {
+		const key = `${provider}/${modelId}`;
+		const next = [key, ...this.getRecentModels().filter((k) => k !== key)];
+		this.globalSettings.recentModels = next.slice(0, RECENT_MODELS_LIMIT);
+	}
+
+	setDefaultThinkingLevel(level: ThinkingLevel): void {
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
 		this.save();
@@ -775,21 +949,6 @@ export class SettingsManager {
 	setRlmMaxDepth(maxDepth: number): void {
 		this.globalSettings.rlmMaxDepth = maxDepth;
 		this.markModified("rlmMaxDepth");
-		this.save();
-	}
-
-	getIdleEvictionMinutes(): number | "off" {
-		const value: unknown = this.globalSettings.idleEvictionMinutes;
-		if (value === "off" || value === "none") return "off";
-		return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : DEFAULT_IDLE_EVICTION_MINUTES;
-	}
-
-	setIdleEvictionMinutes(value: number | "off"): void {
-		if (value !== "off" && (!Number.isFinite(value) || value <= 0)) {
-			throw new Error("Idle eviction minutes must be a positive number or off");
-		}
-		this.globalSettings.idleEvictionMinutes = value;
-		this.markModified("idleEvictionMinutes");
 		this.save();
 	}
 
@@ -816,50 +975,6 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getAgentTracesEnabled(): boolean {
-		return this.settings.agentTraces?.enabled ?? false;
-	}
-
-	setAgentTracesEnabled(enabled: boolean): void {
-		if (!this.globalSettings.agentTraces) {
-			this.globalSettings.agentTraces = {};
-		}
-		this.globalSettings.agentTraces.enabled = enabled;
-		this.markModified("agentTraces", "enabled");
-		this.save();
-	}
-
-	getTelemetryEnabled(): boolean {
-		const globalEnabled = this.globalSettings.telemetry?.enabled ?? true;
-		const projectEnabled = this.projectSettings.telemetry?.enabled ?? true;
-		const runtimeEnabled = this.runtimeOverrides.telemetry?.enabled ?? true;
-		return globalEnabled && projectEnabled && runtimeEnabled;
-	}
-
-	private getOrCreateGlobalTelemetrySettings(): TelemetrySettings {
-		const telemetry = this.globalSettings.telemetry;
-		if (typeof telemetry !== "object" || telemetry === null || Array.isArray(telemetry)) {
-			this.globalSettings.telemetry = {};
-		}
-		return this.globalSettings.telemetry!;
-	}
-
-	setTelemetryEnabled(enabled: boolean): void {
-		this.getOrCreateGlobalTelemetrySettings().enabled = enabled;
-		this.markModified("telemetry", "enabled");
-		this.save();
-	}
-
-	getTelemetryNoticeShown(): boolean {
-		return this.runtimeOverrides.telemetry?.noticeShown ?? this.globalSettings.telemetry?.noticeShown ?? false;
-	}
-
-	setTelemetryNoticeShown(shown: boolean): void {
-		this.getOrCreateGlobalTelemetrySettings().noticeShown = shown;
-		this.markModified("telemetry", "noticeShown");
-		this.save();
-	}
-
 	getCompactionReserveTokens(): number {
 		return this.settings.compaction?.reserveTokens ?? 16384;
 	}
@@ -877,23 +992,6 @@ export class SettingsManager {
 			enabled: this.getCompactionEnabled(),
 			reserveTokens: this.getCompactionReserveTokens(),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(),
-		};
-	}
-
-	getAutoRefineSettings(): { enabled: boolean; turnInterval: number; compact: boolean; cooldownMs: number } {
-		const turnInterval = this.settings.autoRefine?.turnInterval;
-		const cooldownMs = this.settings.autoRefine?.cooldownMs;
-		return {
-			enabled: this.settings.autoRefine?.enabled ?? true,
-			turnInterval: Math.max(
-				1,
-				typeof turnInterval === "number" && Number.isFinite(turnInterval) ? turnInterval : 25,
-			),
-			compact: this.settings.autoRefine?.compact ?? true,
-			cooldownMs: Math.max(
-				0,
-				typeof cooldownMs === "number" && Number.isFinite(cooldownMs) ? cooldownMs : 20 * 60_000,
-			),
 		};
 	}
 
@@ -929,6 +1027,19 @@ export class SettingsManager {
 		};
 	}
 
+	getHttpIdleTimeoutMs(): number {
+		return parseTimeoutSetting(this.settings.httpIdleTimeoutMs, "httpIdleTimeoutMs") ?? DEFAULT_HTTP_IDLE_TIMEOUT_MS;
+	}
+
+	setHttpIdleTimeoutMs(timeoutMs: number): void {
+		if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+			throw new Error(`Invalid httpIdleTimeoutMs setting: ${String(timeoutMs)}`);
+		}
+		this.globalSettings.httpIdleTimeoutMs = Math.floor(timeoutMs);
+		this.markModified("httpIdleTimeoutMs");
+		this.save();
+	}
+
 	getProviderRetrySettings(): { timeoutMs?: number; maxRetries?: number; maxRetryDelayMs: number } {
 		return {
 			timeoutMs: this.settings.retry?.provider?.timeoutMs,
@@ -937,8 +1048,28 @@ export class SettingsManager {
 		};
 	}
 
+	getWebSocketConnectTimeoutMs(): number | undefined {
+		return parseTimeoutSetting(this.settings.websocketConnectTimeoutMs, "websocketConnectTimeoutMs");
+	}
+
 	getHideThinkingBlock(): boolean {
 		return this.settings.hideThinkingBlock ?? false;
+	}
+
+	getShowCacheMissNotices(): boolean {
+		return this.settings.showCacheMissNotices ?? false;
+	}
+
+	getExternalEditorCommand(): string {
+		const configuredEditor = this.settings.externalEditor;
+		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
+			return configuredEditor;
+		}
+		const environmentEditor = process.env.VISUAL || process.env.EDITOR;
+		if (environmentEditor) {
+			return environmentEditor;
+		}
+		return process.platform === "win32" ? "notepad" : "nano";
 	}
 
 	setHideThinkingBlock(hide: boolean): void {
@@ -947,8 +1078,15 @@ export class SettingsManager {
 		this.save();
 	}
 
+	setShowCacheMissNotices(show: boolean): void {
+		this.globalSettings.showCacheMissNotices = show;
+		this.markModified("showCacheMissNotices");
+		this.save();
+	}
+
 	getShellPath(): string | undefined {
-		return this.settings.shellPath;
+		const shellPath = this.settings.shellPath;
+		return shellPath ? normalizePath(shellPath) : shellPath;
 	}
 
 	setShellPath(path: string | undefined): void {
@@ -960,10 +1098,30 @@ export class SettingsManager {
 	getQuietStartup(): boolean {
 		return this.settings.quietStartup ?? false;
 	}
+	getOnboardingShown(): boolean {
+		return this.settings.onboardingShown ?? this.settings.onboardingCompleted ?? false;
+	}
+
+	setOnboardingShown(shown: boolean): void {
+		this.globalSettings.onboardingShown = shown;
+		this.markModified("onboardingShown");
+		this.save();
+	}
 
 	setQuietStartup(quiet: boolean): void {
 		this.globalSettings.quietStartup = quiet;
 		this.markModified("quietStartup");
+		this.save();
+	}
+
+	getDefaultProjectTrust(): DefaultProjectTrust {
+		const value = this.globalSettings.defaultProjectTrust;
+		return value === "always" || value === "never" ? value : "ask";
+	}
+
+	setDefaultProjectTrust(defaultProjectTrust: DefaultProjectTrust): void {
+		this.globalSettings.defaultProjectTrust = defaultProjectTrust;
+		this.markModified("defaultProjectTrust");
 		this.save();
 	}
 
@@ -987,6 +1145,45 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getCollapseChangelog(): boolean {
+		return this.settings.collapseChangelog ?? false;
+	}
+
+	setCollapseChangelog(collapse: boolean): void {
+		this.globalSettings.collapseChangelog = collapse;
+		this.markModified("collapseChangelog");
+		this.save();
+	}
+
+	getEnableInstallTelemetry(): boolean {
+		return this.settings.enableInstallTelemetry ?? true;
+	}
+
+	setEnableInstallTelemetry(enabled: boolean): void {
+		this.globalSettings.enableInstallTelemetry = enabled;
+		this.markModified("enableInstallTelemetry");
+		this.save();
+	}
+
+	getEnableAnalytics(): boolean {
+		return this.settings.enableAnalytics ?? false;
+	}
+
+	getTrackingId(): string | undefined {
+		return this.settings.trackingId;
+	}
+
+	/** Set the analytics opt-in preference; generates a tracking identifier on first opt-in */
+	setEnableAnalytics(enabled: boolean): void {
+		this.globalSettings.enableAnalytics = enabled;
+		this.markModified("enableAnalytics");
+		if (enabled && !this.globalSettings.trackingId) {
+			this.globalSettings.trackingId = randomUUID();
+			this.markModified("trackingId");
+		}
+		this.save();
+	}
+
 	getPackages(): PackageSource[] {
 		return [...(this.settings.packages ?? [])];
 	}
@@ -998,10 +1195,9 @@ export class SettingsManager {
 	}
 
 	setProjectPackages(packages: PackageSource[]): void {
-		const projectSettings = structuredClone(this.projectSettings);
-		projectSettings.packages = packages;
-		this.markProjectModified("packages");
-		this.saveProjectSettings(projectSettings);
+		this.updateProjectSettings("packages", (settings) => {
+			settings.packages = packages;
+		});
 	}
 
 	getExtensionPaths(): string[] {
@@ -1015,10 +1211,9 @@ export class SettingsManager {
 	}
 
 	setProjectExtensionPaths(paths: string[]): void {
-		const projectSettings = structuredClone(this.projectSettings);
-		projectSettings.extensions = paths;
-		this.markProjectModified("extensions");
-		this.saveProjectSettings(projectSettings);
+		this.updateProjectSettings("extensions", (settings) => {
+			settings.extensions = paths;
+		});
 	}
 
 	getSkillPaths(): string[] {
@@ -1032,10 +1227,9 @@ export class SettingsManager {
 	}
 
 	setProjectSkillPaths(paths: string[]): void {
-		const projectSettings = structuredClone(this.projectSettings);
-		projectSettings.skills = paths;
-		this.markProjectModified("skills");
-		this.saveProjectSettings(projectSettings);
+		this.updateProjectSettings("skills", (settings) => {
+			settings.skills = paths;
+		});
 	}
 
 	getPromptTemplatePaths(): string[] {
@@ -1049,10 +1243,9 @@ export class SettingsManager {
 	}
 
 	setProjectPromptTemplatePaths(paths: string[]): void {
-		const projectSettings = structuredClone(this.projectSettings);
-		projectSettings.prompts = paths;
-		this.markProjectModified("prompts");
-		this.saveProjectSettings(projectSettings);
+		this.updateProjectSettings("prompts", (settings) => {
+			settings.prompts = paths;
+		});
 	}
 
 	getThemePaths(): string[] {
@@ -1066,10 +1259,9 @@ export class SettingsManager {
 	}
 
 	setProjectThemePaths(paths: string[]): void {
-		const projectSettings = structuredClone(this.projectSettings);
-		projectSettings.themes = paths;
-		this.markProjectModified("themes");
-		this.saveProjectSettings(projectSettings);
+		this.updateProjectSettings("themes", (settings) => {
+			settings.themes = paths;
+		});
 	}
 
 	getEnableSkillCommands(): boolean {
@@ -1079,26 +1271,6 @@ export class SettingsManager {
 	setEnableSkillCommands(enabled: boolean): void {
 		this.globalSettings.enableSkillCommands = enabled;
 		this.markModified("enableSkillCommands");
-		this.save();
-	}
-
-	getBundledSkills(): { websearch: boolean } {
-		return {
-			websearch: this.settings.bundledSkills?.websearch ?? true,
-		};
-	}
-
-	getBundledWebsearchEnabled(): boolean {
-		return this.getBundledSkills().websearch;
-	}
-
-	getEnableBuiltinSkills(): boolean {
-		return this.settings.enableBuiltinSkills ?? true;
-	}
-
-	setEnableBuiltinSkills(enabled: boolean): void {
-		this.globalSettings.enableBuiltinSkills = enabled;
-		this.markModified("enableBuiltinSkills");
 		this.save();
 	}
 
@@ -1119,6 +1291,23 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getImageWidthCells(): number {
+		const width = this.settings.terminal?.imageWidthCells;
+		if (typeof width !== "number" || !Number.isFinite(width)) {
+			return 60;
+		}
+		return Math.max(1, Math.floor(width));
+	}
+
+	setImageWidthCells(width: number): void {
+		if (!this.globalSettings.terminal) {
+			this.globalSettings.terminal = {};
+		}
+		this.globalSettings.terminal.imageWidthCells = Math.max(1, Math.floor(width));
+		this.markModified("terminal", "imageWidthCells");
+		this.save();
+	}
+
 	getClearOnShrink(): boolean {
 		// Settings takes precedence, then env var, then default false
 		if (this.settings.terminal?.clearOnShrink !== undefined) {
@@ -1136,12 +1325,36 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getShowTerminalProgress(): boolean {
+		return this.settings.terminal?.showTerminalProgress ?? false;
+	}
+
+	setShowTerminalProgress(enabled: boolean): void {
+		if (!this.globalSettings.terminal) {
+			this.globalSettings.terminal = {};
+		}
+		this.globalSettings.terminal.showTerminalProgress = enabled;
+		this.markModified("terminal", "showTerminalProgress");
+		this.save();
+	}
+
+	getTuiMode(): TuiMode {
+		return this.getFullscreen() ? "fullscreen" : "regular";
+	}
+
 	getFullscreen(): boolean {
 		// Env var overrides the setting (both directions) for one-off runs
 		if (process.env.PI_FULLSCREEN !== undefined) {
 			return process.env.PI_FULLSCREEN === "1";
 		}
-		return this.settings.terminal?.fullscreen ?? true;
+		if (this.settings.terminal?.fullscreen !== undefined) {
+			return this.settings.terminal.fullscreen;
+		}
+		// Legacy tuiMode setting
+		if (this.settings.tuiMode !== undefined) {
+			return this.settings.tuiMode === "fullscreen";
+		}
+		return true;
 	}
 
 	setFullscreen(enabled: boolean): void {
@@ -1166,16 +1379,28 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getShowTerminalProgress(): boolean {
-		return this.settings.terminal?.showTerminalProgress ?? false;
+	setTuiMode(mode: TuiMode): void {
+		this.setFullscreen(mode === "fullscreen");
 	}
 
-	setShowTerminalProgress(enabled: boolean): void {
-		if (!this.globalSettings.terminal) {
-			this.globalSettings.terminal = {};
-		}
-		this.globalSettings.terminal.showTerminalProgress = enabled;
-		this.markModified("terminal", "showTerminalProgress");
+	getFullscreenExitOutput(): FullscreenExitOutput {
+		return this.settings.fullscreenExitOutput === "resume-hint" ? "resume-hint" : "transcript";
+	}
+
+	setFullscreenExitOutput(output: FullscreenExitOutput): void {
+		this.globalSettings.fullscreenExitOutput = output;
+		this.markModified("fullscreenExitOutput");
+		this.save();
+	}
+
+	getFullscreenScrollbar(): ScrollViewScrollbar {
+		const mode = this.settings.fullscreenScrollbar;
+		return mode === "always" || mode === "hidden" ? mode : "auto";
+	}
+
+	setFullscreenScrollbar(mode: ScrollViewScrollbar): void {
+		this.globalSettings.fullscreenScrollbar = mode;
+		this.markModified("fullscreenScrollbar");
 		this.save();
 	}
 
@@ -1209,13 +1434,19 @@ export class SettingsManager {
 		return this.settings.enabledModels;
 	}
 
-	getMcpServers(): Record<string, McpServerConfig> | undefined {
-		return this.settings.mcpServers;
-	}
-
 	setEnabledModels(patterns: string[] | undefined): void {
 		this.globalSettings.enabledModels = patterns;
 		this.markModified("enabledModels");
+		this.save();
+	}
+
+	getDoubleEscapeAction(): "fork" | "tree" | "none" {
+		return this.settings.doubleEscapeAction ?? "tree";
+	}
+
+	setDoubleEscapeAction(action: "fork" | "tree" | "none"): void {
+		this.globalSettings.doubleEscapeAction = action;
+		this.markModified("doubleEscapeAction");
 		this.save();
 	}
 
@@ -1251,6 +1482,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getOutputPad(): 0 | 1 {
+		return this.settings.outputPad === 0 ? 0 : 1;
+	}
+
+	setOutputPad(padding: 0 | 1): void {
+		this.globalSettings.outputPad = padding;
+		this.markModified("outputPad");
+		this.save();
+	}
+
 	getAutocompleteMaxVisible(): number {
 		return this.settings.autocompleteMaxVisible ?? 5;
 	}
@@ -1263,6 +1504,18 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	getMermaidRenderingMode(): MermaidRenderingMode {
+		const mode = this.settings.markdown?.mermaid;
+		return mode === "off" || mode === "final" ? mode : "streaming";
+	}
+
+	setMermaidRenderingMode(mode: MermaidRenderingMode): void {
+		this.globalSettings.markdown ??= {};
+		this.globalSettings.markdown.mermaid = mode;
+		this.markModified("markdown", "mermaid");
+		this.save();
 	}
 
 	getWarnings(): WarningSettings {

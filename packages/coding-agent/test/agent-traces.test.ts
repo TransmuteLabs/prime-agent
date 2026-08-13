@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ENV_AGENT_DIR, getAgentTracesLogPath } from "../src/config.js";
+import { ENV_AGENT_DIR, getAgentTracesLogPath } from "../src/config.ts";
 import {
 	findAgentTraceFiles,
 	flushAgentTraceUpload,
@@ -12,11 +12,11 @@ import {
 	previewAgentTraceFile,
 	uploadAgentTraceFile,
 	uploadAllAgentTraces,
-} from "../src/core/agent-traces.js";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { PRIME_AGENT_TRACES_PROVIDER_ID, PRIME_INFERENCE_PROVIDER_ID } from "../src/core/prime-inference-auth.js";
-import { SessionManager } from "../src/core/session-manager.js";
-import { SettingsManager } from "../src/core/settings-manager.js";
+} from "../src/core/agent-traces.ts";
+import { AuthStorage } from "../src/core/auth-storage.ts";
+import { PRIME_AGENT_TRACES_PROVIDER_ID, PRIME_INFERENCE_PROVIDER_ID } from "../src/core/prime-inference-auth.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 
 interface FetchCall {
 	url: string;
@@ -93,11 +93,19 @@ describe("agent trace upload", () => {
 	let originalTraceBaseUrl: string | undefined;
 	let originalPrimeBaseUrl: string | undefined;
 	let originalAgentDir: string | undefined;
+	let originalHome: string | undefined;
+	let originalUserProfile: string | undefined;
 
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "agent-traces-test-"));
 		originalAgentDir = process.env[ENV_AGENT_DIR];
 		process.env[ENV_AGENT_DIR] = tempDir;
+		// Isolate the default Prime CLI config (~/.prime/config.json) from the
+		// developer machine's real credentials.
+		originalHome = process.env.HOME;
+		originalUserProfile = process.env.USERPROFILE;
+		process.env.HOME = tempDir;
+		process.env.USERPROFILE = tempDir;
 		originalTraceApiKey = process.env.PRIME_AGENT_TRACES_API_KEY;
 		originalPrimeApiKey = process.env.PRIME_API_KEY;
 		originalTraceBaseUrl = process.env.PRIME_AGENT_TRACES_BASE_URL;
@@ -135,6 +143,16 @@ describe("agent trace upload", () => {
 			delete process.env.PRIME_API_BASE_URL;
 		} else {
 			process.env.PRIME_API_BASE_URL = originalPrimeBaseUrl;
+		}
+		if (originalHome === undefined) {
+			delete process.env.HOME;
+		} else {
+			process.env.HOME = originalHome;
+		}
+		if (originalUserProfile === undefined) {
+			delete process.env.USERPROFILE;
+		} else {
+			process.env.USERPROFILE = originalUserProfile;
 		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });

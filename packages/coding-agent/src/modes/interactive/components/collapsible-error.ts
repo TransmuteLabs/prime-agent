@@ -1,7 +1,7 @@
 import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
-import { theme } from "../theme/theme.js";
-import { expandCollapseHint } from "./keybinding-hints.js";
+import { theme } from "../theme/theme.ts";
+import { expandCollapseHint } from "./keybinding-hints.ts";
 
 export interface CollapsibleErrorOptions {
 	text: string;
@@ -77,8 +77,10 @@ export function shouldCollapseErrorDetails(text: string): boolean {
 
 export class CollapsibleErrorComponent implements Component {
 	private expanded: boolean;
+	private readonly options: CollapsibleErrorOptions;
 
-	constructor(private readonly options: CollapsibleErrorOptions) {
+	constructor(options: CollapsibleErrorOptions) {
+		this.options = options;
 		this.expanded = options.expanded ?? false;
 	}
 

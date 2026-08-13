@@ -3,18 +3,18 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentSession } from "../core/agent-session.js";
-import type { AgentSessionRuntime } from "../core/agent-session-runtime.js";
+import type { AgentSession } from "../core/agent-session.ts";
+import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import {
 	clearOrphanProcessJournal,
 	isOrphanProcessIdentityCurrent,
 	ORPHAN_PROCESS_JOURNAL_ENV,
 	readActiveOrphanProcesses,
-} from "../core/orphan-process-journal.js";
-import { SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../core/session-lease.js";
-import { attachJsonlLineReader, serializeJsonLine } from "../modes/rpc/jsonl.js";
-import { isHelpCommandRequest, PUBLIC_COMMAND_NAMES, REMOVED_COMMAND_NAMES } from "./command-registry.js";
-import { type CliSubprocessLaunchSpec, createCliSubprocessLaunchSpec } from "./subprocess-launch.js";
+} from "../core/orphan-process-journal.ts";
+import { SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../core/session-lease.ts";
+import { attachJsonlLineReader, serializeJsonLine } from "../modes/rpc/jsonl.ts";
+import { isHelpCommandRequest, PUBLIC_COMMAND_NAMES, REMOVED_COMMAND_NAMES } from "./command-registry.ts";
+import { type CliSubprocessLaunchSpec, createCliSubprocessLaunchSpec } from "./subprocess-launch.ts";
 
 const OWNED_WORKER_ENV = "PRIME_AGENT_INTERNAL_OWNED_WORKER";
 const OWNED_RECOVERY_DESCRIPTOR_ENV = "PRIME_AGENT_INTERNAL_OWNED_RECOVERY_DESCRIPTOR";

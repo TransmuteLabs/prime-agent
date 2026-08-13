@@ -1,15 +1,14 @@
 // TODO: reconsider persistent kernel vs stateless `python -c` once RLM-1 weights land.
 import { type ChildProcess, spawn } from "node:child_process";
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { registerSessionResourceCleanup } from "@earendil-works/pi-ai";
-import { v4 as uuid } from "uuid";
 import { Dealer, Subscriber } from "zeromq";
-import { ensureKernelPython, type KernelBootstrapProgressHandler, type KernelPythonSkill } from "./bootstrap.js";
-import { ForkServerUnavailable, forkKernel, isForkServerEnabled } from "./fork-server.js";
+import { ensureKernelPython, type KernelBootstrapProgressHandler, type KernelPythonSkill } from "./bootstrap.ts";
+import { ForkServerUnavailable, forkKernel, isForkServerEnabled } from "./fork-server.ts";
 import {
 	buildListNamesCode,
 	buildRestoreCode,
@@ -20,7 +19,7 @@ import {
 	parseSnapshotResult,
 	type RestoreResult,
 	type SnapshotResult,
-} from "./state-snapshot.js";
+} from "./state-snapshot.ts";
 
 const DELIM = Buffer.from("<IDS|MSG>");
 const PROTOCOL_VERSION = "5.3";
@@ -356,7 +355,7 @@ function buildMessage(
 ): JupyterMessage {
 	return {
 		header: {
-			msg_id: uuid(),
+			msg_id: randomUUID(),
 			session,
 			username,
 			date: new Date().toISOString(),
@@ -514,7 +513,7 @@ export class KernelManager {
 		"python" | "cwd" | "env" | "sessionId" | "hostHandlers" | "pythonSkills" | "snapshot"
 	> &
 		Required<Pick<KernelManagerOptions, "username">>;
-	private readonly session = uuid();
+	private readonly session = randomUUID();
 	private readonly commTargets = new Map<string, string>();
 	private readonly handledHostRequestCommIds = new Set<string>();
 	private kernel?: ChildProcess;

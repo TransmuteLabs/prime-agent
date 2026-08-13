@@ -15,7 +15,6 @@ const PRIVATE_PRIME_INFERENCE_MODELS: readonly Model<"openai-completions">[] = [
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 400000,
 		maxTokens: 131072,
-		featured: true,
 		compat: {
 			supportsDeveloperRole: false,
 			maxTokensField: "max_tokens",

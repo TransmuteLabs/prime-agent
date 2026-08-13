@@ -1,11 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { IPythonCellComponent } from "../src/modes/interactive/components/ipython-cell.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import { IPythonCellComponent } from "../src/modes/interactive/components/ipython-cell.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import {
 	setWorkingPulseFrame,
 	WORKING_ICON_FRAMES,
 	workingIconFrame,
-} from "../src/modes/interactive/theme/working-icon.js";
+} from "../src/modes/interactive/theme/working-icon.ts";
 
 function stripAnsi(text: string): string {
 	return text.replace(/\x1b\[[0-9;]*m/g, "");

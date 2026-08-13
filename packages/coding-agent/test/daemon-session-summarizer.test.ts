@@ -1,11 +1,11 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, test } from "vitest";
-import type { AgentStatus } from "../src/core/session-manager.js";
+import type { AgentStatus } from "../src/core/session-manager.ts";
 import {
 	agentStatusChanged,
 	buildStatusContext,
 	parseAgentStatusResponse,
-} from "../src/modes/daemon/daemon-session-summarizer.js";
+} from "../src/modes/daemon/daemon-session-summarizer.ts";
 
 function userMessage(text: string): AgentMessage {
 	return { role: "user", content: [{ type: "text", text }], timestamp: 0 } as unknown as AgentMessage;

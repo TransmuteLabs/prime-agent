@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { launchDaemonUpdateRestartCoordinator } from "../../src/cli/daemon-update-restart.js";
+import { launchDaemonUpdateRestartCoordinator } from "../../src/cli/daemon-update-restart.ts";
 
 function requireEnvironment(name: string): string {
 	const value = process.env[name];

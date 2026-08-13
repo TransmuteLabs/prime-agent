@@ -1,8 +1,8 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.js";
-import { streamOpenAICompletions } from "../src/providers/openai-completions.js";
-import type { AssistantMessage, Model } from "../src/types.js";
+import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
+import { getModel } from "../src/compat.ts";
+import type { Message, Model } from "../src/types.ts";
 
 interface CacheControl {
 	type: "ephemeral";
@@ -38,19 +38,15 @@ vi.mock("openai", () => {
 			completions: {
 				create: (params: CapturedParams) => {
 					mockState.lastParams = params;
-					const hasCacheControl = JSON.stringify(params).includes("cache_control");
 					const stream = {
 						async *[Symbol.asyncIterator]() {
 							yield {
 								id: "chatcmpl-test",
 								choices: [{ delta: {}, finish_reason: "stop" }],
 								usage: {
-									prompt_tokens: 100,
-									completion_tokens: 10,
-									prompt_tokens_details: {
-										cached_tokens: hasCacheControl ? 80 : 0,
-										cache_write_tokens: hasCacheControl ? 80 : 0,
-									},
+									prompt_tokens: 1,
+									completion_tokens: 1,
+									prompt_tokens_details: { cached_tokens: 0 },
 									completion_tokens_details: { reasoning_tokens: 0 },
 								},
 							};
@@ -75,17 +71,18 @@ vi.mock("openai", () => {
 	return { default: FakeOpenAI };
 });
 
-async function runCompletion(
+async function capturePayload(
 	model: Model<"openai-completions">,
 	options?: { cacheRetention?: "none" | "short" | "long" },
-): Promise<{ params: CapturedParams; result: AssistantMessage }> {
+	messages?: Message[],
+): Promise<CapturedParams> {
 	const timestamp = Date.now();
 
-	const result = await streamOpenAICompletions(
+	await streamOpenAICompletions(
 		model,
 		{
 			systemPrompt: "System prompt",
-			messages: [{ role: "user", content: "Hello", timestamp }],
+			messages: messages ?? [{ role: "user", content: "Hello", timestamp }],
 			tools: [
 				{
 					name: "read",
@@ -103,43 +100,26 @@ async function runCompletion(
 		throw new Error("Expected payload to be captured");
 	}
 
-	return { params: mockState.lastParams, result };
-}
-
-async function capturePayload(
-	model: Model<"openai-completions">,
-	options?: { cacheRetention?: "none" | "short" | "long" },
-): Promise<CapturedParams> {
-	return (await runCompletion(model, options)).params;
+	return mockState.lastParams;
 }
 
 function getInstructionMessage(params: CapturedParams) {
 	return params.messages.find((message) => message.role === "system" || message.role === "developer");
 }
 
-function expectAnthropicCacheMarkers(
-	params: CapturedParams,
-	expectedCacheControl: CacheControl = { type: "ephemeral" },
-): void {
+function expectAnthropicCacheMarkers(params: CapturedParams): void {
 	const instructionMessage = getInstructionMessage(params);
 	expect(instructionMessage).toBeDefined();
 	expect(Array.isArray(instructionMessage?.content)).toBe(true);
-	expect((instructionMessage?.content as TextPart[])[0]?.cache_control).toEqual(expectedCacheControl);
+	expect((instructionMessage?.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral" });
 
 	expect(params.tools).toHaveLength(1);
-	expect(params.tools?.[0]?.cache_control).toEqual(expectedCacheControl);
+	expect(params.tools?.[0]?.cache_control).toEqual({ type: "ephemeral" });
 
 	const lastMessage = params.messages[params.messages.length - 1];
 	expect(lastMessage.role).toBe("user");
 	expect(Array.isArray(lastMessage.content)).toBe(true);
-	expect((lastMessage.content as TextPart[])[0]?.cache_control).toEqual(expectedCacheControl);
-}
-
-function expectNoAnthropicCacheMarkers(params: CapturedParams): void {
-	const instructionMessage = getInstructionMessage(params);
-	expect(Array.isArray(instructionMessage?.content)).toBe(false);
-	expect(params.tools?.[0]?.cache_control).toBeUndefined();
-	expect(typeof params.messages[params.messages.length - 1]?.content).toBe("string");
+	expect((lastMessage.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral" });
 }
 
 describe("openai-completions cacheControlFormat", () => {
@@ -156,7 +136,12 @@ describe("openai-completions cacheControlFormat", () => {
 			baseUrl: "https://example.com/v1",
 			reasoning: true,
 			input: ["text"],
-			cost: { input: 4, output: 12, cacheRead: 0.4, cacheWrite: 9 },
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
 			contextWindow: 128000,
 			maxTokens: 32000,
 			compat: {
@@ -164,9 +149,8 @@ describe("openai-completions cacheControlFormat", () => {
 			},
 		};
 
-		const { params, result } = await runCompletion(model);
+		const params = await capturePayload(model);
 		expectAnthropicCacheMarkers(params);
-		expect(result.usage.cost.cacheWrite).toBeCloseTo((80 * model.cost.cacheWrite) / 1_000_000);
 	});
 
 	it("preserves Anthropic-style cache markers for OpenRouter Anthropic models", async () => {
@@ -175,61 +159,45 @@ describe("openai-completions cacheControlFormat", () => {
 		expectAnthropicCacheMarkers(params);
 	});
 
-	it("preserves route-specific cache write pricing for Anthropic models", async () => {
-		const model = getModel("openrouter", "anthropic/claude-3-haiku");
-		const { params, result } = await runCompletion(model);
-		expectAnthropicCacheMarkers(params);
-		expect(result.usage.cost.cacheWrite).toBeCloseTo((80 * model.cost.cacheWrite) / 1_000_000);
-	});
-
-	it("applies Anthropic-style cache markers for Prime Inference Anthropic models", async () => {
-		const model = getModel("prime-inference", "anthropic/claude-fable-5");
-		const { params, result } = await runCompletion(model);
-		expectAnthropicCacheMarkers(params);
-		expect(result.usage.cost.cacheWrite).toBeCloseTo((80 * model.cost.input * 1.25) / 1_000_000);
-	});
-
-	it("prices one-hour Prime Inference cache writes at twice the input rate", async () => {
-		const model = getModel("prime-inference", "anthropic/claude-fable-5");
-		const { params, result } = await runCompletion(model, { cacheRetention: "long" });
-		expectAnthropicCacheMarkers(params, { type: "ephemeral", ttl: "1h" });
-		expect(result.usage.cost.cacheWrite).toBeCloseTo((80 * model.cost.input * 2) / 1_000_000);
-	});
-
-	it("prices one-hour OpenRouter Anthropic cache writes at twice the input rate", async () => {
+	it("moves the conversation cache marker to a tool result", async () => {
 		const model = getModel("openrouter", "anthropic/claude-sonnet-4");
-		const { params, result } = await runCompletion(model, { cacheRetention: "long" });
-		expectAnthropicCacheMarkers(params, { type: "ephemeral", ttl: "1h" });
-		expect(result.usage.cost.cacheWrite).toBeCloseTo((80 * model.cost.input * 2) / 1_000_000);
-	});
-
-	it("uses five-minute pricing when a model cannot apply long retention", async () => {
-		const model: Model<"openai-completions"> = {
-			id: "custom-anthropic-proxy",
-			name: "Custom Anthropic Proxy",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://example.com/v1",
-			reasoning: false,
-			input: ["text"],
-			cost: { input: 4, output: 12, cacheRead: 0.4, cacheWrite: 5 },
-			contextWindow: 128000,
-			maxTokens: 32000,
-			compat: {
-				cacheControlFormat: "anthropic",
-				supportsLongCacheRetention: false,
+		const timestamp = Date.now();
+		const params = await capturePayload(model, undefined, [
+			{ role: "user", content: "Read the file", timestamp },
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } }],
+				api: "openai-completions",
+				provider: "openrouter",
+				model: model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp,
 			},
-		};
+			{
+				role: "toolResult",
+				toolCallId: "call_1",
+				toolName: "read",
+				content: [{ type: "text", text: "file contents" }],
+				isError: false,
+				timestamp,
+			},
+		]);
 
-		const { params, result } = await runCompletion(model, { cacheRetention: "long" });
-		expectAnthropicCacheMarkers(params);
-		expect(result.usage.cost.cacheWrite).toBeCloseTo((80 * model.cost.input * 1.25) / 1_000_000);
-	});
+		const userMessage = params.messages.find((message) => message.role === "user");
+		expect(userMessage?.content).toBe("Read the file");
 
-	it("does not apply Anthropic-style cache markers to other Prime Inference models", async () => {
-		const model = getModel("prime-inference", "openai/gpt-5.6-sol");
-		const params = await capturePayload(model);
-		expectNoAnthropicCacheMarkers(params);
+		const toolMessage = params.messages[params.messages.length - 1];
+		expect(toolMessage.role).toBe("tool");
+		expect(Array.isArray(toolMessage.content)).toBe(true);
+		expect((toolMessage.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral" });
 	});
 
 	it("omits Anthropic-style cache markers when cacheRetention is none", async () => {
@@ -254,6 +222,10 @@ describe("openai-completions cacheControlFormat", () => {
 			},
 		};
 		const params = await capturePayload(model, { cacheRetention: "none" });
-		expectNoAnthropicCacheMarkers(params);
+		const instructionMessage = getInstructionMessage(params);
+
+		expect(Array.isArray(instructionMessage?.content)).toBe(false);
+		expect(params.tools?.[0]?.cache_control).toBeUndefined();
+		expect(typeof params.messages[params.messages.length - 1]?.content).toBe("string");
 	});
 });

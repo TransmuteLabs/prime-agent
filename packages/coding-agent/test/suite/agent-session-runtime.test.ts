@@ -1,39 +1,32 @@
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentSession } from "../../src/core/agent-session.js";
-import type { AgentSessionRuntimeConfig } from "../../src/core/agent-session-config.js";
+import { join, parse } from "node:path";
+import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
+import { afterEach, describe, expect, it } from "vitest";
 import {
-	AgentSessionRuntime,
-	type AgentSessionServices,
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
 	createAgentSessionRuntime,
 	createAgentSessionServices,
-} from "../../src/core/agent-session-runtime.js";
-import { AuthStorage } from "../../src/core/auth-storage.js";
-import type { SubagentRuntimeHost } from "../../src/core/rlm-runtime.js";
-import { SessionManager } from "../../src/core/session-manager.js";
+} from "../../src/core/agent-session-runtime.ts";
+import { AuthStorage } from "../../src/core/auth-storage.ts";
+import { SessionManager } from "../../src/core/session-manager.ts";
 import type {
+	AgentToolResult,
 	ExtensionAPI,
 	ExtensionFactory,
 	SessionBeforeForkEvent,
 	SessionBeforeSwitchEvent,
 	SessionShutdownEvent,
 	SessionStartEvent,
-} from "../../src/index.js";
+} from "../../src/index.ts";
 
 type RecordedSessionEvent =
 	| SessionBeforeSwitchEvent
 	| SessionBeforeForkEvent
 	| SessionShutdownEvent
 	| SessionStartEvent;
-
-type RuntimeSubagentMapAccess = {
-	subagentRuntimes: Map<string, AgentSessionRuntime>;
-};
 
 describe("AgentSessionRuntime characterization", () => {
 	const cleanups: Array<() => Promise<void> | void> = [];
@@ -46,16 +39,7 @@ describe("AgentSessionRuntime characterization", () => {
 
 	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
-		options?: {
-			cwd?: string;
-			bootstrapModel?: boolean;
-			bootstrapThinkingLevel?: boolean;
-			inMemory?: boolean;
-			sessionConfig?: AgentSessionRuntimeConfig;
-			sessionManager?: SessionManager;
-			sessionOptions?: Parameters<CreateAgentSessionRuntimeFactory>[0]["sessionOptions"];
-			onCreateRuntime?: (options: Parameters<CreateAgentSessionRuntimeFactory>[0]) => void;
-		},
+		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean },
 	) {
 		const tempDir =
 			options?.cwd ?? join(tmpdir(), `pi-runtime-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -70,9 +54,9 @@ describe("AgentSessionRuntime characterization", () => {
 		faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
 
 		const authStorage = AuthStorage.inMemory();
-		authStorage.setRuntimeApiKey(faux.getModel().provider, "faux-key");
+		await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
 
-		const serviceOptions = {
+		const runtimeOptions = {
 			agentDir: tempDir,
 			authStorage,
 			model: options?.bootstrapModel === false ? undefined : faux.getModel(),
@@ -103,11 +87,9 @@ describe("AgentSessionRuntime characterization", () => {
 				noThemes: true,
 			},
 		};
-		const createRuntime: CreateAgentSessionRuntimeFactory = async (runtimeOptions) => {
-			options?.onCreateRuntime?.(runtimeOptions);
-			const { cwd, sessionManager, sessionStartEvent } = runtimeOptions;
+		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
 			const services = await createAgentSessionServices({
-				...serviceOptions,
+				...runtimeOptions,
 				cwd,
 			});
 			return {
@@ -115,9 +97,8 @@ describe("AgentSessionRuntime characterization", () => {
 					services,
 					sessionManager,
 					sessionStartEvent,
-					model: serviceOptions.model,
-					thinkingLevel: serviceOptions.thinkingLevel,
-					...runtimeOptions.sessionOptions,
+					model: runtimeOptions.model,
+					thinkingLevel: runtimeOptions.thinkingLevel,
 				})),
 				services,
 				diagnostics: services.diagnostics,
@@ -126,13 +107,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const runtime = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager:
-				options?.sessionManager ??
-				(options?.inMemory
-					? SessionManager.inMemory(tempDir)
-					: SessionManager.create(tempDir, join(tempDir, "sessions"))),
-			sessionConfig: options?.sessionConfig,
-			sessionOptions: options?.sessionOptions,
+			sessionManager: SessionManager.create(tempDir),
 		});
 		await runtime.session.bindExtensions({});
 
@@ -146,292 +121,6 @@ describe("AgentSessionRuntime characterization", () => {
 
 		return { runtime, faux, tempDir };
 	}
-
-	function createRuntimeWithFakeSession(options?: { onShutdown?: () => void }) {
-		const disposeSession = vi.fn();
-		const session = {
-			extensionRunner: {
-				hasHandlers: (event: string) => event === "session_shutdown" && options?.onShutdown !== undefined,
-				emit: async () => {
-					options?.onShutdown?.();
-				},
-			},
-			setSubagentRuntimeHost: vi.fn(),
-			dispose: disposeSession,
-			disposeAsync: disposeSession,
-		} as unknown as AgentSession;
-		const services = { cwd: "/tmp", agentDir: "/tmp" } as unknown as AgentSessionServices;
-		const createRuntime: CreateAgentSessionRuntimeFactory = async () => {
-			throw new Error("unexpected runtime creation");
-		};
-		const runtime = new AgentSessionRuntime(session, services, createRuntime);
-		return { runtime, disposeSession };
-	}
-
-	it("passes session config to replacement runtimes", async () => {
-		const calls: Array<Parameters<CreateAgentSessionRuntimeFactory>[0]> = [];
-		const sessionConfig: AgentSessionRuntimeConfig = {
-			cwd: "/tmp/session-config-cwd",
-			model: "faux-2",
-			tools: ["bash"],
-		};
-		const { runtime } = await createRuntimeForTest(() => {}, {
-			sessionConfig,
-			onCreateRuntime: (call) => calls.push(call),
-		});
-
-		expect(calls).toHaveLength(1);
-		expect(calls[0]?.sessionConfig).toBe(sessionConfig);
-
-		await runtime.newSession();
-
-		expect(calls).toHaveLength(2);
-		expect(calls[1]?.sessionConfig).toBe(sessionConfig);
-	});
-
-	it("copies depth across new-session parent reference edges", async () => {
-		const { runtime } = await createRuntimeForTest(() => {});
-		const parentSession = runtime.session.sessionFile;
-		if (!parentSession) throw new Error("Missing parent session file");
-
-		await runtime.newSession({ parentSession });
-
-		expect(runtime.session.sessionManager.getHeader()).toMatchObject({ parentSession, rlmDepth: 0 });
-	});
-
-	it("uses effective runtime depth for a parented new session from a legacy header", async () => {
-		const tempDir = join(tmpdir(), `pi-runtime-legacy-new-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-		const sessionManager = SessionManager.create(tempDir, join(tempDir, "sessions"));
-		sessionManager.newSession({ rlmDepth: undefined });
-		const parentSession = sessionManager.getSessionFile();
-		if (!parentSession) throw new Error("Missing parent session file");
-		const { runtime } = await createRuntimeForTest(() => {}, {
-			cwd: tempDir,
-			sessionManager,
-			sessionOptions: { rlmDepth: 2 },
-		});
-
-		await runtime.newSession({ parentSession });
-
-		expect(runtime.session.sessionManager.getHeader()).toMatchObject({ parentSession, rlmDepth: 2 });
-	});
-
-	it.each([false, true])(
-		"uses the effective runtime depth when forking a legacy session before its first entry (inMemory=%s)",
-		async (inMemory) => {
-			const tempDir = join(tmpdir(), `pi-runtime-legacy-fork-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-			const sessionManager = inMemory
-				? SessionManager.inMemory(tempDir)
-				: SessionManager.create(tempDir, join(tempDir, "sessions"));
-			sessionManager.newSession({ rlmDepth: undefined });
-			const firstEntry = sessionManager.appendMessage({ role: "user", content: "fork here", timestamp: 1 });
-			const { runtime } = await createRuntimeForTest(() => {}, {
-				cwd: tempDir,
-				sessionManager,
-				sessionOptions: { rlmDepth: 2 },
-			});
-
-			await runtime.fork(firstEntry);
-
-			expect(runtime.session.sessionManager.getHeader()?.rlmDepth).toBe(2);
-			expect(runtime.session.rlmDepth).toBe(2);
-		},
-	);
-
-	it("disposes a runtime only once across repeated teardown calls", async () => {
-		const shutdownEvents: SessionShutdownEvent[] = [];
-		const beforeInvalidate = vi.fn();
-		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
-			pi.on("session_shutdown", (event) => {
-				shutdownEvents.push(event);
-			});
-		});
-		runtime.setBeforeSessionInvalidate(beforeInvalidate);
-
-		await Promise.all([runtime.dispose(), runtime.dispose()]);
-		await runtime.dispose();
-
-		expect(shutdownEvents).toEqual([{ type: "session_shutdown", reason: "quit" }]);
-		expect(beforeInvalidate).toHaveBeenCalledTimes(1);
-	});
-
-	it("does not replay shutdown events when runtime disposal throws", async () => {
-		let shutdownCount = 0;
-		const { runtime, disposeSession } = createRuntimeWithFakeSession({
-			onShutdown: () => {
-				shutdownCount += 1;
-			},
-		});
-		runtime.setBeforeSessionInvalidate(() => {
-			throw new Error("invalidate failed");
-		});
-
-		await expect(runtime.dispose()).rejects.toThrow("invalidate failed");
-		await expect(runtime.dispose()).rejects.toThrow("invalidate failed");
-
-		expect(shutdownCount).toBe(1);
-		expect(disposeSession).toHaveBeenCalledTimes(1);
-	});
-
-	it("continues disposing tracked subagents after one child dispose fails", async () => {
-		const { runtime } = createRuntimeWithFakeSession();
-		const firstDispose = vi.fn(async () => {
-			throw new Error("first child failed");
-		});
-		const secondDispose = vi.fn(async () => {});
-		const firstChild = { dispose: firstDispose } as unknown as AgentSessionRuntime;
-		const secondChild = { dispose: secondDispose } as unknown as AgentSessionRuntime;
-		const runtimeWithSubagents = runtime as unknown as RuntimeSubagentMapAccess;
-		runtimeWithSubagents.subagentRuntimes.set("first", firstChild);
-		runtimeWithSubagents.subagentRuntimes.set("second", secondChild);
-
-		await expect(runtime.dispose()).rejects.toThrow("first child failed");
-
-		expect(firstDispose).toHaveBeenCalledTimes(1);
-		expect(secondDispose).toHaveBeenCalledTimes(1);
-	});
-
-	it("deletes exact and replaced in-process RLM child runtimes and retained sessions", async () => {
-		const { runtime } = await createRuntimeForTest(() => {});
-		const childSession = {} as AgentSession;
-		const disposeRuntime = vi.fn(async () => {});
-		const childRuntime = { session: childSession, dispose: disposeRuntime } as unknown as AgentSessionRuntime;
-		const runtimeWithSubagents = runtime as unknown as RuntimeSubagentMapAccess;
-		runtimeWithSubagents.subagentRuntimes.set("child-1", childRuntime);
-
-		await runtime.deleteRlmSubagentRuntime("child-1", childSession);
-
-		expect(disposeRuntime).toHaveBeenCalledOnce();
-		expect(runtimeWithSubagents.subagentRuntimes.has("child-1")).toBe(false);
-
-		const currentSession = {} as AgentSession;
-		const disposeReplacedRuntime = vi.fn(async () => {});
-		const replacedRuntime = {
-			session: currentSession,
-			dispose: disposeReplacedRuntime,
-		} as unknown as AgentSessionRuntime;
-		const disposeStaleSession = vi.fn(async () => {});
-		const staleSession = { disposeAsync: disposeStaleSession } as unknown as AgentSession;
-		runtimeWithSubagents.subagentRuntimes.set("replaced-child", replacedRuntime);
-
-		await runtime.deleteRlmSubagentRuntime("replaced-child", staleSession);
-
-		expect(disposeReplacedRuntime).toHaveBeenCalledOnce();
-		expect(disposeStaleSession).toHaveBeenCalledOnce();
-		expect(runtimeWithSubagents.subagentRuntimes.has("replaced-child")).toBe(false);
-
-		const disposeRetained = vi.fn(async () => {});
-		const retainedSession = { disposeAsync: disposeRetained } as unknown as AgentSession;
-		await runtime.deleteRlmSubagentRuntime("retained-child", retainedSession);
-		expect(disposeRetained).toHaveBeenCalledOnce();
-	});
-
-	it("publishes in-process RLM sessions before create resolves and rejects cancelled startup", async () => {
-		const { runtime, faux, tempDir } = await createRuntimeForTest(() => {});
-		const parentSession = runtime.session;
-		const getRunStatus = vi.spyOn(parentSession, "getRlmChildRunStatus").mockReturnValue("running");
-		let createResolved = false;
-		const onSessionPublished = vi.fn((session: AgentSession) => {
-			expect(createResolved).toBe(false);
-			expect(session.sessionName).toBe("in-process-worker");
-		});
-		const baseOptions = {
-			parentSession,
-			prompt: "run in process",
-			model: faux.getModel(),
-			thinkingLevel: "off" as const,
-			serviceTier: null,
-			scopedModels: [],
-			activeToolNames: [],
-			customTools: [],
-			includeGoals: false,
-			includeCompactSkill: false,
-			rlmDepth: 1,
-			rlmMaxDepth: 2,
-		};
-
-		const childRuntime = await runtime.createRlmSubagentRuntime({
-			...baseOptions,
-			id: "in-process-child",
-			sessionName: "in-process-worker",
-			sessionDir: join(tempDir, "in-process-child"),
-			rlmParentNodeId: "in-process-child",
-			onSessionPublished,
-		});
-		createResolved = true;
-		expect(onSessionPublished).toHaveBeenCalledOnce();
-		await runtime.deleteRlmSubagentRuntime("in-process-child", childRuntime.session);
-
-		getRunStatus.mockReturnValue("cancelled");
-		await expect(
-			runtime.createRlmSubagentRuntime({
-				...baseOptions,
-				id: "cancelled-child",
-				sessionName: "cancelled-worker",
-				sessionDir: join(tempDir, "cancelled-child"),
-				rlmParentNodeId: "cancelled-child",
-			}),
-		).rejects.toThrow("startup was cancelled");
-		expect((runtime as unknown as RuntimeSubagentMapAccess).subagentRuntimes.has("cancelled-child")).toBe(false);
-	});
-
-	it("releases a failed child run from the inline runtime host", async () => {
-		const { runtime } = await createRuntimeForTest(() => {});
-		const deleteRlmSubagentRuntime = vi.spyOn(runtime, "deleteRlmSubagentRuntime");
-		vi.spyOn(runtime, "createRlmSubagentRuntime").mockImplementationOnce(async (options) => {
-			const childRuntime = await AgentSessionRuntime.prototype.createRlmSubagentRuntime.call(runtime, options);
-			vi.spyOn(childRuntime.session, "promptAndWait").mockRejectedValue(new Error("child run failed"));
-			return childRuntime;
-		});
-
-		await runtime.session.runRlmChild("fail after startup");
-
-		await vi.waitFor(() => expect(deleteRlmSubagentRuntime).toHaveBeenCalledOnce());
-		expect(runtime.listSubagentRuntimes()).toEqual([]);
-	});
-
-	it("plumbs the parent agent identity into runtime-created child prompts", async () => {
-		const { runtime } = await createRuntimeForTest(() => {});
-		runtime.session.setSessionName("parent-worker");
-		const childRuntime = await runtime.createRlmSubagentRuntime({
-			parentSession: runtime.session,
-			id: "parent-agent-child",
-			prompt: "inspect parent identity",
-			sessionName: "child-worker",
-			sessionDir: join(runtime.cwd, "parent-agent-child"),
-			model: runtime.session.model!,
-			thinkingLevel: "off",
-			serviceTier: null,
-			scopedModels: [],
-			activeToolNames: [],
-			customTools: [],
-			includeGoals: false,
-			includeCompactSkill: false,
-			rlmDepth: 1,
-			rlmMaxDepth: 2,
-			rlmParentNodeId: "parent-agent-child",
-		});
-
-		expect(childRuntime.session.systemPrompt).toContain("spawned by parent-worker");
-		await runtime.deleteRlmSubagentRuntime("parent-agent-child", childRuntime.session);
-	});
-
-	it("disposes hosted RLM children during session replacement", async () => {
-		const disposeRlmSubagentRuntimes = vi.fn(async () => {});
-		const host: SubagentRuntimeHost = {
-			createRlmSubagentRuntime: async () => {
-				throw new Error("unexpected child creation");
-			},
-			deleteRlmSubagentRuntime: async () => {},
-			disposeRlmSubagentRuntimes,
-		};
-		const { runtime } = await createRuntimeForTest(() => {});
-		runtime.setSubagentRuntimeHost(host);
-
-		await runtime.newSession();
-
-		expect(disposeRlmSubagentRuntimes).toHaveBeenCalledTimes(1);
-	});
 
 	it("persists message_end assistant replacements to the session manager", async () => {
 		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
@@ -472,6 +161,55 @@ describe("AgentSessionRuntime characterization", () => {
 			throw new Error("missing persisted assistant message");
 		}
 		expect(persistedAssistant.usage.cost.total).toBe(0.123);
+	});
+
+	it("settles the active response before session replacement", async () => {
+		let toolStarted!: () => void;
+		const toolStartedPromise = new Promise<void>((resolve) => {
+			toolStarted = resolve;
+		});
+		const { runtime, faux } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.registerTool({
+				name: "block",
+				label: "Block",
+				description: "Blocks until aborted",
+				parameters: Type.Object({}),
+				execute: (_toolCallId, _params, signal) =>
+					new Promise<AgentToolResult<unknown>>((resolve) => {
+						toolStarted();
+						signal?.addEventListener("abort", () =>
+							resolve({ content: [{ type: "text", text: "tool aborted" }], details: {} }),
+						);
+					}),
+			});
+		});
+
+		await runtime.session.prompt("hello");
+		const firstSessionFile = runtime.session.sessionFile!;
+		await runtime.newSession();
+		await runtime.session.bindExtensions({});
+
+		faux.setResponses([fauxAssistantMessage(fauxToolCall("block", {}), { stopReason: "toolUse" })]);
+		const outgoingSession = runtime.session;
+		const promptPromise = outgoingSession.prompt("start blocking tool");
+		await toolStartedPromise;
+
+		const switchResult = await runtime.switchSession(firstSessionFile);
+		await promptPromise;
+
+		expect(switchResult.cancelled).toBe(false);
+		expect(runtime.session.sessionFile).toBe(firstSessionFile);
+		// The outgoing session settled before replacement: the interrupted tool
+		// call has a persisted tool result instead of dangling forever.
+		const outgoingEntries = SessionManager.open(outgoingSession.sessionFile!)
+			.getEntries()
+			.filter((entry) => entry.type === "message");
+		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"assistant",
+		]);
 	});
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {
@@ -545,7 +283,7 @@ describe("AgentSessionRuntime characterization", () => {
 		events.length = 0;
 		const otherDir = join(tmpdir(), `pi-runtime-other-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(otherDir, { recursive: true });
-		const otherSession = SessionManager.create(otherDir, join(otherDir, "sessions"));
+		const otherSession = SessionManager.create(otherDir);
 		otherSession.appendMessage({ role: "user", content: [{ type: "text", text: "other" }], timestamp: Date.now() });
 		const otherSessionFile = otherSession.getSessionFile();
 		cancelReason = "resume";
@@ -587,6 +325,8 @@ describe("AgentSessionRuntime characterization", () => {
 			{ type: "session_shutdown", reason: "fork", targetSessionFile: runtime.session.sessionFile },
 			{ type: "session_start", reason: "fork", previousSessionFile },
 		]);
+		const sessionFileName = parse(runtime.session.sessionFile!).name;
+		expect(sessionFileName.endsWith(`_${runtime.session.sessionId}`)).toBe(true);
 
 		events.length = 0;
 		cancelNextFork = true;
@@ -601,42 +341,17 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(events).toEqual([{ type: "session_before_fork", entryId: "missing-entry", position: "at" }]);
 	});
 
-	it("forks before a selected middle prompt and preserves its selection metadata", async () => {
+	it("reports why an unflushed session cannot be forked", async () => {
 		const { runtime } = await createRuntimeForTest(() => {});
-		await runtime.session.prompt("Say one");
-		await runtime.session.prompt("Say two");
-		await runtime.session.prompt("Say three");
-		const userMessages = runtime.session.getUserMessagesForForking();
-		expect(userMessages.map((message) => message.text)).toEqual(["Say one", "Say two", "Say three"]);
+		const sessionFile = runtime.session.sessionFile;
+		const leafId = runtime.session.sessionManager.getLeafId();
+		expect(sessionFile).toBeDefined();
+		expect(existsSync(sessionFile!)).toBe(false);
+		expect(leafId).toBeTruthy();
 
-		const result = await runtime.fork(userMessages[1]!.entryId);
-
-		expect(result).toEqual({ cancelled: false, selectedText: "Say two" });
-		expect(
-			runtime.session.messages.map((message) =>
-				message.role === "user"
-					? typeof message.content === "string"
-						? message.content
-						: message.content
-								.filter((part): part is { type: "text"; text: string } => part.type === "text")
-								.map((part) => part.text)
-								.join("")
-					: message.role,
-			),
-		).toEqual(["Say one", "assistant"]);
-		expect(runtime.session.sessionFile).toBeDefined();
-	});
-
-	it("forks before the first prompt in-memory and preserves its selection metadata", async () => {
-		const { runtime } = await createRuntimeForTest(() => {}, { inMemory: true });
-		await runtime.session.prompt("Say one");
-		const userMessages = runtime.session.getUserMessagesForForking();
-
-		const result = await runtime.fork(userMessages[0]!.entryId);
-
-		expect(result).toEqual({ cancelled: false, selectedText: "Say one" });
-		expect(runtime.session.messages).toEqual([]);
-		expect(runtime.session.sessionFile).toBeUndefined();
+		await expect(runtime.fork(leafId!, { position: "at" })).rejects.toThrow(
+			"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
+		);
 	});
 
 	it("duplicates the current active branch when forking at the current position", async () => {
@@ -680,7 +395,78 @@ describe("AgentSessionRuntime characterization", () => {
 	});
 
 	it("duplicates the current active branch in-memory when forking at the current position", async () => {
-		const { runtime } = await createRuntimeForTest(() => {}, { inMemory: true });
+		const tempDir = join(tmpdir(), `pi-runtime-suite-in-memory-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+
+		const faux = registerFauxProvider({
+			models: [
+				{ id: "faux-1", reasoning: true },
+				{ id: "faux-2", reasoning: false },
+			],
+		});
+		faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
+
+		const authStorage = AuthStorage.inMemory();
+		await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
+
+		const runtimeOptions = {
+			agentDir: tempDir,
+			authStorage,
+			model: faux.getModel(),
+			resourceLoaderOptions: {
+				extensionFactories: [
+					(pi: ExtensionAPI) => {
+						pi.registerProvider(faux.getModel().provider, {
+							baseUrl: faux.getModel().baseUrl,
+							apiKey: "faux-key",
+							api: faux.api,
+							models: faux.models.map((registeredModel) => ({
+								id: registeredModel.id,
+								name: registeredModel.name,
+								api: registeredModel.api,
+								reasoning: registeredModel.reasoning,
+								input: registeredModel.input,
+								cost: registeredModel.cost,
+								contextWindow: registeredModel.contextWindow,
+								maxTokens: registeredModel.maxTokens,
+							})),
+						});
+					},
+				],
+				noSkills: true,
+				noPromptTemplates: true,
+				noThemes: true,
+			},
+		};
+		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
+			const services = await createAgentSessionServices({
+				...runtimeOptions,
+				cwd,
+			});
+			return {
+				...(await createAgentSessionFromServices({
+					services,
+					sessionManager,
+					sessionStartEvent,
+					model: runtimeOptions.model,
+				})),
+				services,
+				diagnostics: services.diagnostics,
+			};
+		};
+		const runtime = await createAgentSessionRuntime(createRuntime, {
+			cwd: tempDir,
+			agentDir: tempDir,
+			sessionManager: SessionManager.inMemory(tempDir),
+		});
+		await runtime.session.bindExtensions({});
+		cleanups.push(async () => {
+			await runtime.dispose();
+			faux.unregister();
+			if (existsSync(tempDir)) {
+				rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
 
 		await runtime.session.prompt("hello");
 		await runtime.session.prompt("again");
@@ -732,7 +518,7 @@ describe("AgentSessionRuntime characterization", () => {
 		mkdirSync(secondDir, { recursive: true });
 		const { runtime, faux, tempDir } = await createRuntimeForTest(() => {}, { cwd: firstDir });
 		const otherAuthStorage = AuthStorage.inMemory();
-		otherAuthStorage.setRuntimeApiKey(faux.getModel().provider, "faux-key");
+		await otherAuthStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
 		const otherRuntimeOptions = {
 			agentDir: tempDir,
 			authStorage: otherAuthStorage,
@@ -783,14 +569,13 @@ describe("AgentSessionRuntime characterization", () => {
 		const otherRuntime = await createAgentSessionRuntime(createOtherRuntime, {
 			cwd: secondDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(secondDir, join(secondDir, "sessions")),
+			sessionManager: SessionManager.create(secondDir),
 		});
 		cleanups.push(async () => {
 			await otherRuntime.dispose();
 		});
 		await otherRuntime.session.prompt("other");
 		const otherSessionFile = otherRuntime.session.sessionFile!;
-		await otherRuntime.dispose();
 
 		await runtime.switchSession(otherSessionFile);
 
@@ -806,7 +591,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const otherDir = join(tempDir, "other");
 		mkdirSync(otherDir, { recursive: true });
 		const otherAuthStorage = AuthStorage.inMemory();
-		otherAuthStorage.setRuntimeApiKey(faux.getModel().provider, "faux-key");
+		await otherAuthStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
 		const otherRuntimeOptions = {
 			agentDir: tempDir,
 			authStorage: otherAuthStorage,
@@ -857,7 +642,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const otherRuntime = await createAgentSessionRuntime(createOtherRuntime, {
 			cwd: otherDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(otherDir, join(otherDir, "sessions")),
+			sessionManager: SessionManager.create(otherDir),
 		});
 		cleanups.push(async () => {
 			await otherRuntime.dispose();
@@ -866,7 +651,6 @@ describe("AgentSessionRuntime characterization", () => {
 		otherRuntime.session.setThinkingLevel("off");
 		await otherRuntime.session.prompt("hello");
 		const targetSessionFile = otherRuntime.session.sessionFile!;
-		await otherRuntime.dispose();
 
 		await runtime.switchSession(targetSessionFile);
 

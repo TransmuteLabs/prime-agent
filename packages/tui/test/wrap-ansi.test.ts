@@ -1,7 +1,6 @@
 import assert from "node:assert";
-import { performance } from "node:perf_hooks";
 import { describe, it } from "node:test";
-import { extractAnsiCode, sliceByColumn, stripAnsi, visibleWidth, wrapTextWithAnsi } from "../src/utils.js";
+import { visibleWidth, wrapTextWithAnsi } from "../src/utils.ts";
 
 describe("wrapTextWithAnsi", () => {
 	describe("underline styling", () => {
@@ -102,6 +101,26 @@ describe("wrapTextWithAnsi", () => {
 	});
 
 	describe("basic wrapping", () => {
+		it("should handle LF, CRLF, and CR line endings", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("first\nsecond\r\nthird\rfourth", 80), [
+				"first",
+				"second",
+				"third",
+				"fourth",
+			]);
+		});
+
+		it("should preserve ANSI state across CRLF and CR line endings", () => {
+			const red = "\x1b[31m";
+			const reset = "\x1b[0m";
+
+			assert.deepStrictEqual(wrapTextWithAnsi(`${red}first\r\nsecond\rthird${reset}`, 80), [
+				`${red}first`,
+				`${red}second`,
+				`${red}third${reset}`,
+			]);
+		});
+
 		it("should wrap plain text correctly", () => {
 			const text = "hello world this is a test";
 			const wrapped = wrapTextWithAnsi(text, 10);
@@ -109,6 +128,30 @@ describe("wrapTextWithAnsi", () => {
 			assert.ok(wrapped.length > 1);
 			for (const line of wrapped) {
 				assert.ok(visibleWidth(line) <= 10);
+			}
+		});
+
+		it("should break CJK runs at grapheme boundaries after Latin text", () => {
+			const text = "This is an example 中文汉字测试段落内容中文汉字测试段落内容.";
+			const wrapped = wrapTextWithAnsi(text, 40);
+
+			assert.deepStrictEqual(wrapped, ["This is an example 中文汉字测试段落内容", "中文汉字测试段落内容."]);
+			for (const line of wrapped) {
+				assert.ok(visibleWidth(line) <= 40);
+			}
+		});
+
+		it("should preserve color codes when wrapping CJK runs", () => {
+			const red = "\x1b[31m";
+			const reset = "\x1b[0m";
+			const text = `${red}This is an example 中文汉字测试段落内容中文汉字测试段落内容.${reset}`;
+			const wrapped = wrapTextWithAnsi(text, 40);
+
+			assert.strictEqual(wrapped.length, 2);
+			assert.strictEqual(wrapped[0], `${red}This is an example 中文汉字测试段落内容`);
+			assert.strictEqual(wrapped[1], `${red}中文汉字测试段落内容.${reset}`);
+			for (const line of wrapped) {
+				assert.ok(visibleWidth(line) <= 40);
 			}
 		});
 
@@ -219,96 +262,5 @@ describe("wrapTextWithAnsi with OSC 8 hyperlinks", () => {
 		const closeCount = (lines[0].match(/\x1b\]8;;\x1b\\/g) ?? []).length;
 		assert.strictEqual(openCount, 1);
 		assert.strictEqual(closeCount, 1);
-	});
-});
-
-describe("ANSI sequence scanning", () => {
-	it("accepts the full CSI final-byte range and valid byte classes", () => {
-		const sequences = ["\x1b[@", "\x1b[2A", "\x1b[?25l", "\x1b[1 q", "\x1b[15~"];
-
-		for (const sequence of sequences) {
-			assert.deepStrictEqual(extractAnsiCode(sequence, 0), {
-				code: sequence,
-				length: sequence.length,
-			});
-		}
-	});
-
-	it("rejects incomplete and malformed CSI sequences", () => {
-		for (const sequence of ["\x1b[", "\x1b[31", "\x1b[1 ", "\x1b[1 2m", "\x1b[1\x7fm"]) {
-			assert.strictEqual(extractAnsiCode(sequence, 0), null);
-		}
-	});
-
-	it("keeps OSC and DCS payloads distinct from CSI scanning", () => {
-		const oscBel = "\x1b]0;title\x07";
-		const oscSt = "\x1b]0;title\x1b\\";
-		const dcs = "\x1bP1;2|payload[m~\x1b\\";
-		const apcBel = "\x1b_private-marker\x07";
-
-		for (const sequence of [oscBel, oscSt, dcs, apcBel]) {
-			assert.deepStrictEqual(extractAnsiCode(sequence, 0), {
-				code: sequence,
-				length: sequence.length,
-			});
-		}
-		assert.strictEqual(extractAnsiCode("\x1b]0;title", 0), null);
-		assert.strictEqual(extractAnsiCode("\x1bPpayload", 0), null);
-		assert.strictEqual(extractAnsiCode("\x1bPpayload\x07", 0), null);
-	});
-
-	it("ignores standard CSI and DCS sequences when measuring width", () => {
-		const text = "a\x1b[2Ab\x1b[?25lc\x1b[1 qd\x1bPpayload[m~\x1b\\e";
-		assert.strictEqual(visibleWidth(text), 5);
-	});
-
-	it("preserves scanned sequences while slicing by visible columns", () => {
-		const hideCursor = "\x1b[?25l";
-		const dcs = "\x1bPpayload\x1b\\";
-		const text = `a${hideCursor}bc${dcs}d`;
-
-		assert.strictEqual(sliceByColumn(text, 1, 3), `${hideCursor}bc${dcs}d`);
-	});
-
-	it("wraps by visible width without splitting standard CSI sequences", () => {
-		const hideCursor = "\x1b[?25l";
-		const showCursor = "\x1b[?25h";
-
-		assert.deepStrictEqual(wrapTextWithAnsi(`${hideCursor}abcdef${showCursor}`, 3), [
-			`${hideCursor}abc`,
-			`def${showCursor}`,
-		]);
-	});
-
-	it("strips every scanned sequence from copied text", () => {
-		const cursorStyle = "\x1b[1 q";
-		const dcs = "\x1bPone\x1bXtwo\x1b\\";
-		const dcsWithCsiPayload = "\x1bPbefore\x1b[31mafter\x1b\\";
-		const text = `a${cursorStyle}b${dcs}c`;
-
-		assert.strictEqual(stripAnsi(sliceByColumn(text, 0, 3)), "abc");
-		assert.strictEqual(stripAnsi(`a${dcsWithCsiPayload}b`), "ab");
-		assert.strictEqual(stripAnsi("a\x1bc b"), "a b");
-		assert.strictEqual(stripAnsi("a\x1b\nb"), "a\x1b\nb");
-	});
-
-	it("strips long ANSI-heavy copied text", () => {
-		const styled = "plain-text-1234567890\x1b[31mcolored\x1b[0m".repeat(10_000);
-
-		assert.strictEqual(stripAnsi(styled), "plain-text-1234567890colored".repeat(10_000));
-	});
-
-	it("scans repeated incomplete control strings without quadratic slowdown", () => {
-		const text = "\x1bP".repeat(50_000);
-		const start = performance.now();
-
-		assert.strictEqual(visibleWidth(text), 50_000);
-		assert.ok(performance.now() - start < 1_000);
-	});
-
-	it("still finds valid control strings after an incomplete prefix", () => {
-		const text = "\x1bPunterminated\x1b]0;title\x07x";
-
-		assert.strictEqual(visibleWidth(text), visibleWidth("Punterminatedx"));
 	});
 });

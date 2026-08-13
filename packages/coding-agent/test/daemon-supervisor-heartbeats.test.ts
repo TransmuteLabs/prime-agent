@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DaemonSocketClient } from "../src/modes/daemon/active-session-state.js";
-import { type DaemonCommand, type DaemonResponse, failure, success } from "../src/modes/daemon/daemon-protocol.js";
-import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.js";
+import type { DaemonSocketClient } from "../src/modes/daemon/active-session-state.ts";
+import { type DaemonCommand, type DaemonResponse, failure, success } from "../src/modes/daemon/daemon-protocol.ts";
+import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.ts";
 
 interface SupervisorHarness {
 	workers: Map<string, unknown>;

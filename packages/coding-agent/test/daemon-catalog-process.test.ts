@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type SessionInfo, SessionManager } from "../src/core/session-manager.js";
-import { listSavedSessionSiblings, resolveCatalogSessionMatch } from "../src/modes/daemon/daemon-catalog-process.js";
+import { type SessionInfo, SessionManager } from "../src/core/session-manager.ts";
+import { listSavedSessionSiblings, resolveCatalogSessionMatch } from "../src/modes/daemon/daemon-catalog-process.ts";
 
 function session(id: string, name: string | undefined, path: string): SessionInfo {
 	return {

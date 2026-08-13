@@ -2,11 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SessionManager } from "../src/core/session-manager.js";
-import type { ActiveSessionState } from "../src/modes/daemon/active-session-state.js";
-import { createActiveSessionId, resolveActiveSessionState } from "../src/modes/daemon/active-session-state.js";
-import { resolveDaemonSessionPath } from "../src/modes/daemon/daemon-mode.js";
-import { formatSessionDisplayId, matchesSessionIdSuffix } from "../src/modes/daemon/daemon-session-id.js";
+import { SessionManager } from "../src/core/session-manager.ts";
+import type { ActiveSessionState } from "../src/modes/daemon/active-session-state.ts";
+import { createActiveSessionId, resolveActiveSessionState } from "../src/modes/daemon/active-session-state.ts";
+import { resolveDaemonSessionPath } from "../src/modes/daemon/daemon-mode.ts";
+import { formatSessionDisplayId, matchesSessionIdSuffix } from "../src/modes/daemon/daemon-session-id.ts";
 
 describe("formatSessionDisplayId", () => {
 	it("compacts uuid-like session ids to the last 12 hex characters", () => {

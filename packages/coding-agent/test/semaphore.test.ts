@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Semaphore } from "../src/utils/semaphore.js";
+import { Semaphore } from "../src/utils/semaphore.ts";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 	let resolve!: (value: T) => void;

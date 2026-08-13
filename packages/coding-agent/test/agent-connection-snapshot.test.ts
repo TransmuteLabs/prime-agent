@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AgentSession } from "../src/core/agent-session.js";
-import { createAgentConnectionResourceSnapshot } from "../src/modes/agent-connection/snapshot.js";
+import type { AgentSession } from "../src/core/agent-session.ts";
+import { createAgentConnectionResourceSnapshot } from "../src/modes/agent-connection/snapshot.ts";
 
 describe("agent connection snapshots", () => {
 	it("adds remote-friendly artifact references to resource snapshots", () => {

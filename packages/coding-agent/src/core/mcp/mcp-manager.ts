@@ -6,10 +6,11 @@ import {
 	createMcpOAuthProvider,
 	getCatalogEntry,
 	registerBuiltinMcpOAuthProviders,
+	registerMcpOAuthProvider,
+	unregisterMcpOAuthProvider,
 } from "@earendil-works/pi-ai/mcp";
-import { registerOAuthProvider, unregisterOAuthProvider } from "@earendil-works/pi-ai/oauth";
-import type { AuthStorage } from "../auth-storage.js";
-import type { McpServerConfig } from "../settings-manager.js";
+import type { AuthStorage } from "../auth-storage.ts";
+import type { McpServerConfig } from "../settings-manager.ts";
 
 export interface McpManagerOptions {
 	authStorage: AuthStorage;
@@ -92,8 +93,8 @@ export class McpManager {
 
 	/**
 	 * Register OAuth providers for user-declared (non-catalog) servers. Public so it
-	 * can run after ModelRegistry.refresh() resets the registry — otherwise custom
-	 * `mcp:<server>` providers vanish on every refresh (e.g. post-login).
+	 * can run after a registry reset — otherwise custom `mcp:<server>` providers
+	 * vanish on every refresh (e.g. post-login).
 	 */
 	registerUserProviders(): void {
 		const current = new Set<string>();
@@ -103,7 +104,7 @@ export class McpManager {
 			if (integration.usesOAuth) {
 				// Register pointing at the user's URL (overrides a catalog default too).
 				current.add(id);
-				registerOAuthProvider(
+				registerMcpOAuthProvider(
 					createMcpOAuthProvider({
 						server: integration.server,
 						label: integration.label,
@@ -113,12 +114,12 @@ export class McpManager {
 			} else if (getCatalogEntry(integration.server)) {
 				// User overrode a catalog server with a custom URL but no oauth: drop the
 				// built-in provider so we never send the official token to that URL.
-				unregisterOAuthProvider(id);
+				unregisterMcpOAuthProvider(id);
 			}
 		}
 		// Drop providers for user servers removed since the last registration.
 		for (const id of this.registeredUserProviderIds) {
-			if (!current.has(id)) unregisterOAuthProvider(id);
+			if (!current.has(id)) unregisterMcpOAuthProvider(id);
 		}
 		this.registeredUserProviderIds = current;
 	}
@@ -158,10 +159,10 @@ export class McpManager {
 			"mcp.refresh": async (payload) => {
 				const server = String(payload.server ?? "");
 				if (!server) throw new Error("mcp.refresh requires a server");
-				// getApiKey refreshes + rewrites auth.json under lock; Python re-reads.
+				// getApiKey returns the access token while unexpired; Python re-reads auth.json.
 				// Surface failure (throw) instead of a false success so the kernel can
 				// report a refresh error rather than a misleading "not enabled".
-				const key = await this.authStorage.getApiKey(this.providerId(server));
+				const key = this.authStorage.getApiKey(this.providerId(server));
 				if (!key) throw new Error(`Could not refresh credentials for ${server}`);
 				return {};
 			},

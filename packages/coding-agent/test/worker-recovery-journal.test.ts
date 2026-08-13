@@ -2,7 +2,7 @@ import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { WorkerRecoveryJournal } from "../src/modes/daemon/worker-recovery-journal.js";
+import { WorkerRecoveryJournal } from "../src/modes/daemon/worker-recovery-journal.ts";
 
 describe("WorkerRecoveryJournal", () => {
 	const roots: string[] = [];

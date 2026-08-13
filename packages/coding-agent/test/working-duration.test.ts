@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 type WorkingDurationFormatter = {
 	formatWorkingElapsed(elapsedMs: number): string;

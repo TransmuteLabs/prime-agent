@@ -168,11 +168,12 @@ function heartbeatCatalogSignature(jobs: readonly AgentCronJob[]): string {
 export class AgentCronJobStore {
 	private readonly sessionArtifactFiles = new Map<string, string>();
 	private readonly heartbeatChangeListeners = new Set<() => void>();
+	private readonly filePath?: string;
+	private readonly sessionArtifactMode: boolean;
 
-	constructor(
-		private readonly filePath?: string,
-		private readonly sessionArtifactMode = false,
-	) {
+	constructor(filePath?: string, sessionArtifactMode = false) {
+		this.filePath = filePath;
+		this.sessionArtifactMode = sessionArtifactMode;
 		if (!filePath && !sessionArtifactMode) {
 			throw new Error("Cron job store requires a file path");
 		}
@@ -936,11 +937,13 @@ export class AgentCronScheduler {
 	private stopped = true;
 	private hasStarted = false;
 	private readonly dispatchLanes = new Map<string, Promise<void>>();
+	private readonly store: AgentCronJobStore;
+	private readonly hooks: AgentCronSchedulerHooks;
 
-	constructor(
-		private readonly store: AgentCronJobStore,
-		private readonly hooks: AgentCronSchedulerHooks,
-	) {}
+	constructor(store: AgentCronJobStore, hooks: AgentCronSchedulerHooks) {
+		this.store = store;
+		this.hooks = hooks;
+	}
 
 	start(): void {
 		this.stopped = false;

@@ -1,5 +1,5 @@
-import { isAgentSessionMessage } from "../../core/agent-messages.js";
-import type { AgentConnectionSessionEvent } from "../agent-connection/index.js";
+import { isAgentSessionMessage } from "../../core/agent-messages.ts";
+import type { AgentConnectionSessionEvent } from "../agent-connection/index.ts";
 
 export type AgentActivity = "waiting" | "thinking" | "writing" | "writing-code" | "executing";
 

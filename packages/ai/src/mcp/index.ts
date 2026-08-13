@@ -1,4 +1,12 @@
-export type { McpCatalogEntry } from "./catalog.js";
-export { BUILTIN_MCP_CATALOG, getCatalogEntry, registerBuiltinMcpOAuthProviders } from "./catalog.js";
-export type { McpOAuthConfig } from "./oauth.js";
-export { createMcpOAuthProvider } from "./oauth.js";
+export type { McpCatalogEntry } from "./catalog.ts";
+export { BUILTIN_MCP_CATALOG, getCatalogEntry, registerBuiltinMcpOAuthProviders } from "./catalog.ts";
+export type { McpOAuthConfig } from "./oauth.ts";
+export { createMcpOAuthProvider } from "./oauth.ts";
+export type { McpOAuthProvider } from "./registry.ts";
+export {
+	getMcpOAuthProvider,
+	getMcpOAuthProviders,
+	registerMcpOAuthProvider,
+	resetMcpOAuthProviders,
+	unregisterMcpOAuthProvider,
+} from "./registry.ts";

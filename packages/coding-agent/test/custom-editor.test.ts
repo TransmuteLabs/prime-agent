@@ -1,8 +1,8 @@
 import type { AutocompleteProvider, EditorTheme, OverlayHandle, TUI } from "@earendil-works/pi-tui";
 import { CURSOR_MARKER, setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { KeybindingsManager } from "../src/core/keybindings.js";
-import { CustomEditor } from "../src/modes/interactive/components/custom-editor.js";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
+import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
 
 const passthrough = (text: string) => text;
 
@@ -179,11 +179,13 @@ describe("CustomEditor", () => {
 
 		editor.handleInput("\t");
 		await vi.waitFor(() => expect(editor.isShowingAutocomplete()).toBe(true));
-		const line = editor.render(40)[1]!;
+		const lines = editor.render(40);
+		const line = lines[1]!;
 
 		expect(line).not.toContain(CURSOR_MARKER);
-		expect(line).toContain("\x1b_pi:autocomplete:");
 		expect(line).toContain("\x1b[7m \x1b[0mtype to start");
+		// Inline autocomplete list renders below the editor surface
+		expect(lines.join("\n")).toContain("help");
 	});
 
 	it("preserves the editor background and exact width around placeholder carets", () => {

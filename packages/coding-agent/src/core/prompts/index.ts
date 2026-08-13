@@ -4,4 +4,4 @@ export {
 	buildSubagentGuidance,
 	type ChildAgentDoctrineOptions,
 	type RlmPromptOptions,
-} from "./rlm.js";
+} from "./rlm.ts";

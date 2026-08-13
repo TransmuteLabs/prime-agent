@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { HostRequestHandler } from "./kernel/index.js";
-import type { CustomMessage } from "./messages.js";
-import { canonicalSessionPath } from "./session-lease.js";
+import type { HostRequestHandler } from "./kernel/index.ts";
+import type { CustomMessage } from "./messages.ts";
+import { canonicalSessionPath } from "./session-lease.ts";
 
 export const AGENT_MESSAGE_CUSTOM_TYPE = "agent_message";
 export const AGENT_MESSAGE_SKILL_NAME = "agent-message";

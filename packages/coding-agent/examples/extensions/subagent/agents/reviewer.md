@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Code review specialist for quality and security analysis
-tools: bash
+tools: read, grep, find, ls, bash
 model: claude-sonnet-4-5
 ---
 
@@ -12,7 +12,7 @@ Assume tool permissions are not perfectly enforceable; keep all bash usage stric
 
 Strategy:
 1. Run `git diff` to see recent changes (if applicable)
-2. Read the modified files with read-only shell commands
+2. Read the modified files
 3. Check for bugs, security issues, code smells
 
 Output format:

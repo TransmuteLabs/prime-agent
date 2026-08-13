@@ -1,14 +1,10 @@
 # Subagent Example
 
-Delegate tasks to specialized subprocess agents with isolated context windows.
-
-Prime Agent also provides native recursive delegation through `rlm.call()` and
-`rlm.run_async()`. This extension is a separate example for users who want
-file-defined agent profiles and explicit single, parallel, or chained workflows.
+Delegate tasks to specialized subagents with isolated context windows.
 
 ## Features
 
-- **Isolated context**: Each subagent runs in a separate Prime Agent process
+- **Isolated context**: Each subagent runs in a separate `pi` process
 - **Streaming output**: See tool calls and progress as they happen
 - **Parallel streaming**: All parallel tasks stream updates simultaneously
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
@@ -39,30 +35,30 @@ From the repository root, symlink the files:
 
 ```bash
 # Symlink the extension (must be in a subdirectory with index.ts)
-mkdir -p ~/.prime/agent/extensions/subagent
-ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/index.ts" ~/.prime/agent/extensions/subagent/index.ts
-ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/agents.ts" ~/.prime/agent/extensions/subagent/agents.ts
+mkdir -p ~/.pi/agent/extensions/subagent
+ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/index.ts" ~/.pi/agent/extensions/subagent/index.ts
+ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/agents.ts" ~/.pi/agent/extensions/subagent/agents.ts
 
 # Symlink agents
-mkdir -p ~/.prime/agent/agents
+mkdir -p ~/.pi/agent/agents
 for f in packages/coding-agent/examples/extensions/subagent/agents/*.md; do
-  ln -sf "$(pwd)/$f" ~/.prime/agent/agents/$(basename "$f")
+  ln -sf "$(pwd)/$f" ~/.pi/agent/agents/$(basename "$f")
 done
 
 # Symlink workflow prompts
-mkdir -p ~/.prime/agent/prompts
+mkdir -p ~/.pi/agent/prompts
 for f in packages/coding-agent/examples/extensions/subagent/prompts/*.md; do
-  ln -sf "$(pwd)/$f" ~/.prime/agent/prompts/$(basename "$f")
+  ln -sf "$(pwd)/$f" ~/.pi/agent/prompts/$(basename "$f")
 done
 ```
 
 ## Security Model
 
-This tool executes a separate Prime Agent subprocess with a delegated system prompt and tool/model configuration.
+This tool executes a separate `pi` subprocess with a delegated system prompt and tool/model configuration.
 
-**Project-local agents** (`.prime/agent/agents/*.md`) are repo-controlled prompts that can instruct the model to run IPython, shell commands, and other tools.
+**Project-local agents** (`.pi/agents/*.md`) are repo-controlled prompts that can instruct the model to read files, run bash commands, etc.
 
-**Default behavior:** Only loads **user-level agents** from `~/.prime/agent/agents`.
+**Default behavior:** Only loads **user-level agents** from `~/.pi/agent/agents`.
 
 To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only do this for repositories you trust.
 
@@ -82,7 +78,7 @@ Run 2 scouts in parallel: one to find models, one to find providers
 
 ### Chained workflow
 ```
-Use a chain: first have scout find the ipython tool, then have planner suggest improvements
+Use a chain: first have scout find the read tool, then have planner suggest improvements
 ```
 
 ### Workflow prompts
@@ -117,11 +113,14 @@ Use a chain: first have scout find the ipython tool, then have planner suggest i
 - Shows all tasks with live status (⏳ running, ✓ done, ✗ failed)
 - Updates as each task makes progress
 - Shows "2/3 done, 1 running" status
+- Returns each completed task's final output to the parent model, capped at 50 KB per task
+- Returns failure diagnostics from stderr/error messages when a child exits before producing output
 
-**Tool call formatting**:
+**Tool call formatting** (mimics built-in tools):
 - `$ command` for bash
-- `ipython code` for ipython
-- `edit ~/path` for edit
+- `read ~/path:1-10` for read
+- `grep /pattern/ in ~/path` for grep
+- etc.
 
 ## Agent Definitions
 
@@ -131,16 +130,18 @@ Agents are markdown files with YAML frontmatter:
 ---
 name: my-agent
 description: What this agent does
-tools: bash
+tools: read, grep, find, ls
 model: claude-haiku-4-5
 ---
 
 System prompt for the agent goes here.
 ```
 
+When `model` is omitted, the subagent inherits the dispatching session's active model and thinking level.
+
 **Locations:**
-- `~/.prime/agent/agents/*.md` - User-level (always loaded)
-- `.prime/agent/agents/*.md` - Project-level (only with `agentScope: "project"` or `"both"`)
+- `~/.pi/agent/agents/*.md` - User-level (always loaded)
+- `.pi/agents/*.md` - Project-level (only with `agentScope: "project"` or `"both"`)
 
 Project agents override user agents with the same name when `agentScope: "both"`.
 
@@ -148,9 +149,9 @@ Project agents override user agents with the same name when `agentScope: "both"`
 
 | Agent | Purpose | Model | Tools |
 |-------|---------|-------|-------|
-| `scout` | Fast codebase recon | Haiku | bash |
-| `planner` | Implementation plans | Sonnet | bash |
-| `reviewer` | Code review | Sonnet | bash |
+| `scout` | Fast codebase recon | Haiku | read, grep, find, ls, bash |
+| `planner` | Implementation plans | Sonnet | read, grep, find, ls |
+| `reviewer` | Code review | Sonnet | read, grep, find, ls, bash |
 | `worker` | General-purpose | Sonnet | (all default) |
 
 ## Workflow Prompts
@@ -171,5 +172,6 @@ Project agents override user agents with the same name when `agentScope: "both"`
 ## Limitations
 
 - Output truncated to last 10 items in collapsed view (expand to see all)
+- Parallel model-visible output is capped at 50 KB per task; full results remain in tool details
 - Agents discovered fresh on each invocation (allows editing mid-session)
 - Parallel mode limited to 8 tasks, 4 concurrent

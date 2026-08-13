@@ -818,18 +818,6 @@ function parseKeyId(
  * @param keyId - Key identifier (e.g., "ctrl+c", "escape", Key.ctrl("c"))
  */
 export function matchesKey(data: string, keyId: KeyId): boolean {
-	// Legacy macOS terminals encode Option as an extra ESC prefix around the
-	// sequence for the remaining modifiers (for example ESC + Ctrl+Up).
-	if (data.startsWith("\x1b\x1b[") || data.startsWith("\x1b\x1bO")) {
-		const parsedLegacyMeta = parseKeyId(keyId);
-		if (parsedLegacyMeta?.alt) {
-			const withoutAlt = keyId
-				.split("+")
-				.filter((part) => part !== "alt")
-				.join("+") as KeyId;
-			if (matchesKey(data.slice(1), withoutAlt)) return true;
-		}
-	}
 	const parsed = parseKeyId(keyId);
 	if (!parsed) return false;
 
@@ -1055,11 +1043,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 
 		case "up":
 			if (modifier === MODIFIERS.alt) {
-				return (
-					data === "\x1b[1;3A" ||
-					data === "\x1bp" ||
-					matchesKittySequence(data, ARROW_CODEPOINTS.up, MODIFIERS.alt)
-				);
+				return data === "\x1bp" || matchesKittySequence(data, ARROW_CODEPOINTS.up, MODIFIERS.alt);
 			}
 			if (modifier === 0) {
 				return (
@@ -1074,11 +1058,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 
 		case "down":
 			if (modifier === MODIFIERS.alt) {
-				return (
-					data === "\x1b[1;3B" ||
-					data === "\x1bn" ||
-					matchesKittySequence(data, ARROW_CODEPOINTS.down, MODIFIERS.alt)
-				);
+				return data === "\x1bn" || matchesKittySequence(data, ARROW_CODEPOINTS.down, MODIFIERS.alt);
 			}
 			if (modifier === 0) {
 				return (
@@ -1179,8 +1159,8 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			if (data === `\x1b${rawCtrl}`) return true;
 		}
 
-		if (modifier === MODIFIERS.alt && !_kittyProtocolActive && (isLetter || isDigit)) {
-			// Legacy: alt+letter/digit is ESC followed by the key
+		if (modifier === MODIFIERS.alt && !_kittyProtocolActive && (isLetter || isDigit || SYMBOL_KEYS.has(key))) {
+			// Legacy: alt+printable key is ESC followed by the key
 			if (data === `\x1b${key}`) return true;
 		}
 
@@ -1316,9 +1296,10 @@ export function parseKey(data: string): string | undefined {
 		if (code >= 1 && code <= 26) {
 			return `ctrl+alt+${String.fromCharCode(code + 96)}`;
 		}
-		// Legacy alt+letter/digit (ESC followed by the key)
-		if ((code >= 97 && code <= 122) || (code >= 48 && code <= 57)) {
-			return `alt+${String.fromCharCode(code)}`;
+		// Legacy alt+letter/digit/symbol (ESC followed by the key)
+		const key = String.fromCharCode(code);
+		if ((code >= 97 && code <= 122) || (code >= 48 && code <= 57) || SYMBOL_KEYS.has(key)) {
+			return `alt+${key}`;
 		}
 	}
 	if (data === "\x1b[A") return "up";

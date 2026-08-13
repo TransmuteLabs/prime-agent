@@ -2,20 +2,14 @@
  * Extension system for lifecycle events and custom tools.
  */
 
-export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.js";
-export type { SourceInfo } from "../source-info.js";
-// Built-in extensions
-export {
-	createHerdrAgentStateExtension,
-	hasFileBasedHerdrIntegration,
-	herdrAgentStateExtension,
-} from "./builtin/herdr-agent-state.js";
+export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.ts";
+export type { SourceInfo } from "../source-info.ts";
 export {
 	createExtensionRuntime,
 	discoverAndLoadExtensions,
 	loadExtensionFromFactory,
 	loadExtensions,
-} from "./loader.js";
+} from "./loader.ts";
 export type {
 	ExtensionErrorListener,
 	ForkHandler,
@@ -23,11 +17,12 @@ export type {
 	NewSessionHandler,
 	ShutdownHandler,
 	SwitchSessionHandler,
-} from "./runner.js";
-export { ExtensionRunner } from "./runner.js";
+} from "./runner.ts";
+export { ExtensionRunner } from "./runner.ts";
 export type {
 	AfterProviderResponseEvent,
 	AgentEndEvent,
+	AgentSettledEvent,
 	AgentStartEvent,
 	// Re-exports
 	AgentToolResult,
@@ -41,6 +36,7 @@ export type {
 	BashToolResultEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
+	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
 	BuildSystemPromptOptions,
@@ -56,6 +52,9 @@ export type {
 	EditorFactory,
 	EditToolCallEvent,
 	EditToolResultEvent,
+	// Message and Entry Rendering
+	EntryRenderer,
+	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
 	Extension,
@@ -72,42 +71,54 @@ export type {
 	ExtensionFactory,
 	ExtensionFlag,
 	ExtensionHandler,
+	ExtensionMode,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
+	FindToolCallEvent,
+	FindToolResultEvent,
 	GetActiveToolsHandler,
 	GetAllToolsHandler,
 	GetCommandsHandler,
 	GetThinkingLevelHandler,
+	GrepToolCallEvent,
+	GrepToolResultEvent,
+	InlineExtension,
 	// Events - Input
 	InputEvent,
 	InputEventResult,
 	InputSource,
-	IpythonToolCallEvent,
-	IpythonToolResultEvent,
 	KeybindingsManager,
 	LoadExtensionsResult,
+	LsToolCallEvent,
+	LsToolResultEvent,
+	MarkdownTransformContext,
+	MarkdownTransformer,
 	// Events - Message
 	MessageEndEvent,
-	// Message Rendering
 	MessageRenderer,
 	MessageRenderOptions,
 	MessageStartEvent,
 	MessageUpdateEvent,
 	ModelSelectEvent,
 	ModelSelectSource,
+	ProjectTrustContext,
+	ProjectTrustEvent,
+	ProjectTrustEventDecision,
+	ProjectTrustEventResult,
+	ProjectTrustHandler,
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
-	RefineCompleteEvent,
+	ReadToolCallEvent,
+	ReadToolResultEvent,
 	// Commands
 	RegisteredCommand,
 	RegisteredTool,
 	ReplacedSessionContext,
-	ReplayBuiltInToolName,
 	ResolvedCommand,
 	// Events - Resources
 	ResourcesDiscoverEvent,
@@ -124,6 +135,7 @@ export type {
 	SessionBeforeTreeResult,
 	SessionCompactEvent,
 	SessionEvent,
+	SessionInfoChangedEvent,
 	SessionShutdownEvent,
 	// Events - Session
 	SessionStartEvent,
@@ -156,13 +168,19 @@ export type {
 	UserBashEventResult,
 	WidgetPlacement,
 	WorkingIndicatorOptions,
-} from "./types.js";
+	WriteToolCallEvent,
+	WriteToolResultEvent,
+} from "./types.ts";
 // Type guards
 export {
 	defineTool,
 	isBashToolResult,
 	isEditToolResult,
-	isIpythonToolResult,
+	isFindToolResult,
+	isGrepToolResult,
+	isLsToolResult,
+	isReadToolResult,
 	isToolCallEventType,
-} from "./types.js";
-export { wrapRegisteredTool, wrapRegisteredTools } from "./wrapper.js";
+	isWriteToolResult,
+} from "./types.ts";
+export { wrapRegisteredTool, wrapRegisteredTools } from "./wrapper.ts";

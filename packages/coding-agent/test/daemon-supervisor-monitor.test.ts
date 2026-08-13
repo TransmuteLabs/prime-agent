@@ -6,30 +6,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getProcessStartId } from "../src/core/session-lease.js";
-import type { DaemonSocketClient } from "../src/modes/daemon/active-session-state.js";
-import { CommandRecoveryJournal } from "../src/modes/daemon/command-recovery-journal.js";
-import { DaemonCatalogClient } from "../src/modes/daemon/daemon-catalog-process.js";
-import { DaemonClient } from "../src/modes/daemon/daemon-client.js";
-import { AgentDaemon } from "../src/modes/daemon/daemon-mode.js";
+import { getProcessStartId } from "../src/core/session-lease.ts";
+import type { DaemonSocketClient } from "../src/modes/daemon/active-session-state.ts";
+import { CommandRecoveryJournal } from "../src/modes/daemon/command-recovery-journal.ts";
+import { DaemonCatalogClient } from "../src/modes/daemon/daemon-catalog-process.ts";
+import { DaemonClient } from "../src/modes/daemon/daemon-client.ts";
+import { AgentDaemon } from "../src/modes/daemon/daemon-mode.ts";
 import {
 	createDaemonCommandEnvelope,
 	DAEMON_UPDATE_RESTART_FORMAT_VERSION,
 	type DaemonAttachResult,
 	success,
-} from "../src/modes/daemon/daemon-protocol.js";
-import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
-import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.js";
+} from "../src/modes/daemon/daemon-protocol.ts";
+import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.ts";
+import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.ts";
 import {
 	DAEMON_WORKER_STARTUP_GATE_COMMIT,
 	DAEMON_WORKER_SUPERVISOR_SOCKET_ENV,
 	type DaemonWorkerFrameHeader,
-} from "../src/modes/daemon/daemon-worker-protocol.js";
-import { MutationDrainLatch } from "../src/modes/daemon/mutation-drain-latch.js";
-import { WorkerRecoveryJournal } from "../src/modes/daemon/worker-recovery-journal.js";
-import type { PrivateFrame } from "../src/modes/session-worker/private-framing.js";
-import * as childProcessModule from "../src/utils/child-process.js";
-import { createDeferred } from "./suite/scheduling.js";
+} from "../src/modes/daemon/daemon-worker-protocol.ts";
+import { MutationDrainLatch } from "../src/modes/daemon/mutation-drain-latch.ts";
+import { WorkerRecoveryJournal } from "../src/modes/daemon/worker-recovery-journal.ts";
+import type { PrivateFrame } from "../src/modes/session-worker/private-framing.ts";
+import * as childProcessModule from "../src/utils/child-process.ts";
+import { createDeferred } from "./suite/scheduling.ts";
 
 const workerLaunchTestState = vi.hoisted(() => ({
 	capture: false,
@@ -57,7 +57,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 	};
 });
 
-vi.mock("../src/cli/subprocess-launch.js", async (importOriginal) => {
+vi.mock("../src/cli/subprocess-launch.ts", async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown>;
 	return {
 		...actual,
@@ -102,7 +102,7 @@ vi.mock("../src/cli/subprocess-launch.js", async (importOriginal) => {
 	};
 });
 
-vi.mock("../src/core/session-lease.js", async (importOriginal) => {
+vi.mock("../src/core/session-lease.ts", async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown> & {
 		getProcessStartId(pid: number): string | undefined;
 	};
@@ -1894,7 +1894,7 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			scheduleWorkerStopFinalization(target: object): void;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockImplementation(() => alive);
 		try {
 			supervisor.scheduleWorkerStopFinalization(worker);
@@ -1946,7 +1946,7 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			scheduleWorkerStopFinalization(target: object): void;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockImplementation(() => alive);
 		const killSpy = vi.spyOn(childProcessModule, "signalProcessGroupOrProcess").mockImplementation((_pid, signal) => {
 			if (signal === "SIGKILL") {
@@ -2046,8 +2046,8 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			scheduleWorkerStopFinalization(target: object): void;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
-		const sessionLeaseModule = await import("../src/core/session-lease.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
+		const sessionLeaseModule = await import("../src/core/session-lease.ts");
 		// The pid is alive, but it now belongs to an unrelated process.
 		const existsSpy = vi.spyOn(childProcessModule, "processIdExists").mockReturnValue(true);
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(true);
@@ -2116,7 +2116,7 @@ describe("daemon worker supervisor monitoring", () => {
 			): Promise<void>;
 			deleteWorkerDescriptor: ReturnType<typeof vi.fn>;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const existsSpy = vi.spyOn(childProcessModule, "processIdExists").mockReturnValue(false);
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(false);
 		try {
@@ -2175,7 +2175,7 @@ describe("daemon worker supervisor monitoring", () => {
 			): Promise<void>;
 			deleteWorkerDescriptor: ReturnType<typeof vi.fn>;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const existsSpy = vi.spyOn(childProcessModule, "processIdExists").mockReturnValue(false);
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(false);
 		try {
@@ -2270,8 +2270,8 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			scheduleWorkerStopFinalization(target: object): void;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
-		const sessionLeaseModule = await import("../src/core/session-lease.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
+		const sessionLeaseModule = await import("../src/core/session-lease.ts");
 		const existsSpy = vi.spyOn(childProcessModule, "processIdExists").mockReturnValue(true);
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(true);
 		const killSpy = vi.spyOn(childProcessModule, "signalProcessGroupOrProcess").mockImplementation(() => {});
@@ -2322,8 +2322,8 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			scheduleWorkerStopFinalization(target: object): void;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
-		const sessionLeaseModule = await import("../src/core/session-lease.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
+		const sessionLeaseModule = await import("../src/core/session-lease.ts");
 		const existsSpy = vi.spyOn(childProcessModule, "processIdExists").mockReturnValue(true);
 		let alive = true;
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockImplementation(() => alive);
@@ -2380,8 +2380,8 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			scheduleWorkerStopFinalization(target: object): void;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
-		const sessionLeaseModule = await import("../src/core/session-lease.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
+		const sessionLeaseModule = await import("../src/core/session-lease.ts");
 		const existsSpy = vi.spyOn(childProcessModule, "processIdExists").mockReturnValue(true);
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(true);
 		const killSpy = vi.spyOn(childProcessModule, "signalProcessGroupOrProcess").mockImplementation(() => {});
@@ -2428,8 +2428,8 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			scheduleWorkerStopFinalization(target: object): void;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
-		const sessionLeaseModule = await import("../src/core/session-lease.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
+		const sessionLeaseModule = await import("../src/core/session-lease.ts");
 		const existsSpy = vi.spyOn(childProcessModule, "processIdExists").mockReturnValue(true);
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(true);
 		const killSpy = vi.spyOn(childProcessModule, "signalProcessGroupOrProcess").mockImplementation(() => {});
@@ -2481,7 +2481,7 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			scheduleWorkerStopFinalization(target: object): void;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(false);
 		try {
 			supervisor.scheduleWorkerStopFinalization(worker);
@@ -2524,7 +2524,7 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			scheduleWorkerStopFinalization(target: object): void;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockImplementation(() => alive);
 		try {
 			supervisor.scheduleWorkerStopFinalization(worker);
@@ -2568,7 +2568,7 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			reclaimStaleWorkerRegistration(target: object): Promise<boolean>;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(false);
 		try {
 			await expect(supervisor.reclaimStaleWorkerRegistration(worker)).resolves.toBe(true);
@@ -2604,8 +2604,8 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			reclaimStaleWorkerRegistration(target: object): Promise<boolean>;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
-		const sessionLeaseModule = await import("../src/core/session-lease.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
+		const sessionLeaseModule = await import("../src/core/session-lease.ts");
 		// The pid is alive, but it belongs to an unrelated process now.
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(true);
 		const startIdSpy = vi.spyOn(sessionLeaseModule, "getProcessStartId").mockReturnValue("proc:recycled");
@@ -2650,7 +2650,7 @@ describe("daemon worker supervisor monitoring", () => {
 			reclaimStaleWorkerRegistration(target: object): Promise<boolean>;
 		};
 
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(false);
 		try {
 			const reclaim = supervisor.reclaimStaleWorkerRegistration(worker);
@@ -2690,7 +2690,7 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			reclaimStaleWorkerRegistration(target: object): Promise<boolean>;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(false);
 		try {
 			const reclaim = supervisor.reclaimStaleWorkerRegistration(worker);
@@ -2735,7 +2735,7 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			reclaimStaleWorkerRegistration(target: object): Promise<boolean>;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(false);
 		try {
 			const results = await Promise.all([
@@ -2773,7 +2773,7 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as {
 			reclaimStaleWorkerRegistration(target: object): Promise<boolean>;
 		};
-		const childProcessModule = await import("../src/utils/child-process.js");
+		const childProcessModule = await import("../src/utils/child-process.ts");
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(true);
 		try {
 			await expect(supervisor.reclaimStaleWorkerRegistration(worker)).resolves.toBe(false);

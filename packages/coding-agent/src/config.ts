@@ -1,5 +1,4 @@
-import { spawnSync } from "child_process";
-import { createHash } from "crypto";
+import { createHash } from "node:crypto";
 import {
 	accessSync,
 	appendFileSync,
@@ -15,7 +14,8 @@ import {
 import { homedir } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
-import { shouldUseWindowsShell } from "./utils/child-process.js";
+import { spawnProcessSync } from "./utils/child-process.ts";
+import { normalizePath } from "./utils/paths.ts";
 
 // =============================================================================
 // Package Detection
@@ -34,14 +34,11 @@ export const isBunBinary =
 /** Detect if Bun is the runtime (compiled binary or bun run) */
 export const isBunRuntime = !!process.versions.bun;
 
-export const SELF_UPDATE_INTERACTIVE_CHILD_ENV = "PRIME_AGENT_INTERACTIVE_SELF_UPDATE";
-export const SELF_UPDATE_NOT_ATTEMPTED_EXIT_CODE = 75;
-
 // =============================================================================
 // Install Method Detection
 // =============================================================================
 
-export type InstallMethod = "bun-binary" | "homebrew" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
+export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
 
 interface SelfUpdateCommandStep {
 	command: string;
@@ -53,19 +50,23 @@ export interface SelfUpdateCommand extends SelfUpdateCommandStep {
 	steps?: SelfUpdateCommandStep[];
 }
 
+export type SelfUpdatePackageTarget = string | { packageName: string; installSpec?: string };
+
+function normalizeSelfUpdatePackageTarget(target: SelfUpdatePackageTarget): {
+	packageName: string;
+	installSpec: string;
+} {
+	if (typeof target === "string") {
+		return { packageName: target, installSpec: target };
+	}
+	return { packageName: target.packageName, installSpec: target.installSpec ?? target.packageName };
+}
+
 function makeSelfUpdateCommand(
 	installStep: SelfUpdateCommandStep,
 	uninstallStep?: SelfUpdateCommandStep,
-	options: { uninstallAfterInstall?: boolean } = {},
 ): SelfUpdateCommand {
 	if (!uninstallStep) return installStep;
-	if (options.uninstallAfterInstall) {
-		return {
-			...installStep,
-			display: `${installStep.display} && ${uninstallStep.display}`,
-			steps: [installStep, uninstallStep],
-		};
-	}
 	return {
 		...installStep,
 		display: `${uninstallStep.display} && ${installStep.display}`,
@@ -85,9 +86,6 @@ export function detectInstallMethod(): InstallMethod {
 	if (isBunBinary) {
 		return "bun-binary";
 	}
-	if (isHomebrewInstall()) {
-		return "homebrew";
-	}
 
 	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
 
@@ -105,11 +103,6 @@ export function detectInstallMethod(): InstallMethod {
 	}
 
 	return "unknown";
-}
-
-function isHomebrewInstall(): boolean {
-	const packageDir = getPackageDir().toLowerCase().replace(/\\/g, "/");
-	return packageDir.includes("/cellar/") && packageDir.includes("/libexec/lib/node_modules/");
 }
 
 function getInferredNpmInstall(): { root: string; prefix: string } | undefined {
@@ -131,70 +124,74 @@ function getInferredNpmInstall(): { root: string; prefix: string } | undefined {
 	return undefined;
 }
 
-function isDirectPackageArtifactSpec(updateSpec: string): boolean {
-	const spec = updateSpec.trim().toLowerCase();
-	return (
-		spec.startsWith("http://") ||
-		spec.startsWith("https://") ||
-		spec.startsWith("file:") ||
-		spec.endsWith(".tgz") ||
-		spec.endsWith(".tar.gz")
-	);
-}
-
-function getDefaultUpdatePackageName(installedPackageName: string, updateSpec: string): string {
-	if (isDirectPackageArtifactSpec(updateSpec)) {
-		return installedPackageName;
-	}
-	return updateSpec;
-}
-
 function getSelfUpdateCommandForMethod(
 	method: InstallMethod,
 	installedPackageName: string,
-	updateSpec = installedPackageName,
+	updatePackageTarget: SelfUpdatePackageTarget = installedPackageName,
 	npmCommand?: string[],
-	updatePackageName = getDefaultUpdatePackageName(installedPackageName, updateSpec),
 ): SelfUpdateCommand | undefined {
-	const uninstallAfterInstall = isDirectPackageArtifactSpec(updateSpec);
+	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
 	switch (method) {
 		case "bun-binary":
-		case "homebrew":
 			return undefined;
-		case "pnpm":
+		case "pnpm": {
+			const match = readCommandOutput("pnpm", ["root", "-g"])
+				? undefined
+				: /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getPackageDir());
+			const binDirArgs = match
+				? [`--config.global-bin-dir=${process.env.PNPM_HOME || dirname(dirname(match[1]))}`]
+				: [];
 			return makeSelfUpdateCommand(
-				makeSelfUpdateCommandStep("pnpm", ["install", "-g", updateSpec]),
-				updatePackageName === installedPackageName
+				makeSelfUpdateCommandStep("pnpm", [
+					"install",
+					"-g",
+					"--ignore-scripts",
+					"--config.minimumReleaseAge=0",
+					...binDirArgs,
+					target.installSpec,
+				]),
+				target.packageName === installedPackageName
 					? undefined
-					: makeSelfUpdateCommandStep("pnpm", ["remove", "-g", installedPackageName]),
-				{ uninstallAfterInstall },
+					: makeSelfUpdateCommandStep("pnpm", ["remove", "-g", ...binDirArgs, installedPackageName]),
 			);
+		}
 		case "yarn":
 			return makeSelfUpdateCommand(
-				makeSelfUpdateCommandStep("yarn", ["global", "add", updateSpec]),
-				updatePackageName === installedPackageName
+				makeSelfUpdateCommandStep("yarn", ["global", "add", "--ignore-scripts", target.installSpec]),
+				target.packageName === installedPackageName
 					? undefined
 					: makeSelfUpdateCommandStep("yarn", ["global", "remove", installedPackageName]),
-				{ uninstallAfterInstall },
 			);
 		case "bun":
 			return makeSelfUpdateCommand(
-				makeSelfUpdateCommandStep("bun", ["install", "-g", updateSpec]),
-				updatePackageName === installedPackageName
+				makeSelfUpdateCommandStep("bun", [
+					"install",
+					"-g",
+					"--ignore-scripts",
+					"--minimum-release-age=0",
+					target.installSpec,
+				]),
+				target.packageName === installedPackageName
 					? undefined
 					: makeSelfUpdateCommandStep("bun", ["uninstall", "-g", installedPackageName]),
-				{ uninstallAfterInstall },
 			);
 		case "npm": {
 			const [command = "npm", ...npmArgs] = npmCommand ?? [];
 			const inferred = npmCommand?.length ? undefined : getInferredNpmInstall();
 			const prefixArgs = [...npmArgs, ...(inferred ? ["--prefix", inferred.prefix] : [])];
-			const installStep = makeSelfUpdateCommandStep(command, [...prefixArgs, "install", "-g", updateSpec]);
+			const installStep = makeSelfUpdateCommandStep(command, [
+				...prefixArgs,
+				"install",
+				"-g",
+				"--ignore-scripts",
+				"--min-release-age=0",
+				target.installSpec,
+			]);
 			const uninstallStep =
-				updatePackageName === installedPackageName
+				target.packageName === installedPackageName
 					? undefined
 					: makeSelfUpdateCommandStep(command, [...prefixArgs, "uninstall", "-g", installedPackageName]);
-			return makeSelfUpdateCommand(installStep, uninstallStep, { uninstallAfterInstall });
+			return makeSelfUpdateCommand(installStep, uninstallStep);
 		}
 		case "unknown":
 			return undefined;
@@ -206,10 +203,9 @@ function readCommandOutput(
 	args: string[],
 	options: { requireSuccess?: boolean } = {},
 ): string | undefined {
-	const result = spawnSync(command, args, {
+	const result = spawnProcessSync(command, args, {
 		encoding: "utf-8",
 		stdio: ["ignore", "pipe", "pipe"],
-		shell: shouldUseWindowsShell(command),
 	});
 	if (result.status === 0) return result.stdout.trim() || undefined;
 	if (options.requireSuccess) {
@@ -242,7 +238,9 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 		}
 		case "pnpm": {
 			const root = readCommandOutput("pnpm", ["root", "-g"]);
-			return root ? [root, dirname(root)] : [];
+			if (root) return [root, dirname(root)];
+			const match = /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getPackageDir());
+			return match ? [match[1]] : [];
 		}
 		case "yarn": {
 			const dir = readCommandOutput("yarn", ["global", "dir"]);
@@ -257,27 +255,51 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 			return roots;
 		}
 		case "bun-binary":
-		case "homebrew":
 		case "unknown":
 			return [];
 	}
 }
 
-function normalizeExistingPathForComparison(path: string): string | undefined {
+function normalizeExistingPathForComparison(path: string, resolveSymlinks: boolean): string | undefined {
 	const resolvedPath = resolve(path);
 	if (!existsSync(resolvedPath)) {
 		return undefined;
 	}
-	let normalizedPath: string;
-	try {
-		normalizedPath = realpathSync(resolvedPath);
-	} catch {
-		return undefined;
+	let normalizedPath = resolvedPath;
+	if (resolveSymlinks) {
+		try {
+			normalizedPath = realpathSync(resolvedPath);
+		} catch {
+			return undefined;
+		}
 	}
 	if (process.platform === "win32") {
 		normalizedPath = normalizedPath.toLowerCase();
 	}
 	return normalizedPath;
+}
+
+function getPathComparisonCandidates(path: string): string[] {
+	return Array.from(
+		new Set(
+			[normalizeExistingPathForComparison(path, false), normalizeExistingPathForComparison(path, true)].filter(
+				(candidate): candidate is string => !!candidate,
+			),
+		),
+	);
+}
+
+function getEntrypointPackageDir(): string | undefined {
+	const entrypoint = process.argv[1];
+	if (!entrypoint) return undefined;
+	let dir = dirname(entrypoint);
+	while (dir !== dirname(dir)) {
+		if (existsSync(join(dir, "package.json"))) {
+			return dir;
+		}
+		dir = dirname(dir);
+	}
+	return undefined;
 }
 
 function isSelfUpdatePathWritable(): boolean {
@@ -292,27 +314,23 @@ function isSelfUpdatePathWritable(): boolean {
 }
 
 function isManagedByGlobalPackageManager(method: InstallMethod, packageName: string, npmCommand?: string[]): boolean {
-	const packageDir = normalizeExistingPathForComparison(getPackageDir());
-	return (
-		!!packageDir &&
-		getGlobalPackageRoots(method, packageName, npmCommand).some((root) => {
-			const normalizedRoot = normalizeExistingPathForComparison(root);
-			return (
-				!!normalizedRoot &&
-				packageDir.startsWith(normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`)
-			);
-		})
-	);
+	const packageDirs = [getPackageDir(), getEntrypointPackageDir()].filter((dir): dir is string => !!dir);
+	const packageDirCandidates = packageDirs.flatMap((dir) => getPathComparisonCandidates(dir));
+	return getGlobalPackageRoots(method, packageName, npmCommand).some((root) => {
+		return getPathComparisonCandidates(root).some((normalizedRoot) => {
+			const rootPrefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
+			return packageDirCandidates.some((packageDir) => packageDir.startsWith(rootPrefix));
+		});
+	});
 }
 
 export function getSelfUpdateCommand(
 	packageName: string,
 	npmCommand?: string[],
-	updateSpec = packageName,
-	updatePackageName = getDefaultUpdatePackageName(packageName, updateSpec),
+	updatePackageTarget: SelfUpdatePackageTarget = packageName,
 ): SelfUpdateCommand | undefined {
 	const method = detectInstallMethod();
-	const command = getSelfUpdateCommandForMethod(method, packageName, updateSpec, npmCommand, updatePackageName);
+	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageTarget, npmCommand);
 	if (!command || !isManagedByGlobalPackageManager(method, packageName, npmCommand) || !isSelfUpdatePathWritable()) {
 		return undefined;
 	}
@@ -322,24 +340,21 @@ export function getSelfUpdateCommand(
 export function getSelfUpdateUnavailableInstruction(
 	packageName: string,
 	npmCommand?: string[],
-	updateSpec = packageName,
-	updatePackageName = getDefaultUpdatePackageName(packageName, updateSpec),
+	updatePackageTarget: SelfUpdatePackageTarget = packageName,
 ): string {
 	const method = detectInstallMethod();
+	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
 	if (method === "bun-binary") {
-		return `Download from: https://github.com/PrimeIntellect-ai/prime-agent/releases/latest`;
+		return `Download from: https://github.com/earendil-works/pi-mono/releases/latest`;
 	}
-	if (method === "homebrew") {
-		return `Update with: brew upgrade ${APP_NAME}`;
-	}
-	const command = getSelfUpdateCommandForMethod(method, packageName, updateSpec, npmCommand, updatePackageName);
+	const command = getSelfUpdateCommandForMethod(method, packageName, target, npmCommand);
 	if (command) {
 		if (isManagedByGlobalPackageManager(method, packageName, npmCommand) && !isSelfUpdatePathWritable()) {
 			return `This installation is managed by a global ${method} install, but the install path is not writable. Update it yourself with: ${command.display}`;
 		}
 		return `This installation is not managed by a global ${method} install. Update it with the package manager, wrapper, or source checkout that provides it.`;
 	}
-	return `Update ${updateSpec} using the package manager, wrapper, or source checkout that provides this installation.`;
+	return `Update ${target.installSpec} using the package manager, wrapper, or source checkout that provides this installation.`;
 }
 
 export function getUpdateInstruction(packageName: string): string {
@@ -365,9 +380,7 @@ export function getPackageDir(): string {
 	// Allow override via environment variable (useful for Nix/Guix where store paths tokenize poorly)
 	const envDir = process.env.PI_PACKAGE_DIR;
 	if (envDir) {
-		if (envDir === "~") return homedir();
-		if (envDir.startsWith("~/")) return homedir() + envDir.slice(1);
-		return envDir;
+		return normalizePath(envDir);
 	}
 
 	if (isBunBinary) {
@@ -417,6 +430,24 @@ export function getExportTemplateDir(): string {
 	return join(packageDir, srcOrDist, "core", "export-html");
 }
 
+/**
+ * Get the directory containing built-in skills shipped with the package.
+ * - For Bun binary: skills/ next to executable
+ * - For Node.js (dist/): dist/skills/
+ * - For tsx (src/): skills/ at the package root
+ */
+export function getBundledSkillsDir(): string {
+	if (isBunBinary) {
+		return join(getPackageDir(), "skills");
+	}
+	const packageDir = getPackageDir();
+	// Source checkouts (tsx) keep built-in skills at the package root; built
+	// packages copy them to dist/skills. Decide by whether src/ is present so a
+	// stale dist/ from a prior build never shadows live source edits.
+	const isSourceCheckout = existsSync(join(packageDir, "src"));
+	return isSourceCheckout ? join(packageDir, "skills") : join(packageDir, "dist", "skills");
+}
+
 /** Get path to package.json */
 export function getPackageJsonPath(): string {
 	return join(getPackageDir(), "package.json");
@@ -462,24 +493,6 @@ export function getBundledInteractiveAssetPath(name: string): string {
 	return join(getInteractiveAssetsDir(), name);
 }
 
-/**
- * Get the directory containing built-in skills shipped with the package.
- * - For Bun binary: skills/ next to executable
- * - For Node.js (dist/): dist/skills/
- * - For tsx (src/): skills/ at the package root
- */
-export function getBundledSkillsDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "skills");
-	}
-	const packageDir = getPackageDir();
-	// Source checkouts (tsx) keep built-in skills at the package root; built
-	// packages copy them to dist/skills. Decide by whether src/ is present so a
-	// stale dist/ from a prior build never shadows live source edits.
-	const isSourceCheckout = existsSync(join(packageDir, "src"));
-	return isSourceCheckout ? join(packageDir, "skills") : join(packageDir, "dist", "skills");
-}
-
 // =============================================================================
 // App Config (from package.json piConfig)
 // =============================================================================
@@ -493,7 +506,13 @@ interface PackageJson {
 	};
 }
 
-const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
+let pkg: PackageJson = {};
+try {
+	pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
+} catch (e: unknown) {
+	const err = e as NodeJS.ErrnoException;
+	if (err.code !== "ENOENT") throw e;
+}
 
 const piConfigName: string | undefined = pkg.piConfig?.name;
 const envPrefix =
@@ -509,13 +528,10 @@ export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or PRIME_AGENT_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${envPrefix}_CODING_AGENT_DIR`;
-export const ENV_SESSION_DIR = `${envPrefix}_SESSION_DIR`;
-export const ENV_LEGACY_SESSION_DIR = `${envPrefix}_CODING_AGENT_SESSION_DIR`;
+export const ENV_SESSION_DIR = `${envPrefix}_CODING_AGENT_SESSION_DIR`;
 
 export function expandTildePath(path: string): string {
-	if (path === "~") return homedir();
-	if (path.startsWith("~/")) return homedir() + path.slice(1);
-	return path;
+	return normalizePath(path);
 }
 
 const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
@@ -527,10 +543,10 @@ export function getShareViewerUrl(gistId: string): string {
 }
 
 // =============================================================================
-// User Config Paths (~/.prime/agent/*)
+// User Config Paths (~/.pi/agent/*)
 // =============================================================================
 
-/** Get the agent config directory (e.g., ~/.prime/agent/) */
+/** Get the agent config directory (e.g., ~/.pi/agent/) */
 export function getAgentDir(): string {
 	const envDir = process.env[ENV_AGENT_DIR];
 	if (envDir) {
@@ -542,71 +558,6 @@ export function getAgentDir(): string {
 /** Get path to user's custom themes directory */
 export function getCustomThemesDir(): string {
 	return join(getAgentDir(), "themes");
-}
-
-/** Directory where daemon and client diagnostic logs are written (e.g. ~/.prime/agent/logs/). */
-export function getLogsDir(): string {
-	return join(getAgentDir(), "logs");
-}
-
-/** Log file capturing client-side agent-open failures. */
-export function getClientErrorLogPath(): string {
-	return join(getLogsDir(), "client-errors.log");
-}
-
-export function getAgentTracesLogPath(): string {
-	return join(getLogsDir(), "agent-traces.log");
-}
-
-/** Shared structured (JSON lines) log for client, daemon, and provider diagnostics. */
-export function getAgentLogPath(): string {
-	return join(getLogsDir(), "agent.jsonl");
-}
-
-/**
- * Log file for a daemon. The basename keeps it readable; a hash of the full
- * socket path makes it unique so two sockets that share a basename (e.g.
- * daemon.sock in different dirs) don't interleave into one file.
- */
-export function getDaemonLogPath(socketPath: string): string {
-	const hash = createHash("sha256").update(socketPath).digest("hex").slice(0, 8);
-	return join(getLogsDir(), `${basename(socketPath)}.${hash}.log`);
-}
-
-export function getDaemonUpdateRestartManifestPath(socketPath: string, agentDir: string = getAgentDir()): string {
-	const normalizedSocketPath = process.platform === "win32" ? socketPath.toLowerCase() : resolve(socketPath);
-	const socketHash = createHash("sha256").update(normalizedSocketPath).digest("hex");
-	return join(agentDir, "daemon-update-restarts", `${socketHash}.json`);
-}
-
-export function getLegacyDaemonUpdateRestartManifestPath(agentDir: string = getAgentDir()): string {
-	return join(agentDir, "daemon-update-restart.json");
-}
-
-const MAX_LOG_BYTES = 5 * 1024 * 1024;
-
-/**
- * Append a line to a log file, keeping its size bounded with a single-generation
- * rotation. Opens and closes per call (no held fd), so rotation works at runtime
- * — a long-lived writer rotates on the write that crosses the cap, not only at
- * startup. Best-effort: diagnostics must never throw into the caller.
- */
-export function appendRotatingLog(logPath: string, message: string, maxBytes: number = MAX_LOG_BYTES): void {
-	try {
-		mkdirSync(dirname(logPath), { recursive: true });
-		try {
-			if (existsSync(logPath) && statSync(logPath).size > maxBytes) {
-				// Drop any prior .old first: renameSync fails on Windows if it exists.
-				rmSync(`${logPath}.old`, { force: true });
-				renameSync(logPath, `${logPath}.old`);
-			}
-		} catch {
-			// Keep appending rather than dropping the log on a rotation failure.
-		}
-		appendFileSync(logPath, `${message}\n`);
-	} catch {
-		// A read-only or missing log dir must never break the caller.
-	}
 }
 
 /** Get path to models.json */
@@ -622,11 +573,6 @@ export function getAuthPath(): string {
 /** Get path to settings.json */
 export function getSettingsPath(): string {
 	return join(getAgentDir(), "settings.json");
-}
-
-/** Get path to cron jobs store */
-export function getCronJobsPath(agentDir: string = getAgentDir()): string {
-	return join(agentDir, "cron-jobs.json");
 }
 
 /** Get path to tools directory */
@@ -645,20 +591,67 @@ export function getPromptsDir(): string {
 }
 
 /** Get path to sessions directory */
-export function getSessionsDir(agentDir: string = getAgentDir()): string {
-	const envDir = getSessionDirEnvOverride();
-	if (envDir) {
-		return envDir;
-	}
-	return join(agentDir, "sessions");
+export function getSessionsDir(): string {
+	return join(getAgentDir(), "sessions");
 }
 
-export function getSessionDirEnvOverride(): string | undefined {
-	const envDir = process.env[ENV_SESSION_DIR] ?? process.env[ENV_LEGACY_SESSION_DIR];
-	return envDir ? expandTildePath(envDir) : undefined;
+/** Get path to logs directory */
+export function getLogsDir(): string {
+	return join(getAgentDir(), "logs");
 }
 
 /** Get path to debug log file */
 export function getDebugLogPath(): string {
 	return join(getAgentDir(), `${APP_NAME}-debug.log`);
+}
+
+// --- prime-port: daemon log/path helpers ---
+export const SELF_UPDATE_INTERACTIVE_CHILD_ENV = "PRIME_AGENT_INTERACTIVE_SELF_UPDATE";
+export const SELF_UPDATE_NOT_ATTEMPTED_EXIT_CODE = 75;
+
+const MAX_LOG_BYTES = 5 * 1024 * 1024;
+
+export function getClientErrorLogPath(): string {
+	return join(getLogsDir(), "client-errors.log");
+}
+
+export function getAgentTracesLogPath(): string {
+	return join(getLogsDir(), "agent-traces.log");
+}
+
+export function getAgentLogPath(): string {
+	return join(getLogsDir(), "agent.jsonl");
+}
+
+export function getDaemonLogPath(socketPath: string): string {
+	const hash = createHash("sha256").update(socketPath).digest("hex").slice(0, 8);
+	return join(getLogsDir(), `${basename(socketPath)}.${hash}.log`);
+}
+
+export function getDaemonUpdateRestartManifestPath(socketPath: string, agentDir: string = getAgentDir()): string {
+	const normalizedSocketPath = process.platform === "win32" ? socketPath.toLowerCase() : resolve(socketPath);
+	const socketHash = createHash("sha256").update(normalizedSocketPath).digest("hex");
+	return join(agentDir, "daemon-update-restarts", `${socketHash}.json`);
+}
+
+export function appendRotatingLog(logPath: string, message: string, maxBytes: number = MAX_LOG_BYTES): void {
+	try {
+		mkdirSync(dirname(logPath), { recursive: true });
+		try {
+			if (existsSync(logPath) && statSync(logPath).size > maxBytes) {
+				// Drop any prior .old first: renameSync fails on Windows if it exists.
+				rmSync(`${logPath}.old`, { force: true });
+				renameSync(logPath, `${logPath}.old`);
+			}
+		} catch {
+			// Keep appending rather than dropping the log on a rotation failure.
+		}
+		appendFileSync(logPath, `${message}\n`);
+	} catch {
+		// A read-only or missing log dir must never break the caller.
+	}
+}
+
+export function getCronJobsPath(agentDir: string = getAgentDir()): string {
+	return join(agentDir, "cron-jobs.json");
 }

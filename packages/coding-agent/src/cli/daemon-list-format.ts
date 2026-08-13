@@ -1,6 +1,6 @@
 import chalk from "chalk";
-import { formatSessionDisplayId } from "../modes/daemon/daemon-session-id.js";
-import type { SessionSummary } from "../modes/daemon/daemon-session-list.js";
+import { formatSessionDisplayId } from "../modes/daemon/daemon-session-id.ts";
+import type { SessionSummary } from "../modes/daemon/daemon-session-list.ts";
 
 // Display status derived from the lifecycle + activity axes.
 type ListStatus = "working" | "idle" | "archived";

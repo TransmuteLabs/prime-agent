@@ -1,22 +1,22 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
-import { DaemonAgentConnection } from "../../../src/modes/agent-connection/daemon-agent-connection.js";
-import type { AgentConnectionEvent, AgentConnectionState } from "../../../src/modes/agent-connection/types.js";
-import type { DaemonSocketClient } from "../../../src/modes/daemon/active-session-state.js";
+import { DaemonAgentConnection } from "../../../src/modes/agent-connection/daemon-agent-connection.ts";
+import type { AgentConnectionEvent, AgentConnectionState } from "../../../src/modes/agent-connection/types.ts";
+import type { DaemonSocketClient } from "../../../src/modes/daemon/active-session-state.ts";
 import type {
 	DaemonClient,
 	DaemonClientCloseListener,
 	DaemonClientMessageListener,
-} from "../../../src/modes/daemon/daemon-client.js";
+} from "../../../src/modes/daemon/daemon-client.ts";
 import {
 	DAEMON_PROTOCOL_INFO,
 	type DaemonAttachResult,
 	type DaemonCommand,
 	type DaemonOutbound,
 	type DaemonResponse,
-} from "../../../src/modes/daemon/daemon-protocol.js";
-import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.js";
-import { DaemonSupervisor } from "../../../src/modes/daemon/daemon-supervisor.js";
+} from "../../../src/modes/daemon/daemon-protocol.ts";
+import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.ts";
+import { DaemonSupervisor } from "../../../src/modes/daemon/daemon-supervisor.ts";
 
 const sourceActiveSessionId = "source-active";
 const targetActiveSessionId = "target-active";
@@ -26,7 +26,11 @@ class ResumeDaemonClient {
 	private readonly messageListeners = new Set<DaemonClientMessageListener>();
 	private readonly closeListeners = new Set<DaemonClientCloseListener>();
 
-	constructor(private readonly switchTarget = targetActiveSessionId) {}
+	private readonly switchTarget: string;
+
+	constructor(switchTarget = targetActiveSessionId) {
+		this.switchTarget = switchTarget;
+	}
 
 	async request(command: DaemonCommand): Promise<DaemonResponse> {
 		this.requests.push(command);

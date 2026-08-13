@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
-import type { AgentSessionRuntime } from "../../core/agent-session-runtime.js";
-import type { AgentStatus } from "../../core/session-manager.js";
-import type { DaemonClientCapability, DaemonEventSequence, DaemonExtensionUIResponse } from "./daemon-protocol.js";
-import { formatSessionDisplayId, matchesSessionIdSuffix } from "./daemon-session-id.js";
+import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import type { AgentStatus } from "../../core/session-manager.ts";
+import type { DaemonClientCapability, DaemonEventSequence, DaemonExtensionUIResponse } from "./daemon-protocol.ts";
+import { formatSessionDisplayId, matchesSessionIdSuffix } from "./daemon-session-id.ts";
 
 export interface DaemonSocketClient {
 	id: string;

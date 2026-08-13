@@ -2,8 +2,8 @@ import { appendFileSync, chmodSync, mkdtempSync, readdirSync, rmSync, statSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type * as PiAi from "@earendil-works/pi-ai";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import type * as PiAiCompat from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	appendGlobalRefinement,
@@ -27,15 +27,15 @@ import {
 	type RefinementResult,
 	refineHarness,
 	saveHarnessState,
-} from "../src/core/refinement/index.js";
-import type { CustomEntry } from "../src/core/session-manager.js";
+} from "../src/core/refinement/index.ts";
+import type { CustomEntry } from "../src/core/session-manager.ts";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
 }));
 
-vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
-	const actual = await importOriginal<typeof PiAi>();
+vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
+	const actual = await importOriginal<typeof PiAiCompat>();
 	return {
 		...actual,
 		completeSimple: completeSimpleMock,

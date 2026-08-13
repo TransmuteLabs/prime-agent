@@ -3,7 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { waitForChildProcess } from "../utils/child-process.js";
+import { waitForChildProcess } from "../utils/child-process.ts";
 
 /**
  * Options for executing shell commands.
@@ -15,11 +15,6 @@ export interface ExecOptions {
 	timeout?: number;
 	/** Working directory */
 	cwd?: string;
-	/**
-	 * Extra env vars merged over the parent process env for this command.
-	 * A key with an undefined value is unset in the child.
-	 */
-	env?: Record<string, string | undefined>;
 }
 
 /**
@@ -30,21 +25,6 @@ export interface ExecResult {
 	stderr: string;
 	code: number;
 	killed: boolean;
-}
-
-function mergeExecEnv(env?: Record<string, string | undefined>): NodeJS.ProcessEnv | undefined {
-	if (!env) {
-		return undefined;
-	}
-	const merged: NodeJS.ProcessEnv = { ...process.env };
-	for (const [key, value] of Object.entries(env)) {
-		if (value === undefined) {
-			delete merged[key];
-		} else {
-			merged[key] = value;
-		}
-	}
-	return merged;
 }
 
 /**
@@ -62,25 +42,20 @@ export async function execCommand(
 			cwd,
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
-			// Merge per-call env over the parent env so callers can scope vars
-			// (e.g. herdr pane identity) without mutating the shared process.env.
-			env: mergeExecEnv(options?.env),
 		});
 
 		let stdout = "";
 		let stderr = "";
 		let killed = false;
 		let timeoutId: NodeJS.Timeout | undefined;
-		let forceKillTimeoutId: NodeJS.Timeout | undefined;
 
 		const killProcess = () => {
 			if (!killed) {
 				killed = true;
 				proc.kill("SIGTERM");
 				// Force kill after 5 seconds if SIGTERM doesn't work
-				forceKillTimeoutId = setTimeout(() => {
-					forceKillTimeoutId = undefined;
-					if (proc.exitCode === null && proc.signalCode === null) {
+				setTimeout(() => {
+					if (!proc.killed) {
 						proc.kill("SIGKILL");
 					}
 				}, 5000);
@@ -111,23 +86,21 @@ export async function execCommand(
 			stderr += data.toString();
 		});
 
-		const cleanup = () => {
-			if (timeoutId) clearTimeout(timeoutId);
-			if (forceKillTimeoutId) clearTimeout(forceKillTimeoutId);
-			if (options?.signal) {
-				options.signal.removeEventListener("abort", killProcess);
-			}
-		};
-
 		// Wait for process termination without hanging on inherited stdio handles
 		// held open by detached descendants.
 		waitForChildProcess(proc)
 			.then((code) => {
-				cleanup();
+				if (timeoutId) clearTimeout(timeoutId);
+				if (options?.signal) {
+					options.signal.removeEventListener("abort", killProcess);
+				}
 				resolve({ stdout, stderr, code: code ?? 0, killed });
 			})
 			.catch((_err) => {
-				cleanup();
+				if (timeoutId) clearTimeout(timeoutId);
+				if (options?.signal) {
+					options.signal.removeEventListener("abort", killProcess);
+				}
 				resolve({ stdout, stderr, code: 1, killed });
 			});
 	});

@@ -13,17 +13,17 @@ import {
 	formatAgentMessageParticipant,
 	isAgentSessionMessage,
 	isAgentSessionMessagePrompt,
-} from "../../../src/core/agent-messages.js";
-import type { KernelSentAgentMessage } from "../../../src/core/kernel/index.js";
-import { AgentMessageComponent } from "../../../src/modes/interactive/components/agent-message.js";
+} from "../../../src/core/agent-messages.ts";
+import type { KernelSentAgentMessage } from "../../../src/core/kernel/index.ts";
+import { AgentMessageComponent } from "../../../src/modes/interactive/components/agent-message.ts";
 import {
 	buildConversationComponents,
 	isCompactAgentMessageNeighbor,
-} from "../../../src/modes/interactive/components/conversation-components.js";
-import { IPythonCellComponent } from "../../../src/modes/interactive/components/ipython-cell.js";
-import { formatQueuedMessagePreview, InteractiveMode } from "../../../src/modes/interactive/interactive-mode.js";
-import { initTheme } from "../../../src/modes/interactive/theme/theme.js";
-import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.js";
+} from "../../../src/modes/interactive/components/conversation-components.ts";
+import { IPythonCellComponent } from "../../../src/modes/interactive/components/ipython-cell.ts";
+import { formatQueuedMessagePreview, InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.ts";
 
 function createPayload(message: string): AgentSessionMessagePayload {
 	return {

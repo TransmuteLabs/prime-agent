@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildDaemonUpdateRestartReport } from "../src/cli/daemon-update-restart.js";
+import { buildDaemonUpdateRestartReport } from "../src/cli/daemon-update-restart.ts";
 import {
 	buildUpdateChildArgs,
 	buildUpdateRelaunchArgs,
 	resolveInteractiveUpdateDaemonSocketPath,
 	updateArgsIncludeSelf,
-} from "../src/modes/interactive/interactive-mode.js";
+} from "../src/modes/interactive/interactive-mode.ts";
 
 describe("buildUpdateRelaunchArgs", () => {
 	it("relaunches the current session with the supported resume flag", () => {

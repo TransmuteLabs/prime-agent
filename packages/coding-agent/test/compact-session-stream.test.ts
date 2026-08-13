@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
 	CompactAssistantStreamReconstructor,
 	createCompactAssistantDelta,
-} from "../src/modes/daemon/compact-session-stream.js";
-import { DAEMON_PROTOCOL_INFO, type DaemonOutbound } from "../src/modes/daemon/daemon-protocol.js";
+} from "../src/modes/daemon/compact-session-stream.ts";
+import { DAEMON_PROTOCOL_INFO, type DaemonOutbound } from "../src/modes/daemon/daemon-protocol.ts";
 
 function assistant(content: AssistantMessage["content"]): AssistantMessage {
 	return {

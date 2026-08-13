@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DaemonClient, getDaemonSocketCloseReason } from "../src/modes/daemon/daemon-client.js";
+import { DaemonClient, getDaemonSocketCloseReason } from "../src/modes/daemon/daemon-client.ts";
 import {
 	DAEMON_COMMAND_COMPATIBILITY,
 	DAEMON_PROTOCOL_VERSION,
 	DAEMON_SCHEMA_REVISION,
-} from "../src/modes/daemon/daemon-protocol.js";
+} from "../src/modes/daemon/daemon-protocol.ts";
 
 const netMock = vi.hoisted(() => {
 	type Listener = (...args: unknown[]) => void;
@@ -14,8 +14,11 @@ const netMock = vi.hoisted(() => {
 		private readonly listeners = new Map<string, Set<TrackedListener>>();
 		readonly writes: string[] = [];
 		destroyed = false;
+		readonly path: string;
 
-		constructor(readonly path: string) {}
+		constructor(path: string) {
+			this.path = path;
+		}
 
 		on(event: string, listener: Listener): this {
 			const listeners = this.listeners.get(event) ?? new Set<TrackedListener>();

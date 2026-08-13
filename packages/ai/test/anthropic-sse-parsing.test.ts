@@ -1,9 +1,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.js";
-import { streamAnthropic } from "../src/providers/anthropic.js";
-import type { Context, ToolCall } from "../src/types.js";
+import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+import { getModel } from "../src/compat.ts";
+import type { Context, ToolCall } from "../src/types.ts";
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
@@ -78,96 +78,7 @@ function createFakeAnthropicClient(response: Response): Anthropic {
 	} as unknown as Anthropic;
 }
 
-function createCacheUsageEvents(cacheCreation: {
-	ephemeral_5m_input_tokens: number;
-	ephemeral_1h_input_tokens: number;
-}): Array<{ event: string; data: string }> {
-	const cacheWriteTokens = cacheCreation.ephemeral_5m_input_tokens + cacheCreation.ephemeral_1h_input_tokens;
-	return [
-		{
-			event: "message_start",
-			data: JSON.stringify({
-				type: "message_start",
-				message: {
-					id: "msg_cache_test",
-					usage: {
-						input_tokens: 12,
-						output_tokens: 0,
-						cache_read_input_tokens: 0,
-						cache_creation_input_tokens: cacheWriteTokens,
-						cache_creation: cacheCreation,
-					},
-				},
-			}),
-		},
-		{
-			event: "message_delta",
-			data: JSON.stringify({
-				type: "message_delta",
-				delta: { stop_reason: "end_turn" },
-				usage: {
-					input_tokens: 12,
-					output_tokens: 5,
-					cache_read_input_tokens: 0,
-					cache_creation_input_tokens: cacheWriteTokens,
-				},
-			}),
-		},
-		{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
-	];
-}
-
 describe("Anthropic raw SSE parsing", () => {
-	it.each([
-		{
-			name: "five-minute writes",
-			cacheRetention: "short" as const,
-			cacheCreation: { ephemeral_5m_input_tokens: 1000, ephemeral_1h_input_tokens: 0 },
-			expectedCacheWriteCost: 0.00125,
-		},
-		{
-			name: "one-hour writes",
-			cacheRetention: "long" as const,
-			cacheCreation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1000 },
-			expectedCacheWriteCost: 0.002,
-		},
-		{
-			name: "mixed TTL writes",
-			cacheRetention: "long" as const,
-			cacheCreation: { ephemeral_5m_input_tokens: 250, ephemeral_1h_input_tokens: 750 },
-			expectedCacheWriteCost: 0.0018125,
-		},
-	])("prices $name from the reported Anthropic usage breakdown", async (testCase) => {
-		const model = getModel("anthropic", "claude-haiku-4-5");
-		const response = createSseResponse(createCacheUsageEvents(testCase.cacheCreation));
-		const result = await streamAnthropic(
-			model,
-			{ messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }] },
-			{
-				client: createFakeAnthropicClient(response),
-				cacheRetention: testCase.cacheRetention,
-			},
-		).result();
-
-		expect(result.usage.cacheWrite).toBe(1000);
-		expect(result.usage.cost.cacheWrite).toBeCloseTo(testCase.expectedCacheWriteCost);
-	});
-
-	it("preserves configured cache write pricing for non-Anthropic models", async () => {
-		const model = getModel("minimax", "MiniMax-M2.7-highspeed");
-		const response = createSseResponse(
-			createCacheUsageEvents({ ephemeral_5m_input_tokens: 1000, ephemeral_1h_input_tokens: 0 }),
-		);
-		const result = await streamAnthropic(
-			model,
-			{ messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }] },
-			{ client: createFakeAnthropicClient(response) },
-		).result();
-
-		expect(result.usage.cacheWrite).toBe(1000);
-		expect(result.usage.cost.cacheWrite).toBeCloseTo((1000 * model.cost.cacheWrite) / 1_000_000);
-	});
-
 	it("repairs malformed SSE JSON and malformed streamed tool JSON", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 		const context: Context = {
@@ -253,6 +164,241 @@ describe("Anthropic raw SSE parsing", () => {
 			path: "A\\H",
 			text: "col1\tcol2",
 		});
+	});
+
+	it("preserves content from content_block_start events", async () => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const context: Context = {
+			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
+		};
+		const response = createSseResponse([
+			{
+				event: "message_start",
+				data: JSON.stringify({
+					type: "message_start",
+					message: {
+						id: "msg_initial_content",
+						usage: {
+							input_tokens: 12,
+							output_tokens: 0,
+							cache_read_input_tokens: 0,
+							cache_creation_input_tokens: 0,
+						},
+					},
+				}),
+			},
+			{
+				event: "content_block_start",
+				data: JSON.stringify({
+					type: "content_block_start",
+					index: 0,
+					content_block: { type: "text", text: "Initial text" },
+				}),
+			},
+			{
+				event: "content_block_delta",
+				data: JSON.stringify({
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "text_delta", text: " plus delta" },
+				}),
+			},
+			{ event: "content_block_stop", data: JSON.stringify({ type: "content_block_stop", index: 0 }) },
+			{
+				event: "content_block_start",
+				data: JSON.stringify({
+					type: "content_block_start",
+					index: 1,
+					content_block: {
+						type: "thinking",
+						thinking: "Initial thinking",
+						signature: "initial signature",
+					},
+				}),
+			},
+			{
+				event: "content_block_delta",
+				data: JSON.stringify({
+					type: "content_block_delta",
+					index: 1,
+					delta: { type: "thinking_delta", thinking: " plus delta" },
+				}),
+			},
+			{
+				event: "content_block_delta",
+				data: JSON.stringify({
+					type: "content_block_delta",
+					index: 1,
+					delta: { type: "signature_delta", signature: " plus delta" },
+				}),
+			},
+			{ event: "content_block_stop", data: JSON.stringify({ type: "content_block_stop", index: 1 }) },
+			{
+				event: "message_delta",
+				data: JSON.stringify({
+					type: "message_delta",
+					delta: { stop_reason: "end_turn" },
+					usage: {
+						input_tokens: 12,
+						output_tokens: 5,
+						cache_read_input_tokens: 0,
+						cache_creation_input_tokens: 0,
+					},
+				}),
+			},
+			{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
+		]);
+
+		const stream = streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		});
+		const result = await stream.result();
+
+		expect(result.content).toEqual([
+			{ type: "text", text: "Initial text plus delta" },
+			{
+				type: "thinking",
+				thinking: "Initial thinking plus delta",
+				thinkingSignature: "initial signature plus delta",
+			},
+		]);
+	});
+
+	it("preserves refusal stop details from message_delta", async () => {
+		const model = getModel("anthropic", "claude-fable-5");
+		const context: Context = {
+			messages: [{ role: "user", content: "blocked request", timestamp: Date.now() }],
+		};
+		const explanation =
+			"This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy. To learn more, provide feedback, or request an exemption based on how you use Claude, visit our help center: https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude.";
+		const response = createSseResponse([
+			{
+				event: "message_start",
+				data: JSON.stringify({
+					type: "message_start",
+					message: {
+						id: "msg_01XFUDYJgAACzvnptvVoYEL",
+						usage: {
+							input_tokens: 412,
+							output_tokens: 0,
+							cache_read_input_tokens: 0,
+							cache_creation_input_tokens: 0,
+						},
+					},
+				}),
+			},
+			{
+				event: "message_delta",
+				data: JSON.stringify({
+					type: "message_delta",
+					delta: {
+						stop_reason: "refusal",
+						stop_details: {
+							type: "refusal",
+							category: "cyber",
+							explanation,
+						},
+					},
+					usage: {
+						input_tokens: 412,
+						output_tokens: 0,
+						cache_read_input_tokens: 0,
+						cache_creation_input_tokens: 0,
+					},
+				}),
+			},
+			{
+				event: "message_stop",
+				data: JSON.stringify({ type: "message_stop" }),
+			},
+		]);
+
+		const stream = streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		});
+		const result = await stream.result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.rawStopReason).toBe("refusal");
+		expect(result.errorMessage).toBe(explanation);
+	});
+
+	it("preserves sensitive stop reasons with a descriptive error message", async () => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const context: Context = {
+			messages: [{ role: "user", content: "blocked request", timestamp: Date.now() }],
+		};
+		const response = createSseResponse([
+			{
+				event: "message_start",
+				data: JSON.stringify({
+					type: "message_start",
+					message: {
+						id: "msg_sensitive",
+						usage: {
+							input_tokens: 12,
+							output_tokens: 0,
+							cache_read_input_tokens: 0,
+							cache_creation_input_tokens: 0,
+						},
+					},
+				}),
+			},
+			{
+				event: "message_delta",
+				data: JSON.stringify({
+					type: "message_delta",
+					delta: { stop_reason: "sensitive" },
+					usage: {
+						input_tokens: 12,
+						output_tokens: 0,
+						cache_read_input_tokens: 0,
+						cache_creation_input_tokens: 0,
+					},
+				}),
+			},
+			{
+				event: "message_stop",
+				data: JSON.stringify({ type: "message_stop" }),
+			},
+		]);
+
+		const stream = streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		});
+		const result = await stream.result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.rawStopReason).toBe("sensitive");
+		expect(result.errorMessage).toBe("Provider stopped with: sensitive");
+	});
+
+	it("treats message_delta without usage as a no-op for usage accumulation", async () => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const context: Context = {
+			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
+		};
+		const response = createSseResponse(
+			minimalAnthropicEvents.map((event) =>
+				event.event === "message_delta"
+					? {
+							event: "message_delta",
+							data: JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+						}
+					: event,
+			),
+		);
+
+		const stream = streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		});
+		const result = await stream.result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.content).toEqual([{ type: "text", text: "Hello" }]);
+		expect(result.usage.input).toBe(12);
+		expect(result.usage.totalTokens).toBe(12);
 	});
 
 	it("ignores unknown SSE events after message_stop", async () => {

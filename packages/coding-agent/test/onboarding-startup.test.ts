@@ -1,12 +1,12 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
-import type { AuthStatus } from "../src/core/auth-storage.js";
-import { PRIME_INFERENCE_PROVIDER_ID } from "../src/core/prime-inference-auth.js";
+import type { AuthStatus } from "../src/core/auth-storage.ts";
+import { PRIME_INFERENCE_PROVIDER_ID } from "../src/core/prime-inference-auth.ts";
 import {
 	type OnboardingStartupState,
 	shouldRunOnboarding,
 	shouldRunPrimeCliOnboardingSplash,
-} from "../src/modes/interactive/onboarding.js";
+} from "../src/modes/interactive/onboarding.ts";
 
 function makeModel(provider: string): Model<Api> {
 	return { id: "test-model", provider } as Model<Api>;

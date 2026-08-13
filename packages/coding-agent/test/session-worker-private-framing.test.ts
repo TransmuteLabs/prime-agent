@@ -5,7 +5,7 @@ import {
 	PrivateFrameDecoder,
 	PrivateFramedChannel,
 	type PrivateFrameHeaderValidator,
-} from "../src/modes/session-worker/private-framing.js";
+} from "../src/modes/session-worker/private-framing.ts";
 
 interface TestHeader {
 	type: string;

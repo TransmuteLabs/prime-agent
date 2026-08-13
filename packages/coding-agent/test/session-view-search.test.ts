@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSessionSearchText, matchesSearchText } from "../src/modes/agents-view/session-view-search.js";
+import { createSessionSearchText, matchesSearchText } from "../src/modes/agents-view/session-view-search.ts";
 
 describe("session view search", () => {
 	it("matches fuzzy tokens, normalized phrases, and case-insensitive regexes", () => {

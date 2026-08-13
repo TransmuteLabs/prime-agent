@@ -1,7 +1,7 @@
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import type { AgentConnectionSessionEvent } from "../agent-connection/types.js";
-import type { PrimeAgentIpythonMeta, PrimeAgentSessionMeta } from "./acp-meta.js";
-import { primeAgentMeta } from "./acp-meta.js";
+import type { AgentConnectionSessionEvent } from "../agent-connection/types.ts";
+import type { PrimeAgentIpythonMeta, PrimeAgentSessionMeta } from "./acp-meta.ts";
+import { primeAgentMeta } from "./acp-meta.ts";
 
 /**
  * Translate prime-agent session events into ACP `session/update` payloads.

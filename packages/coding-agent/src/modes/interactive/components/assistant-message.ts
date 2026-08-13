@@ -9,15 +9,17 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { LOGIN_RECOVERY_MESSAGE } from "../../../core/auth-guidance.js";
-import { getMarkdownTheme, theme } from "../theme/theme.js";
+import { LOGIN_RECOVERY_MESSAGE } from "../../../core/auth-guidance.ts";
+import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import {
 	CollapsibleErrorComponent,
 	normalizeErrorDetails,
 	shouldCollapseErrorDetails,
 	summarizeErrorDetails,
-} from "./collapsible-error.js";
-import { expandCollapseHint } from "./keybinding-hints.js";
+} from "./collapsible-error.ts";
+import { expandCollapseHint } from "./keybinding-hints.ts";
+import { createMarkdownTransform } from "./markdown-transform.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -27,6 +29,10 @@ const LOGIN_RECOVERY_SUFFIX = `\n\n${LOGIN_RECOVERY_MESSAGE}`;
 export interface AssistantMessageComponentOptions {
 	expanded?: boolean;
 	precededByToolActivity?: boolean;
+	/** Horizontal padding for chat message output (default: 1). */
+	outputPad?: number;
+	/** Extension-provided markdown transformers. */
+	markdownTransformers?: readonly MarkdownTransformer[];
 }
 
 function getThinkingMarkdownTheme(baseTheme: MarkdownTheme): MarkdownTheme {
@@ -49,11 +55,15 @@ function getThinkingMarkdownTheme(baseTheme: MarkdownTheme): MarkdownTheme {
 
 /** Single collapsed-thinking row that truncates the recap to the render width instead of wrapping. */
 class CollapsedThinkingRow implements Component {
-	constructor(
-		private readonly label: string,
-		private readonly recap: string,
-		private readonly hint: string,
-	) {}
+	private readonly label: string;
+	private readonly recap: string;
+	private readonly hint: string;
+
+	constructor(label: string, recap: string, hint: string) {
+		this.label = label;
+		this.recap = recap;
+		this.hint = hint;
+	}
 
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
@@ -115,8 +125,11 @@ export class AssistantMessageComponent extends Container {
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
+	private outputPad: number;
+	private markdownTransformers: readonly MarkdownTransformer[];
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
+	private isStreaming = false;
 	private expanded = false;
 	private dirty = false;
 	private lastSignature?: string;
@@ -136,6 +149,8 @@ export class AssistantMessageComponent extends Container {
 		this.hideThinkingBlock = hideThinkingBlock;
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
+		this.outputPad = options.outputPad ?? 1;
+		this.markdownTransformers = options.markdownTransformers ?? [];
 		this.expanded = options.expanded ?? false;
 		this.precededByToolActivity = options.precededByToolActivity ?? false;
 
@@ -165,6 +180,14 @@ export class AssistantMessageComponent extends Container {
 		this.dirty = true;
 	}
 
+	setOutputPad(padding: number): void {
+		if (this.outputPad !== padding) {
+			this.outputPad = padding;
+			this.dirty = true;
+			this.lastSignature = undefined;
+		}
+	}
+
 	setExpanded(expanded: boolean): void {
 		if (this.expanded !== expanded) {
 			this.expanded = expanded;
@@ -189,8 +212,9 @@ export class AssistantMessageComponent extends Container {
 		return lines;
 	}
 
-	updateContent(message: AssistantMessage): void {
+	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
 		this.lastMessage = message;
+		this.isStreaming = isStreaming;
 		this.dirty = true;
 	}
 
@@ -221,6 +245,7 @@ export class AssistantMessageComponent extends Container {
 			`hide:${this.hideThinkingBlock}`,
 			`label:${this.hiddenThinkingLabel}`,
 			`expanded:${this.expanded}`,
+			`streaming:${this.isStreaming}`,
 			`stop:${message.stopReason ?? ""}`,
 			`error:${message.errorMessage ?? ""}`,
 		);
@@ -276,7 +301,9 @@ export class AssistantMessageComponent extends Container {
 			if (content?.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				const markdown = new Markdown(content.text.trim(), 1, 0, this.markdownTheme);
+				const markdown = new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
+					transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
+				});
 				this.blockMarkdowns.set(i, markdown);
 				this.lastBlockTexts.set(i, content.text.trim());
 				this.contentContainer.addChild(markdown);
@@ -290,9 +317,19 @@ export class AssistantMessageComponent extends Container {
 				const thinkingLabel = theme.bold(theme.fg("thinkingText", this.hiddenThinkingLabel));
 				if (this.hideThinkingBlock) {
 					// Collapsed row: bold label, a one-line recap of the trace, and the
-					// hint. The row truncates the recap to the render width so it never
-					// wraps onto a second line on narrow terminals.
-					const recap = thinkingRecap(content.thinking, this.hiddenThinkingLabel);
+					// hint. Adjacent thinking blocks coalesce into a single row. The
+					// row truncates the recap to the render width so it never wraps
+					// onto a second line on narrow terminals.
+					const runTexts: string[] = [];
+					while (i < message.content.length) {
+						const runContent = message.content[i];
+						if (runContent?.type !== "thinking") break;
+						const text = runContent.thinking.trim();
+						if (text) runTexts.push(text);
+						i++;
+					}
+					i--;
+					const recap = thinkingRecap(runTexts.join("\n\n"), this.hiddenThinkingLabel);
 					this.contentContainer.addChild(
 						new CollapsedThinkingRow(thinkingLabel, recap, expandCollapseHint("app.thinking.toggle", false)),
 					);
@@ -303,15 +340,22 @@ export class AssistantMessageComponent extends Container {
 					// Expanded: the same label line with the collapse hint, then the trace.
 					// Thinking traces keep Markdown structure but stay visually quiet.
 					this.contentContainer.addChild(
-						new Text(`${thinkingLabel} ${expandCollapseHint("app.thinking.toggle", true)}`, 1, 0),
+						new Text(`${thinkingLabel} ${expandCollapseHint("app.thinking.toggle", true)}`, this.outputPad, 0),
 					);
 					const markdown = new Markdown(
 						content.thinking.trim(),
-						1,
+						this.outputPad,
 						0,
 						getThinkingMarkdownTheme(this.markdownTheme),
 						{
 							color: (text: string) => theme.fg("thinkingText", text),
+						},
+						{
+							transform: createMarkdownTransform(
+								"assistant-thinking",
+								this.isStreaming,
+								this.markdownTransformers,
+							),
 						},
 					);
 					this.blockMarkdowns.set(i, markdown);
@@ -326,7 +370,12 @@ export class AssistantMessageComponent extends Container {
 
 		const hasToolCalls = message.content.some((c) => c?.type === "toolCall");
 		this.hasToolCalls = hasToolCalls;
-		if (message.stopReason === "aborted") {
+		if (message.stopReason === "length") {
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(
+				new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0),
+			);
+		} else if (message.stopReason === "aborted") {
 			const abortMessage =
 				message.errorMessage && message.errorMessage !== "Request was aborted"
 					? message.errorMessage
@@ -348,12 +397,12 @@ export class AssistantMessageComponent extends Container {
 		const inlineLoginRecovery = formatInlineLoginRecoveryMessage(message);
 		if (inlineLoginRecovery) {
 			const text = prefix ? `${prefix}: ${inlineLoginRecovery}` : inlineLoginRecovery;
-			return new Text(theme.fg("error", text), 1, 0);
+			return new Text(theme.fg("error", text), this.outputPad, 0);
 		}
 
 		if (!shouldCollapseErrorDetails(message)) {
 			const text = prefix ? `${prefix}: ${message}` : message;
-			return new Text(theme.fg("error", text), 1, 0);
+			return new Text(theme.fg("error", text), this.outputPad, 0);
 		}
 
 		const text = prefix ? `${prefix}: ${message}` : message;

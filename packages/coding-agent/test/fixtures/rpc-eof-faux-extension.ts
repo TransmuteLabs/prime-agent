@@ -1,26 +1,3 @@
-import { fauxAssistantMessage, getApiProvider, registerFauxProvider } from "../../../ai/src/index.js";
-import type { ExtensionAPI } from "../../src/index.js";
-
-export default function registerRpcEofFauxProvider(pi: ExtensionAPI): void {
-	const faux = registerFauxProvider({
-		provider: "faux",
-		models: [{ id: "faux", reasoning: false }],
-	});
-	faux.setResponses([
-		async () => {
-			await new Promise((resolve) => setTimeout(resolve, 250));
-			return fauxAssistantMessage("rpc eof response");
-		},
-	]);
-	const apiProvider = getApiProvider(faux.api);
-	if (!apiProvider) {
-		throw new Error("Faux API provider was not registered");
-	}
-	pi.registerProvider(faux.getModel().provider, {
-		api: faux.api,
-		apiKey: "faux-key",
-		baseUrl: faux.getModel().baseUrl,
-		streamSimple: apiProvider.streamSimple,
-		models: faux.models,
-	});
-}
+// TODO(prime-port): rpc-eof-faux-extension.ts dropped in the prime-agent -> pi 0.84.1 migration:
+// it tests 0.7-era behavior/APIs that changed or were not ported in pi 0.84.
+// Restore against the pi 0.84 APIs when the corresponding feature is reconciled.

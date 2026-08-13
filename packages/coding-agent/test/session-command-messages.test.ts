@@ -13,13 +13,13 @@ import {
 	isSessionSlashCommandResultMessage,
 	SESSION_SLASH_COMMAND_CUSTOM_TYPE,
 	SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
-} from "../src/core/messages.js";
-import { parseSessionSlashCommand } from "../src/core/slash-commands.js";
-import { CompactionOutcomeMessageComponent } from "../src/modes/interactive/components/compaction-outcome-message.js";
-import { buildConversationComponents } from "../src/modes/interactive/components/conversation-components.js";
-import { SlashCommandMessageComponent } from "../src/modes/interactive/components/slash-command-message.js";
-import { SlashCommandResultMessageComponent } from "../src/modes/interactive/components/slash-command-result-message.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+} from "../src/core/messages.ts";
+import { parseSessionSlashCommand } from "../src/core/slash-commands.ts";
+import { CompactionOutcomeMessageComponent } from "../src/modes/interactive/components/compaction-outcome-message.ts";
+import { buildConversationComponents } from "../src/modes/interactive/components/conversation-components.ts";
+import { SlashCommandMessageComponent } from "../src/modes/interactive/components/slash-command-message.ts";
+import { SlashCommandResultMessageComponent } from "../src/modes/interactive/components/slash-command-result-message.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const componentOptions = {
 	ui: { requestRender: vi.fn() } as unknown as TUI,

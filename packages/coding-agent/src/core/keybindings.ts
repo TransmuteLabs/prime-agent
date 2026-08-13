@@ -8,10 +8,13 @@ import {
 } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { getAgentDir } from "../config.js";
+import { getAgentDir } from "../config.ts";
 
 export interface AppKeybindings {
 	"app.interrupt": true;
+	"app.thinking.cycle": true;
+	"app.model.cycleForward": true;
+	"app.model.cycleBackward": true;
 	"app.clear": true;
 	"app.input.clear": true;
 	"app.shortcuts": true;
@@ -29,6 +32,7 @@ export interface AppKeybindings {
 	"app.editor.external": true;
 	"app.prompt.stash": true;
 	"app.message.followUp": true;
+	"app.message.copy": true;
 	"app.message.navigateOlder": true;
 	"app.message.navigateNewer": true;
 	"app.message.moveEarlier": true;
@@ -39,6 +43,12 @@ export interface AppKeybindings {
 	"app.session.tree": true;
 	"app.session.fork": true;
 	"app.session.resume": true;
+	"app.session.deleteNoninvasive": true;
+	"app.session.delete": true;
+	"app.session.rename": true;
+	"app.session.toggleSort": true;
+	"app.session.togglePath": true;
+	"app.session.toggleNamedFilter": true;
 	"app.agents.back": true;
 	"app.agents.open": true;
 	"app.modal.back": true;
@@ -86,16 +96,14 @@ export const KEYBINDINGS = {
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
 	"app.model.toggleScope": { defaultKeys: "alt+s", description: "Toggle model selector scope" },
 	"app.configuration.previousTab": { defaultKeys: "shift+tab", description: "Select previous configuration tab" },
-	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output", defaultKeyScope: "editor" },
+	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
 	"app.messages.expand": {
 		defaultKeys: "ctrl+p",
 		description: "Toggle agent message expansion",
-		defaultKeyScope: "editor",
 	},
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
 		description: "Toggle thinking blocks",
-		defaultKeyScope: "editor",
 	},
 	"app.subagents.focus": {
 		defaultKeys: "alt+a",
@@ -120,6 +128,10 @@ export const KEYBINDINGS = {
 	"app.message.followUp": {
 		defaultKeys: "alt+enter",
 		description: "Queue follow-up message",
+	},
+	"app.message.copy": {
+		defaultKeys: "ctrl+x",
+		description: "Copy message to clipboard",
 	},
 	"app.message.navigateOlder": {
 		defaultKeys: "alt+up",
@@ -149,6 +161,12 @@ export const KEYBINDINGS = {
 	"app.session.tree": { defaultKeys: [], description: "Open session tree" },
 	"app.session.fork": { defaultKeys: [], description: "Fork current session" },
 	"app.session.resume": { defaultKeys: [], description: "Resume a session" },
+	"app.session.deleteNoninvasive": { defaultKeys: [], description: "Delete session (noninvasive)" },
+	"app.session.delete": { defaultKeys: [], description: "Delete session" },
+	"app.session.rename": { defaultKeys: [], description: "Rename session" },
+	"app.session.toggleSort": { defaultKeys: [], description: "Toggle session sort" },
+	"app.session.togglePath": { defaultKeys: [], description: "Toggle session path display" },
+	"app.session.toggleNamedFilter": { defaultKeys: "ctrl+n", description: "Toggle named session filter" },
 	"app.agents.back": { defaultKeys: "left", description: "Return to parent agent scope" },
 	"app.agents.open": { defaultKeys: "right", description: "Drill into selected agent" },
 	"app.modal.back": { defaultKeys: "left", description: "Go back / close the current dialog" },

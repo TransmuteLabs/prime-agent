@@ -58,7 +58,10 @@ function parseRecords(path: string): Map<string, WorkerRecoveryRecord> {
 export class WorkerRecoveryJournal {
 	private readonly latest: Map<string, WorkerRecoveryRecord>;
 
-	constructor(private readonly path: string) {
+	private readonly path: string;
+
+	constructor(path: string) {
+		this.path = path;
 		mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 		this.latest = parseRecords(path);
 	}

@@ -6,7 +6,7 @@ import {
 	formatImageMarker,
 	imageMarkerIds,
 	remapImageMarkers,
-} from "../src/modes/interactive/image-markers.js";
+} from "../src/modes/interactive/image-markers.ts";
 
 describe("image markers", () => {
 	test("formatImageMarker round-trips through imageMarkerIds", () => {

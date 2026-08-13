@@ -1,5 +1,5 @@
 {
-	"$schema": "https://raw.githubusercontent.com/earendil-works/pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+	"$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
 	"name": "light",
 	"vars": {
 		"teal": "#5a8080",
@@ -7,6 +7,7 @@
 		"green": "#588458",
 		"red": "#aa5555",
 		"yellow": "#9a7326",
+		"text": "#1f2328",
 		"mediumGray": "#6c6c6c",
 		"dimGray": "#767676",
 		"lightGray": "#b0b0b0",
@@ -29,25 +30,23 @@
 		"warning": "yellow",
 		"muted": "mediumGray",
 		"dim": "dimGray",
-		"text": "",
-		"thinkingText": "#7a7a7a",
-
+		"text": "text",
+		"thinkingText": "mediumGray",
 		"selectedBg": "selectedBg",
+		"scrollbarThumb": "selectedBg",
+		"searchMatchBg": "selectedBg",
+		"searchMatchText": "text",
 		"userMessageBg": "userMsgBg",
-		"userMessageText": "",
+		"userMessageText": "text",
 		"customMessageBg": "customMsgBg",
-		"customMessageText": "",
+		"customMessageText": "text",
 		"customMessageLabel": "#7e57c2",
 		"toolPendingBg": "toolPendingBg",
 		"toolSuccessBg": "toolSuccessBg",
 		"toolErrorBg": "toolErrorBg",
-		"toolDiffAddedBg": "toolDiffAddedBg",
-		"toolDiffRemovedBg": "toolDiffRemovedBg",
-		"toolPanelBg": "#ededf2",
-		"toolTitle": "",
+		"toolTitle": "text",
 		"toolOutput": "mediumGray",
-
-		"mdHeading": "#7e57c2",
+		"mdHeading": "yellow",
 		"mdLink": "blue",
 		"mdLinkUrl": "dimGray",
 		"mdCode": "teal",
@@ -57,12 +56,11 @@
 		"mdQuoteBorder": "mediumGray",
 		"mdHr": "mediumGray",
 		"mdListBullet": "green",
-
 		"toolDiffAdded": "green",
 		"toolDiffRemoved": "red",
-		"toolDiffText": "#57606a",
 		"toolDiffContext": "mediumGray",
-
+		"toolDiffAddedBg": "toolDiffAddedBg",
+		"toolDiffRemovedBg": "toolDiffRemovedBg",
 		"syntaxComment": "#008000",
 		"syntaxKeyword": "#0000FF",
 		"syntaxFunction": "#795E26",
@@ -72,15 +70,15 @@
 		"syntaxType": "#267F99",
 		"syntaxOperator": "#000000",
 		"syntaxPunctuation": "#000000",
-
 		"thinkingOff": "lightGray",
 		"thinkingMinimal": "#767676",
 		"thinkingLow": "blue",
 		"thinkingMedium": "teal",
 		"thinkingHigh": "#875f87",
 		"thinkingXhigh": "#8b008b",
-
-		"bashMode": "green"
+		"thinkingMax": "#af005f",
+		"bashMode": "green",
+		"toolPanelBg": "selectedBg"
 	},
 	"export": {
 		"pageBg": "#f8f8f8",

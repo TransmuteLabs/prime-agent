@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.js";
-import { convertMessages } from "../src/providers/openai-completions.js";
+import { convertMessages } from "../src/api/openai-completions.ts";
+import { getModel } from "../src/compat.ts";
 import type {
 	AssistantMessage,
 	Context,
@@ -8,7 +8,7 @@ import type {
 	OpenAICompletionsCompat,
 	ToolResultMessage,
 	Usage,
-} from "../src/types.js";
+} from "../src/types.ts";
 
 const emptyUsage: Usage = {
 	input: 0,
@@ -19,11 +19,14 @@ const emptyUsage: Usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-const compat: Required<OpenAICompletionsCompat> = {
+const compat: Omit<Required<OpenAICompletionsCompat>, "deferredToolsMode"> & {
+	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
+} = {
 	supportsStore: true,
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,
 	supportsUsageInStreaming: true,
+	supportsFinishReason: true,
 	maxTokensField: "max_completion_tokens",
 	requiresToolResultName: false,
 	requiresAssistantAfterToolResult: false,
@@ -32,10 +35,15 @@ const compat: Required<OpenAICompletionsCompat> = {
 	thinkingFormat: "openai",
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
+	chatTemplateKwargs: {},
+	chatTemplateArgs: {},
 	zaiToolStream: false,
+	supportsThinkingTokenBudget: false,
 	supportsStrictMode: true,
+	supportsOpenAIGrammarTools: false,
 	cacheControlFormat: "anthropic",
 	sendSessionAffinityHeaders: false,
+	sessionAffinityFormat: "openai",
 	supportsLongCacheRetention: true,
 };
 
@@ -48,6 +56,17 @@ function buildToolResult(toolCallId: string, timestamp: number): ToolResultMessa
 			{ type: "text", text: "Read image file [image/png]" },
 			{ type: "image", data: "ZmFrZQ==", mimeType: "image/png" },
 		],
+		isError: false,
+		timestamp,
+	};
+}
+
+function buildEmptyToolResult(toolCallId: string, timestamp: number): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId,
+		toolName: "bash",
+		content: [{ type: "text", text: "" }],
 		isError: false,
 		timestamp,
 	};
@@ -100,7 +119,7 @@ describe("openai-completions convertMessages", () => {
 		expect(imageParts.length).toBe(2);
 	});
 
-	it("does not emit the image placeholder for empty-text tool results with no image", () => {
+	it("uses '(no tool output)' placeholder for empty tool results without images", () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
 		const model: Model<"openai-completions"> = {
 			...baseModel,
@@ -111,7 +130,7 @@ describe("openai-completions convertMessages", () => {
 		const now = Date.now();
 		const assistantMessage: AssistantMessage = {
 			role: "assistant",
-			content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { cmd: "true" } }],
+			content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "true" } }],
 			api: model.api,
 			provider: model.provider,
 			model: model.id,
@@ -120,22 +139,18 @@ describe("openai-completions convertMessages", () => {
 			timestamp: now,
 		};
 
-		const toolResult: ToolResultMessage = {
-			role: "toolResult",
-			toolCallId: "tool-1",
-			toolName: "bash",
-			content: [{ type: "text", text: "" }],
-			isError: false,
-			timestamp: now + 1,
-		};
-
 		const context: Context = {
-			messages: [{ role: "user", content: "Run it", timestamp: now - 2 }, assistantMessage, toolResult],
+			messages: [
+				{ role: "user", content: "Run the command", timestamp: now - 1 },
+				assistantMessage,
+				buildEmptyToolResult("tool-1", now + 1),
+			],
 		};
 
 		const messages = convertMessages(model, context, compat);
-		const toolMessage = messages.find((message) => message.role === "tool");
-		expect(toolMessage?.content).toBe("");
-		expect(toolMessage?.content).not.toBe("(see attached image)");
+		const toolMessage = messages.find((m) => m.role === "tool") as { role: "tool"; content: string } | undefined;
+		expect(toolMessage).toBeTruthy();
+		expect(toolMessage?.content).toBe("(no tool output)");
+		expect(toolMessage?.content).not.toContain("see attached image");
 	});
 });

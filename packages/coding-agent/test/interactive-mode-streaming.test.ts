@@ -2,13 +2,13 @@ import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import { Container, type MarkdownTheme, type TUI } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import type { AgentConnectionSessionEvent } from "../src/modes/agent-connection/index.js";
-import { AgentActivityTracker } from "../src/modes/interactive/agent-activity.js";
-import type { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.js";
-import type { FileChangeSummary } from "../src/modes/interactive/components/edit-summary.js";
-import type { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
-import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.js";
+import type { AgentConnectionSessionEvent } from "../src/modes/agent-connection/index.ts";
+import { AgentActivityTracker } from "../src/modes/interactive/agent-activity.ts";
+import type { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import type { FileChangeSummary } from "../src/modes/interactive/components/edit-summary.ts";
+import type { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const EMPTY_USAGE: Usage = {
 	input: 0,
@@ -184,7 +184,9 @@ describe("InteractiveMode streaming events", () => {
 		);
 		const handleEvent = (InteractiveMode.prototype as unknown as { handleEvent: HandleEvent }).handleEvent;
 
-		await expect(handleEvent.call(fakeThis, { type: "agent_end", messages: [] })).resolves.toBeUndefined();
+		await expect(
+			handleEvent.call(fakeThis, { type: "agent_end", messages: [], willRetry: false }),
+		).resolves.toBeUndefined();
 		expect(fakeThis.refreshConnectionContextUsage).toHaveBeenCalledOnce();
 		resolveRefresh();
 	});
@@ -203,7 +205,7 @@ describe("InteractiveMode streaming events", () => {
 				partial: createAssistantMessage("partial response"),
 			},
 		});
-		await handleEvent.call(fakeThis, { type: "agent_end", messages: [] });
+		await handleEvent.call(fakeThis, { type: "agent_end", messages: [], willRetry: false });
 
 		expect(renderChat(fakeThis.chatContainer)).toContain("partial response");
 		expect(fakeThis.streamingComponent).toBeUndefined();
@@ -231,7 +233,7 @@ describe("InteractiveMode streaming events", () => {
 				},
 			],
 		});
-		await handleEvent.call(fakeThis, { type: "agent_end", messages: [] });
+		await handleEvent.call(fakeThis, { type: "agent_end", messages: [], willRetry: false });
 		const recap = renderChat(fakeThis.recapContainer);
 		expect(recap).toContain("Recap: Updated files");
 		expect(recap).toContain("1 file changed | +1 -1");
@@ -239,7 +241,7 @@ describe("InteractiveMode streaming events", () => {
 		expect(renderChat(fakeThis.chatContainer)).not.toContain("file changed");
 
 		const unchanged = createFakeInteractiveModeThis();
-		await handleEvent.call(unchanged, { type: "agent_end", messages: [] });
+		await handleEvent.call(unchanged, { type: "agent_end", messages: [], willRetry: false });
 		expect(renderChat(unchanged.recapContainer)).not.toContain("file changed");
 	});
 
@@ -268,7 +270,7 @@ describe("InteractiveMode streaming events", () => {
 		const fakeThis = createFakeInteractiveModeThis();
 		fakeThis.agentRunFileChanges.set("/tmp/a.ts", { path: "a.ts", added: 1, removed: 1 });
 		const handleEvent = (InteractiveMode.prototype as unknown as { handleEvent: HandleEvent }).handleEvent;
-		await handleEvent.call(fakeThis, { type: "agent_end", messages: [] });
+		await handleEvent.call(fakeThis, { type: "agent_end", messages: [], willRetry: false });
 		expect(renderChat(fakeThis.recapContainer)).toContain("1 file changed");
 
 		await handleEvent.call(fakeThis, {

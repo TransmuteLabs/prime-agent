@@ -1,5 +1,5 @@
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
-import { getProcessStartId } from "./session-lease.js";
+import { getProcessStartId } from "./session-lease.ts";
 
 export const ORPHAN_PROCESS_JOURNAL_ENV = "PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL";
 

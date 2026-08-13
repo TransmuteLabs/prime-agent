@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Added MCP subsystem (`@earendil-works/pi-ai/mcp`): built-in catalog, OAuth 2.1 PKCE + DCR login for remote MCP servers, and provider registry.
+
 ## [0.7.2] - 2026-08-11
 
 ## [0.7.1] - 2026-08-07

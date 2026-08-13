@@ -1,6 +1,6 @@
 import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
-import type { DaemonClientId, DaemonCommandId, DaemonResponse } from "./daemon-protocol.js";
+import type { DaemonClientId, DaemonCommandId, DaemonResponse } from "./daemon-protocol.ts";
 
 interface ReceivedRecord {
 	version: 1;
@@ -54,7 +54,10 @@ export class CommandRecoveryJournal {
 	private readonly entries = new Map<string, JournalEntry>();
 	private recordCount = 0;
 
-	constructor(private readonly path: string) {
+	private readonly path: string;
+
+	constructor(path: string) {
+		this.path = path;
 		mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 		this.load();
 	}

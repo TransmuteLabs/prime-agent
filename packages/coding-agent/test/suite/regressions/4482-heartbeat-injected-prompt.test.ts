@@ -3,16 +3,16 @@ import { fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-work
 import { Container, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { type AgentCronJob, shouldDeferHeartbeatCronJob } from "../../../src/core/cron-jobs.js";
-import { createGoalContextMessage, type GoalState } from "../../../src/core/goals.js";
-import { createHeartbeatPromptMessage, HEARTBEAT_PROMPT_CUSTOM_TYPE } from "../../../src/core/messages.js";
+import { type AgentCronJob, shouldDeferHeartbeatCronJob } from "../../../src/core/cron-jobs.ts";
+import { createGoalContextMessage, type GoalState } from "../../../src/core/goals.ts";
+import { createHeartbeatPromptMessage, HEARTBEAT_PROMPT_CUSTOM_TYPE } from "../../../src/core/messages.ts";
 import {
 	InjectedPromptMessageComponent,
 	isInjectedPromptMessage,
-} from "../../../src/modes/interactive/components/injected-prompt-message.js";
-import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.js";
-import { getMarkdownTheme, initTheme } from "../../../src/modes/interactive/theme/theme.js";
-import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.js";
+} from "../../../src/modes/interactive/components/injected-prompt-message.ts";
+import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { getMarkdownTheme, initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.ts";
 
 type AddMessageToChatHost = {
 	addMessageToChat(

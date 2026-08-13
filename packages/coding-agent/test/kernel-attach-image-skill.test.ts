@@ -2,9 +2,9 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getBundledSkillsDir } from "../src/config.js";
-import type { PythonSkillRuntimeInfo } from "../src/core/skills.js";
-import { IpythonKernelProvisioner, imageBlocksFromAttachments } from "../src/core/tools/ipython.js";
+import { getBundledSkillsDir } from "../src/config.ts";
+import type { PythonSkillRuntimeInfo } from "../src/core/skills.ts";
+import { IpythonKernelProvisioner, imageBlocksFromAttachments } from "../src/core/tools/ipython.ts";
 
 // 1x1 transparent PNG.
 const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";

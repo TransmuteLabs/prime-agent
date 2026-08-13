@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanupSessionResources } from "@earendil-works/pi-ai";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionContext } from "../src/core/extensions/types.js";
-import type { KernelBootstrapProgressHandler } from "../src/core/kernel/bootstrap.js";
-import { type ExecuteResult, KernelBusyAfterInterruptError, KernelManager } from "../src/core/kernel/index.js";
-import { createIpythonToolDefinition, IpythonKernelProvisioner } from "../src/core/tools/ipython.js";
+import type { ExtensionContext } from "../src/core/extensions/types.ts";
+import type { KernelBootstrapProgressHandler } from "../src/core/kernel/bootstrap.ts";
+import { type ExecuteResult, KernelBusyAfterInterruptError, KernelManager } from "../src/core/kernel/index.ts";
+import { createIpythonToolDefinition, IpythonKernelProvisioner } from "../src/core/tools/ipython.ts";
 
 let tempDir = "";
 

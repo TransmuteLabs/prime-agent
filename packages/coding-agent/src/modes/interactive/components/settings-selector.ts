@@ -10,10 +10,10 @@ import {
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
-import type { IdleEvictionMinutes } from "../../../core/session-action-store.js";
-import type { WarningSettings } from "../../../core/settings-manager.js";
-import { getSelectListTheme, getSettingsListTheme, theme } from "../theme/theme.js";
-import { DynamicBorder } from "./dynamic-border.js";
+import type { IdleEvictionMinutes } from "../../../core/session-action-store.ts";
+import type { WarningSettings } from "../../../core/settings-manager.ts";
+import { getSelectListTheme, getSettingsListTheme, theme } from "../theme/theme.ts";
+import { DynamicBorder } from "./dynamic-border.ts";
 
 const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	minPrimaryColumnWidth: 12,

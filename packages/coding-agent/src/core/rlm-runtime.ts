@@ -1,8 +1,11 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, Model, ServiceTier } from "@earendil-works/pi-ai";
-import type { AgentSession } from "./agent-session.js";
-import type { ToolDefinition } from "./extensions/index.js";
-import type { HostRequestHandler } from "./kernel/index.js";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { AgentSession } from "./agent-session.ts";
+import type { ToolDefinition } from "./extensions/index.ts";
+import type { HostRequestHandler } from "./kernel/index.ts";
+
+/** OpenAI-style service tier; local until pi-ai re-exports ServiceTier. */
+export type RlmServiceTier = "auto" | "default" | "flex" | "scale" | "priority" | null;
 
 export interface RlmRunRequest {
 	prompt: string;
@@ -208,10 +211,10 @@ export interface CreateRlmSubagentRuntimeOptions {
 	prompt: string;
 	sessionName: string;
 	sessionDir: string;
-	model: Model<any>;
+	model: Model<Api>;
 	thinkingLevel: ThinkingLevel;
-	serviceTier: ServiceTier;
-	scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	serviceTier: RlmServiceTier;
+	scopedModels: Array<{ model: Model<Api>; thinkingLevel?: ThinkingLevel }>;
 	activeToolNames: string[];
 	allowedToolNames?: string[];
 	customTools: ToolDefinition[];

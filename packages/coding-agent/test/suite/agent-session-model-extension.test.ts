@@ -1,43 +1,9 @@
 import type { AgentTool, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type Model, type Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgentCronJob } from "../../src/core/cron-jobs.js";
-import type { ExtensionAPI } from "../../src/index.js";
-import { createHarness, getAssistantTexts, getMessageText, type Harness } from "./harness.js";
-
-function createDeferred<T = void>(): {
-	promise: Promise<T>;
-	resolve(value: T): void;
-} {
-	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((nextResolve) => {
-		resolve = nextResolve;
-	});
-	return { promise, resolve };
-}
-
-async function flushAsyncWork(): Promise<void> {
-	await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-function createHeartbeat(): AgentCronJob {
-	return {
-		id: "heartbeat-1",
-		status: "active",
-		source: "heartbeat",
-		activeSessionId: "active-1",
-		sessionId: "session-1",
-		sessionFile: "/tmp/session.jsonl",
-		cwd: "/tmp/project",
-		prompt: "Check whether the long-running task needs another step.",
-		schedule: { kind: "interval", expression: "every 5m", intervalMs: 300_000 },
-		createdAt: "2026-01-01T00:00:00.000Z",
-		updatedAt: "2026-01-01T00:00:00.000Z",
-		nextRunAt: "2026-01-01T00:05:00.000Z",
-		runCount: 2,
-	};
-}
+import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";
+import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
 
 describe("AgentSession model and extension characterization", () => {
 	const harnesses: Harness[] = [];
@@ -78,435 +44,6 @@ describe("AgentSession model and extension characterization", () => {
 		).toEqual([`${nextModel.provider}/${nextModel.id}`]);
 	});
 
-	it("can save the model before slow model_select handlers finish", async () => {
-		const handlerStarted = createDeferred();
-		const finishHandler = createDeferred();
-		let handlerCompleted = false;
-		const harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", async () => {
-						handlerStarted.resolve();
-						await finishHandler.promise;
-						handlerCompleted = true;
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		const nextModel = harness.getModel("faux-2")!;
-
-		await harness.session.setModel(nextModel, { waitForExtensions: false });
-		await handlerStarted.promise;
-
-		expect(harness.session.model?.id).toBe("faux-2");
-		expect(handlerCompleted).toBe(false);
-
-		finishHandler.resolve();
-		await flushAsyncWork();
-
-		expect(handlerCompleted).toBe(true);
-	});
-
-	it("serializes nonblocking model_select handlers across quick switches", async () => {
-		const firstHandlerStarted = createDeferred();
-		const finishFirstHandler = createDeferred();
-		const events: string[] = [];
-		const harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-				{ id: "faux-3", name: "Three", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", async (event) => {
-						events.push(`start:${event.model.id}`);
-						if (event.model.id === "faux-2") {
-							firstHandlerStarted.resolve();
-							await finishFirstHandler.promise;
-						}
-						events.push(`end:${event.model.id}`);
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-
-		await harness.session.setModel(harness.getModel("faux-2")!, { waitForExtensions: false });
-		await firstHandlerStarted.promise;
-		await harness.session.setModel(harness.getModel("faux-3")!, { waitForExtensions: false });
-		await flushAsyncWork();
-
-		expect(harness.session.model?.id).toBe("faux-3");
-		expect(events).toEqual(["start:faux-2"]);
-
-		finishFirstHandler.resolve();
-		await flushAsyncWork();
-		await flushAsyncWork();
-
-		expect(events).toEqual(["start:faux-2", "end:faux-2", "start:faux-3", "end:faux-3"]);
-	});
-
-	it("queues cycle model_select handlers behind pending nonblocking switches", async () => {
-		const firstHandlerStarted = createDeferred();
-		const finishFirstHandler = createDeferred();
-		const events: string[] = [];
-		const harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-				{ id: "faux-3", name: "Three", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", async (event) => {
-						events.push(`start:${event.model.id}`);
-						if (event.model.id === "faux-2") {
-							firstHandlerStarted.resolve();
-							await finishFirstHandler.promise;
-						}
-						events.push(`end:${event.model.id}`);
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-
-		await harness.session.setModel(harness.getModel("faux-2")!, { waitForExtensions: false });
-		await firstHandlerStarted.promise;
-
-		let cycleResolved = false;
-		const cycle = harness.session.cycleModel().then((result) => {
-			cycleResolved = true;
-			return result;
-		});
-		await flushAsyncWork();
-
-		expect(cycleResolved).toBe(false);
-		expect(events).toEqual(["start:faux-2"]);
-
-		finishFirstHandler.resolve();
-		const result = await cycle;
-
-		expect(result?.model.id).toBe("faux-3");
-		expect(events).toEqual(["start:faux-2", "end:faux-2", "start:faux-3", "end:faux-3"]);
-	});
-
-	it("can cycle models before slow model_select handlers finish", async () => {
-		const handlerStarted = createDeferred();
-		const finishHandler = createDeferred();
-		let handlerCompleted = false;
-		const harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", async () => {
-						handlerStarted.resolve();
-						await finishHandler.promise;
-						handlerCompleted = true;
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-
-		const result = await harness.session.cycleModel("forward", { waitForExtensions: false });
-		await handlerStarted.promise;
-
-		expect(result?.model.id).toBe("faux-2");
-		expect(harness.session.model?.id).toBe("faux-2");
-		expect(handlerCompleted).toBe(false);
-
-		finishHandler.resolve();
-		await flushAsyncWork();
-
-		expect(handlerCompleted).toBe(true);
-	});
-
-	it("waits for pending model_select handlers before starting the next prompt", async () => {
-		const handlerStarted = createDeferred();
-		const finishHandler = createDeferred();
-		const harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", async () => {
-						handlerStarted.resolve();
-						await finishHandler.promise;
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("after model select")]);
-
-		await harness.session.setModel(harness.getModel("faux-2")!, { waitForExtensions: false });
-		await handlerStarted.promise;
-
-		const prompt = harness.session.prompt("hi");
-		await flushAsyncWork();
-
-		expect(getAssistantTexts(harness)).not.toContain("after model select");
-
-		finishHandler.resolve();
-		await prompt;
-
-		expect(getAssistantTexts(harness)).toContain("after model select");
-	});
-
-	it("includes nextTurn messages queued by pending model_select handlers in the next prompt", async () => {
-		const handlerStarted = createDeferred();
-		const finishHandler = createDeferred();
-		const harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", async () => {
-						handlerStarted.resolve();
-						await finishHandler.promise;
-						await pi.sendMessage(
-							{
-								customType: "model-context",
-								content: "model context",
-								display: false,
-							},
-							{ deliverAs: "nextTurn" },
-						);
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("after model context")]);
-
-		await harness.session.setModel(harness.getModel("faux-2")!, { waitForExtensions: false });
-		await handlerStarted.promise;
-
-		const prompt = harness.session.prompt("hi");
-		await flushAsyncWork();
-
-		expect(harness.session.messages).toHaveLength(0);
-
-		finishHandler.resolve();
-		await prompt;
-		for (let i = 0; i < 5 && !getAssistantTexts(harness).includes("after model context"); i++) {
-			await flushAsyncWork();
-		}
-
-		expect(
-			harness.session.messages.slice(0, 2).map((message) => ({ role: message.role, text: getMessageText(message) })),
-		).toEqual([
-			{ role: "custom", text: "model context" },
-			{ role: "user", text: "hi" },
-		]);
-		expect(getAssistantTexts(harness)).toContain("after model context");
-	});
-
-	it("includes nextTurn messages queued by pending model_select handlers in accepted prompts", async () => {
-		const handlerStarted = createDeferred();
-		const finishHandler = createDeferred();
-		const harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", async () => {
-						handlerStarted.resolve();
-						await finishHandler.promise;
-						await pi.sendMessage(
-							{
-								customType: "model-context",
-								content: "accepted model context",
-								display: false,
-							},
-							{ deliverAs: "nextTurn" },
-						);
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("accepted")]);
-
-		await harness.session.setModel(harness.getModel("faux-2")!, { waitForExtensions: false });
-		await handlerStarted.promise;
-
-		const accepted = harness.session.acceptAgentMessagePrompt("agent-to-agent payload", {
-			expandPromptTemplates: false,
-		});
-		await flushAsyncWork();
-
-		expect(harness.session.messages).toHaveLength(0);
-
-		finishHandler.resolve();
-		await accepted;
-		await harness.session.agent.waitForIdle();
-
-		expect(
-			harness.session.messages.slice(0, 2).map((message) => ({ role: message.role, text: getMessageText(message) })),
-		).toEqual([
-			{ role: "custom", text: "accepted model context" },
-			{ role: "user", text: "agent-to-agent payload" },
-		]);
-		expect(getAssistantTexts(harness)).toContain("accepted");
-	});
-
-	it("keeps streaming injected prompts under turn admission when the turn becomes idle", async () => {
-		const toolStarted = createDeferred();
-		const finishTool = createDeferred();
-		const waitTool: AgentTool = {
-			name: "wait",
-			label: "Wait",
-			description: "Wait for release",
-			parameters: Type.Object({}),
-			execute: async () => {
-				toolStarted.resolve();
-				await finishTool.promise;
-				return { content: [{ type: "text", text: "released" }], details: {} };
-			},
-		};
-		const harness = await createHarness({ tools: [waitTool] });
-		harnesses.push(harness);
-		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
-			fauxAssistantMessage("turn complete"),
-			fauxAssistantMessage("heartbeat"),
-		]);
-
-		const turn = harness.session.prompt("start");
-		await toolStarted.promise;
-		await harness.session.promptHeartbeat(createHeartbeat(), { streamingBehavior: "followUp" });
-
-		finishTool.resolve();
-		await turn;
-		await harness.session.waitForIdle();
-
-		expect(getAssistantTexts(harness)).toEqual(["", "turn complete", "heartbeat"]);
-	});
-
-	it("includes nextTurn messages queued by pending model_select handlers in injected prompts", async () => {
-		const handlerStarted = createDeferred();
-		const finishHandler = createDeferred();
-		const harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", async () => {
-						handlerStarted.resolve();
-						await finishHandler.promise;
-						await pi.sendMessage(
-							{
-								customType: "model-context",
-								content: "heartbeat model context",
-								display: false,
-							},
-							{ deliverAs: "nextTurn" },
-						);
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("heartbeat")]);
-
-		await harness.session.setModel(harness.getModel("faux-2")!, { waitForExtensions: false });
-		await handlerStarted.promise;
-
-		const heartbeat = harness.session.promptHeartbeat(createHeartbeat());
-		await flushAsyncWork();
-
-		expect(harness.session.messages).toHaveLength(0);
-
-		finishHandler.resolve();
-		await heartbeat;
-		await harness.session.agent.waitForIdle();
-
-		expect(
-			harness.session.messages.slice(0, 2).map((message) => ({ role: message.role, text: getMessageText(message) })),
-		).toEqual([
-			{ role: "custom", text: "heartbeat model context" },
-			{ role: "custom", text: "Check whether the long-running task needs another step." },
-		]);
-		expect(getAssistantTexts(harness)).toContain("heartbeat");
-	});
-
-	it("allows model_select handlers to enqueue user messages without waiting on themselves", async () => {
-		const harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", () => {
-						pi.sendUserMessage("from model_select");
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("queued from hook")]);
-
-		await harness.session.setModel(harness.getModel("faux-2")!, { waitForExtensions: false });
-		for (let i = 0; i < 5 && !getAssistantTexts(harness).includes("queued from hook"); i++) {
-			await flushAsyncWork();
-		}
-
-		expect(getAssistantTexts(harness)).toContain("queued from hook");
-	});
-
-	it("allows model_select handlers to switch models without waiting on themselves", async () => {
-		const events: string[] = [];
-		let harness: Harness;
-		harness = await createHarness({
-			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
-				{ id: "faux-2", name: "Two", reasoning: true },
-				{ id: "faux-3", name: "Three", reasoning: true },
-			],
-			extensionFactories: [
-				(pi) => {
-					pi.on("model_select", async (event) => {
-						events.push(`start:${event.model.id}`);
-						if (event.model.id === "faux-2") {
-							await harness.session.setModel(harness.getModel("faux-3")!);
-							events.push("nested-returned");
-						}
-						events.push(`end:${event.model.id}`);
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-
-		await harness.session.setModel(harness.getModel("faux-2")!);
-		for (let i = 0; i < 5 && !events.includes("end:faux-3"); i++) {
-			await flushAsyncWork();
-		}
-
-		expect(harness.session.model?.id).toBe("faux-3");
-		expect(events).toEqual(["start:faux-2", "nested-returned", "end:faux-2", "start:faux-3", "end:faux-3"]);
-	});
-
 	it("cycles through scoped models and preserves the scoped thinking preference", async () => {
 		const harness = await createHarness({
 			models: [
@@ -539,6 +76,26 @@ describe("AgentSession model and extension characterization", () => {
 		harness.session.setThinkingLevel("high");
 		expect(harness.session.thinkingLevel).toBe("off");
 		expect(harness.session.cycleThinkingLevel()).toBeUndefined();
+	});
+
+	it("cycles xhigh before max when both are supported", async () => {
+		const harness = await createHarness({ models: [{ id: "faux-1", reasoning: true }] });
+		harnesses.push(harness);
+		harness.getModel().thinkingLevelMap = { xhigh: "xhigh", max: "max" };
+
+		expect(harness.session.getAvailableThinkingLevels()).toEqual([
+			"off",
+			"minimal",
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		]);
+		harness.session.setThinkingLevel("high");
+		expect(harness.session.cycleThinkingLevel()).toBe("xhigh");
+		expect(harness.session.cycleThinkingLevel()).toBe("max");
+		expect(harness.session.cycleThinkingLevel()).toBe("off");
 	});
 
 	it("throws when setModel is called without configured auth", async () => {
@@ -599,6 +156,23 @@ describe("AgentSession model and extension characterization", () => {
 	});
 
 	it("allows extension tool_result handlers to modify tool results", async () => {
+		const toolUsage: Usage = {
+			input: 1,
+			output: 2,
+			cacheRead: 3,
+			cacheWrite: 4,
+			totalTokens: 10,
+			cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+		};
+		const patchedToolUsage: Usage = {
+			input: 5,
+			output: 6,
+			cacheRead: 7,
+			cacheWrite: 8,
+			totalTokens: 26,
+			cost: { input: 0.5, output: 0.6, cacheRead: 0.7, cacheWrite: 0.8, total: 2.6 },
+		};
+		let observedToolUsage: Usage | undefined;
 		const echoTool: AgentTool = {
 			name: "echo",
 			label: "Echo",
@@ -606,17 +180,21 @@ describe("AgentSession model and extension characterization", () => {
 			parameters: Type.Object({ text: Type.String() }),
 			execute: async (_toolCallId, params) => {
 				const text = typeof params === "object" && params !== null && "text" in params ? String(params.text) : "";
-				return { content: [{ type: "text", text }], details: { text } };
+				return { content: [{ type: "text", text }], details: { text }, usage: toolUsage };
 			},
 		};
 		const harness = await createHarness({
 			tools: [echoTool],
 			extensionFactories: [
 				(pi) => {
-					pi.on("tool_result", async () => ({
-						content: [{ type: "text", text: "patched result" }],
-						details: { patched: true },
-					}));
+					pi.on("tool_result", async (event) => {
+						observedToolUsage = event.usage;
+						return {
+							content: [{ type: "text", text: "patched result" }],
+							details: { patched: true },
+							usage: patchedToolUsage,
+						};
+					});
 				},
 			],
 		});
@@ -639,9 +217,12 @@ describe("AgentSession model and extension characterization", () => {
 		await harness.session.prompt("hi");
 
 		expect(getAssistantTexts(harness)).toContain("patched result");
-		expect(
-			harness.session.messages.find((message) => message.role === "toolResult" && message.details?.patched === true),
-		).toBeDefined();
+		const toolResult = harness.session.messages.find(
+			(message) => message.role === "toolResult" && message.details?.patched === true,
+		);
+		expect(observedToolUsage).toEqual(toolUsage);
+		expect(toolResult).toBeDefined();
+		expect(toolResult?.role === "toolResult" ? toolResult.usage : undefined).toEqual(patchedToolUsage);
 	});
 
 	it("allows extension context handlers to modify messages before the LLM call", async () => {
@@ -721,6 +302,34 @@ describe("AgentSession model and extension characterization", () => {
 		expect(providerUserText).toBe("transformed:hello");
 		expect(transformedHarness.session.messages.filter((message) => message.role === "user")).toHaveLength(1);
 		expect(extensionApi).toBeDefined();
+	});
+
+	it("allows extension commands to inspect live system prompt options", async () => {
+		const seenOptions: BuildSystemPromptOptions[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("inspect-options", {
+						description: "Inspect system prompt options",
+						handler: async (_args, ctx) => {
+							const options = ctx.getSystemPromptOptions();
+							seenOptions.push(options);
+							options.selectedTools?.push("mutated_tool");
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		await harness.session.prompt("/inspect-options");
+		await harness.session.prompt("/inspect-options");
+
+		expect(seenOptions).toHaveLength(2);
+		expect(seenOptions[0]).toBe(seenOptions[1]);
+		expect(seenOptions[0]?.cwd).toBe(harness.tempDir);
+		expect(seenOptions[0]?.selectedTools).toContain("read");
+		expect(seenOptions[1]?.selectedTools).toContain("mutated_tool");
 	});
 
 	it("allows before_agent_start handlers to inject custom messages and modify the system prompt", async () => {

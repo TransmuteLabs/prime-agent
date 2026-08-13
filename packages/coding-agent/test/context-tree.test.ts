@@ -2,19 +2,20 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
-import { type AssistantMessage, getModel, type Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { AgentSession } from "../src/core/agent-session.js";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { type ContextTreeNode, loadContextTreeChildrenFromDisk } from "../src/core/context-tree.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
-import { SessionManager } from "../src/core/session-manager.js";
-import { SettingsManager } from "../src/core/settings-manager.js";
-import { addAssistantUsage, cloneUsage, emptyUsage } from "../src/core/usage.js";
-import { formatContextTree } from "../src/modes/interactive/components/context-tree-format.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
-import { createTestResourceLoader } from "./utilities.js";
+import { AgentSession } from "../src/core/agent-session.ts";
+import { AuthStorage } from "../src/core/auth-storage.ts";
+import { type ContextTreeNode, loadContextTreeChildrenFromDisk } from "../src/core/context-tree.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
+import { addAssistantUsage, cloneUsage, emptyUsage } from "../src/core/usage.ts";
+import { formatContextTree } from "../src/modes/interactive/components/context-tree-format.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
+import { createTestResourceLoader } from "./utilities.ts";
 
 const model = getModel("anthropic", "claude-sonnet-4-5")!;
 
@@ -307,14 +308,16 @@ describe("loadContextTreeChildrenFromDisk", () => {
 });
 
 describe("AgentSession.getContextTree", () => {
-	function createSession() {
+	async function createSession() {
 		const settingsManager = SettingsManager.inMemory();
 		const sessionManager = SessionManager.inMemory();
 		const authStorage = AuthStorage.inMemory();
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
+		const modelRegistry = await createModelRegistry(authStorage);
 		const session = new AgentSession({
 			agent: new Agent({
 				getApiKey: () => "test-key",
+				streamFn: streamSimple,
 				initialState: {
 					model,
 					systemPrompt: "You are a helpful assistant.",
@@ -325,7 +328,7 @@ describe("AgentSession.getContextTree", () => {
 			sessionManager,
 			settingsManager,
 			cwd: process.cwd(),
-			modelRegistry: ModelRegistry.inMemory(authStorage),
+			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
 		});
 		return { session, sessionManager };
@@ -335,8 +338,8 @@ describe("AgentSession.getContextTree", () => {
 		session.agent.state.messages = sessionManager.buildSessionContext().messages;
 	}
 
-	it("returns a root node whose own usage excludes attributed child usage", () => {
-		const { session, sessionManager } = createSession();
+	it("returns a root node whose own usage excludes attributed child usage", async () => {
+		const { session, sessionManager } = await createSession();
 		sessionManager.appendMessage(createUserMessage("do the thing"));
 		const assistantEntryId = sessionManager.appendMessage(
 			createAssistantMessage("on it", createUsage(3000, 600, 0.3)),
@@ -359,11 +362,11 @@ describe("AgentSession.getContextTree", () => {
 		expect(tree.children).toEqual([]);
 	});
 
-	it("keeps pre-compaction spend in the totals after compaction", () => {
+	it("keeps pre-compaction spend in the totals after compaction", async () => {
 		// Intentional: /context reports cumulative session spend. Compaction
 		// shrinks the model-facing context, but tokens already paid for must not
 		// vanish from the totals (the old /usage undercounted here).
-		const { session, sessionManager } = createSession();
+		const { session, sessionManager } = await createSession();
 		sessionManager.appendMessage(createUserMessage("expensive early work"));
 		sessionManager.appendMessage(createAssistantMessage("done", createUsage(5000, 1000, 0.5)));
 		const keptId = sessionManager.appendMessage(createUserMessage("later work"));

@@ -8,9 +8,9 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { type AgentSessionMessage, formatAgentMessageParticipant } from "../../../core/agent-messages.js";
-import { getMarkdownTheme, theme } from "../theme/theme.js";
-import { expandCollapseHint } from "./keybinding-hints.js";
+import { type AgentSessionMessage, formatAgentMessageParticipant } from "../../../core/agent-messages.ts";
+import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { expandCollapseHint } from "./keybinding-hints.ts";
 
 function collapseText(text: string): string {
 	return text.replace(/\s+/g, " ").trim();
@@ -45,7 +45,11 @@ export function agentMessageBodyLines(message: string, width: number): string[] 
 }
 
 class AgentMessageBodyComponent implements Component {
-	constructor(private readonly message: string) {}
+	private readonly message: string;
+
+	constructor(message: string) {
+		this.message = message;
+	}
 
 	render(width: number): string[] {
 		return agentMessageBodyLines(this.message, width);
@@ -58,13 +62,15 @@ export class AgentMessageComponent extends Container {
 	private readonly content = new Container();
 	private readonly header = new Text("", 1, 0);
 	private expanded = false;
+	private readonly message: AgentSessionMessage;
 
 	constructor(
-		private readonly message: AgentSessionMessage,
+		message: AgentSessionMessage,
 		_markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		options: { suppressLeadingSpace?: boolean } = {},
 	) {
 		super();
+		this.message = message;
 		if (!options.suppressLeadingSpace) this.addChild(new Spacer(1));
 		this.addChild(this.content);
 		this.updateDisplay();

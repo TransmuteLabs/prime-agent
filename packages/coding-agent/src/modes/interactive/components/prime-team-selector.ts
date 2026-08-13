@@ -1,6 +1,6 @@
 import { Container, type Focusable, fuzzyFilter, getKeybindings, Spacer, TruncatedText } from "@earendil-works/pi-tui";
-import type { PrimeTeam } from "../../../core/prime-inference-auth.js";
-import { theme } from "../theme/theme.js";
+import type { PrimeTeam } from "../../../core/prime-inference-auth.ts";
+import { theme } from "../theme/theme.ts";
 import {
 	getMenuListLayout,
 	MenuList,
@@ -8,7 +8,7 @@ import {
 	MenuRow,
 	MenuSearchInput,
 	type MenuViewportProvider,
-} from "./menu-panel.js";
+} from "./menu-panel.ts";
 
 type PrimeTeamOption = {
 	type: "personal" | "team";
@@ -27,6 +27,10 @@ export class PrimeTeamSelectorComponent extends Container implements Focusable {
 	private selectedIndex = 0;
 	private searchQuery = "";
 	private _focused = false;
+	private readonly currentTeamId: string | undefined;
+	private readonly onSelect: (team: PrimeTeam | null) => void;
+	private readonly onCancel: () => void;
+	private readonly viewport: MenuViewportProvider;
 	private listLayout = getMenuListLayout({
 		preferredVisibleItems: PREFERRED_VISIBLE_TEAMS,
 		reservedRows: TEAM_LIST_RESERVED_ROWS,
@@ -36,12 +40,16 @@ export class PrimeTeamSelectorComponent extends Container implements Focusable {
 
 	constructor(
 		teams: PrimeTeam[],
-		private readonly currentTeamId: string | undefined,
-		private readonly onSelect: (team: PrimeTeam | null) => void,
-		private readonly onCancel: () => void,
-		private readonly viewport: MenuViewportProvider = {},
+		currentTeamId: string | undefined,
+		onSelect: (team: PrimeTeam | null) => void,
+		onCancel: () => void,
+		viewport: MenuViewportProvider = {},
 	) {
 		super();
+		this.currentTeamId = currentTeamId;
+		this.onSelect = onSelect;
+		this.onCancel = onCancel;
+		this.viewport = viewport;
 
 		this.allOptions = [{ type: "personal", team: null }, ...teams.map((team) => ({ type: "team" as const, team }))];
 		this.filteredOptions = this.allOptions;

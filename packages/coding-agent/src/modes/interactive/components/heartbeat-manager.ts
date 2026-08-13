@@ -1,10 +1,10 @@
 import { type Component, type Focusable, getKeybindings, Spacer, TruncatedText } from "@earendil-works/pi-tui";
-import type { AgentHeartbeatManagementAction } from "../../../core/cron-jobs.js";
-import type { AgentConnectionHeartbeat } from "../../agent-connection/types.js";
-import { theme } from "../theme/theme.js";
-import { keyHint } from "./keybinding-hints.js";
-import { getMenuListLayout, MenuList, MenuPanel, MenuRow } from "./menu-panel.js";
-import { shouldTreatAsBack } from "./modal-back.js";
+import type { AgentHeartbeatManagementAction } from "../../../core/cron-jobs.ts";
+import type { AgentConnectionHeartbeat } from "../../agent-connection/types.ts";
+import { theme } from "../theme/theme.ts";
+import { keyHint } from "./keybinding-hints.ts";
+import { getMenuListLayout, MenuList, MenuPanel, MenuRow } from "./menu-panel.ts";
+import { shouldTreatAsBack } from "./modal-back.ts";
 
 const HEARTBEAT_PANEL_MAX_WIDTH = 72;
 const PREFERRED_VISIBLE_HEARTBEATS = 8;
@@ -27,11 +27,10 @@ export class HeartbeatManagerComponent implements Component, Focusable {
 	private busy = false;
 	private error: string | undefined;
 	private _focused = false;
+	private readonly options: HeartbeatManagerOptions;
 
-	constructor(
-		heartbeats: readonly AgentConnectionHeartbeat[],
-		private readonly options: HeartbeatManagerOptions,
-	) {
+	constructor(heartbeats: readonly AgentConnectionHeartbeat[], options: HeartbeatManagerOptions) {
+		this.options = options;
 		this.setHeartbeats(heartbeats);
 	}
 

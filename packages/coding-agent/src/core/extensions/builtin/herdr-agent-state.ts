@@ -18,7 +18,7 @@
 
 import { createConnection } from "node:net";
 import { basename } from "node:path";
-import type { ExtensionAPI, ExtensionFactory } from "../types.js";
+import type { ExtensionAPI, ExtensionFactory } from "../types.ts";
 
 type AgentState = "working" | "blocked" | "idle";
 

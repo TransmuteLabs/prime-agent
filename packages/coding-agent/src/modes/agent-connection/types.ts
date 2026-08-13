@@ -1,31 +1,30 @@
-import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, ImageContent, Model, ServiceTier, TextContent, Transport, Usage } from "@earendil-works/pi-ai";
-import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.js";
-import type { AuthSourceToken } from "../../core/auth-storage.js";
-import type { AgentAutonomousStatus } from "../../core/autonomous.js";
-import type { BashResult } from "../../core/bash-executor.js";
-import type { CompactionResult } from "../../core/compaction/index.js";
-import type { ContextTreeNode } from "../../core/context-tree.js";
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { Api, ImageContent, Model, TextContent, Transport, Usage } from "@earendil-works/pi-ai";
+import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.ts";
+import type { AgentSessionEvent } from "../../core/agent-session.ts";
+import type { AgentAutonomousStatus } from "../../core/autonomous.ts";
+import type { BashResult } from "../../core/bash-executor.ts";
+import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { ContextTreeNode } from "../../core/context-tree.ts";
 import type {
 	AgentCronJob,
 	AgentHeartbeatDeliveryMode,
 	AgentHeartbeatManagementAction,
 	AgentHeartbeatUpdateAction,
-} from "../../core/cron-jobs.js";
-import type { ReplayBuiltInToolName } from "../../core/extensions/index.js";
-import type { InputSource } from "../../core/extensions/types.js";
-import type { GoalState } from "../../core/goals.js";
-import type { KernelSentAgentMessage } from "../../core/kernel/index.js";
-import type { RefinementResult } from "../../core/refinement/index.js";
-import type { RlmMaxDepthStatus, SetRlmMaxDepthResult } from "../../core/rlm-max-depth.js";
+} from "../../core/cron-jobs.ts";
+import type { InputSource } from "../../core/extensions/types.ts";
+import type { GoalState } from "../../core/goals.ts";
+import type { RefinementResult } from "../../core/refinement/index.ts";
+import type { RlmMaxDepthStatus, SetRlmMaxDepthResult } from "../../core/rlm-max-depth.ts";
 import type {
 	QueuedMessageLane,
 	QueuedMessageMutation,
 	QueuedMessageMutationStatus,
 	SessionActionSnapshot,
-} from "../../core/session-action-store.js";
-import type { DeleteSessionFileResult } from "../../core/session-file-actions.js";
-import type { SessionStats } from "../../core/session-stats.js";
+} from "../../core/session-action-store.ts";
+import type { DeleteSessionFileResult } from "../../core/session-file-actions.ts";
+import type { SessionStats } from "../../core/session-stats.ts";
+import type { ServiceTier } from "../daemon/prime-port-ai-compat.ts";
 
 /**
  * Client-side interaction boundary consumed by InteractiveMode.
@@ -431,19 +430,18 @@ export interface AgentConnectionToolDefinition {
 	promptGuidelines?: string[];
 	parameters: unknown;
 	renderShell?: "default" | "self";
-	replayBuiltInToolName?: ReplayBuiltInToolName;
+	replayBuiltInToolName?: string;
 }
 
 /** Prompt admission failure; only a confirmed cancellation is retry-safe. */
 export class AgentConnectionPromptAdmissionError extends Error {
 	readonly cancelled: boolean;
 
-	constructor(
-		message: string,
-		readonly status: "cancelled" | "owned" | "unknown" | "unsupported",
-		options?: ErrorOptions,
-	) {
+	readonly status: "cancelled" | "owned" | "unknown" | "unsupported";
+
+	constructor(message: string, status: "cancelled" | "owned" | "unknown" | "unsupported", options?: ErrorOptions) {
 		super(message, options);
+		this.status = status;
 		this.cancelled = status === "cancelled";
 		this.name = "AgentConnectionPromptAdmissionError";
 	}
@@ -570,52 +568,8 @@ export interface AgentConnectionRlmChildAgentSnapshot {
 	error?: string;
 }
 
-export type AgentConnectionSessionEvent =
-	| AgentEvent
-	| { type: "ipython_sent_agent_message"; toolCallId: string; message: KernelSentAgentMessage }
-	| { type: "session_action_update"; actions: SessionActionSnapshot }
-	| {
-			type: "compaction_start";
-			reason: "manual" | "threshold" | "overflow" | "requested";
-			customInstructions?: string;
-	  }
-	| { type: "session_info_changed"; name: string | undefined }
-	| { type: "thinking_level_changed"; level: ThinkingLevel }
-	| { type: "service_tier_changed"; serviceTier: ServiceTier }
-	| {
-			type: "compaction_end";
-			reason: "manual" | "threshold" | "overflow" | "requested";
-			result: CompactionResult | undefined;
-			aborted: boolean;
-			willRetry: boolean;
-			errorMessage?: string;
-			/** "warning" for benign skips (nothing to compact), "error" for real failures */
-			errorSeverity?: "warning" | "error";
-			customInstructions?: string;
-	  }
-	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-	| { type: "auth_stale"; provider: string; sourceTokens?: readonly AuthSourceToken[] }
-	| { type: "rlm_child_update"; child: AgentConnectionRlmChildAgentSnapshot }
-	| { type: "recap_update"; recap: string | undefined }
-	| { type: "goal_update"; goal: GoalState }
-	| { type: "bash_start"; command: string; excludeFromContext: boolean; transient?: boolean; runId?: string }
-	| { type: "bash_output"; chunk: string }
-	| {
-			type: "bash_end";
-			exitCode: number | undefined;
-			cancelled: boolean;
-			truncated: boolean;
-			fullOutputPath?: string;
-			/** Set when execution failed before producing a result (e.g. spawn failure) */
-			errorMessage?: string;
-			/** Set for transient (side-conversation) runs so other attached clients suppress them. */
-			transient?: boolean;
-			/** Echo of the caller-supplied run id, so clients correlate runs by identity. */
-			runId?: string;
-	  }
-	| { type: "refine_complete"; result: RefinementResult }
-	| { type: "refine_failed"; error: string };
+/** Connection-layer session events mirror AgentSessionEvent (wire-compatible). */
+export type AgentConnectionSessionEvent = AgentSessionEvent;
 
 export type AgentConnectionEvent =
 	| { type: "session_event"; event: AgentConnectionSessionEvent }

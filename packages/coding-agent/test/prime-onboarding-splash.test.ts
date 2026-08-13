@@ -1,10 +1,10 @@
 import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { KeybindingsManager } from "../src/core/keybindings.js";
-import { PrimeOnboardingSplashComponent } from "../src/modes/interactive/components/prime-onboarding-splash.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
-import { PRIME_BUTTERFLY_LOGO } from "../src/themes/prime-logo.js";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
+import { PrimeOnboardingSplashComponent } from "../src/modes/interactive/components/prime-onboarding-splash.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { PRIME_BUTTERFLY_LOGO } from "../src/themes/prime-logo.ts";
 
 describe("PrimeOnboardingSplashComponent", () => {
 	beforeAll(() => {

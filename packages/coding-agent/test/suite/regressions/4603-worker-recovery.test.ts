@@ -13,16 +13,16 @@ import {
 import { createConnection, type Socket } from "node:net";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { APP_NAME, ENV_AGENT_DIR } from "../../../src/config.js";
-import { getProcessStartId } from "../../../src/core/session-lease.js";
-import { DaemonAgentConnection } from "../../../src/modes/agent-connection/daemon-agent-connection.js";
-import { DaemonClient } from "../../../src/modes/daemon/daemon-client.js";
-import type { DaemonResponse } from "../../../src/modes/daemon/daemon-protocol.js";
-import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.js";
+import { APP_NAME, ENV_AGENT_DIR } from "../../../src/config.ts";
+import { getProcessStartId } from "../../../src/core/session-lease.ts";
+import { DaemonAgentConnection } from "../../../src/modes/agent-connection/daemon-agent-connection.ts";
+import { DaemonClient } from "../../../src/modes/daemon/daemon-client.ts";
+import type { DaemonResponse } from "../../../src/modes/daemon/daemon-protocol.ts";
+import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.ts";
 import {
 	acquireDaemonShutdownAdmission,
 	acquireDaemonSupervisorOwnership,
-} from "../../../src/modes/daemon/daemon-supervisor-ownership.js";
+} from "../../../src/modes/daemon/daemon-supervisor-ownership.ts";
 import {
 	DAEMON_WORKER_ACTIVE_SESSION_ID_ENV,
 	DAEMON_WORKER_ROLE_ENV,
@@ -31,14 +31,14 @@ import {
 	type DaemonWorkerDescriptor,
 	type DaemonWorkerFrameHeader,
 	isDaemonWorkerFrameHeader,
-} from "../../../src/modes/daemon/daemon-worker-protocol.js";
-import { serializeJsonLine } from "../../../src/modes/rpc/jsonl.js";
+} from "../../../src/modes/daemon/daemon-worker-protocol.ts";
+import { serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
 import {
 	encodePrivateFrame,
 	type PrivateFrame,
 	PrivateFrameDecoder,
-} from "../../../src/modes/session-worker/private-framing.js";
-import { createHarness, type Harness } from "../harness.js";
+} from "../../../src/modes/session-worker/private-framing.ts";
+import { createHarness, type Harness } from "../harness.ts";
 
 interface OwnerRecord {
 	token: string;

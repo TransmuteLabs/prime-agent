@@ -30,17 +30,17 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ENV_AGENT_DIR } from "../../src/config.js";
-import { ORPHAN_PROCESS_JOURNAL_ENV } from "../../src/core/orphan-process-journal.js";
-import { SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../../src/core/session-lease.js";
-import { DaemonClient } from "../../src/modes/daemon/daemon-client.js";
+import { ENV_AGENT_DIR } from "../../src/config.ts";
+import { ORPHAN_PROCESS_JOURNAL_ENV } from "../../src/core/orphan-process-journal.ts";
+import { SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../../src/core/session-lease.ts";
+import { DaemonClient } from "../../src/modes/daemon/daemon-client.ts";
 import {
 	DAEMON_WORKER_ACTIVE_SESSION_ID_ENV,
 	DAEMON_WORKER_RECOVERY_JOURNAL_ENV,
 	DAEMON_WORKER_ROLE_ENV,
 	DAEMON_WORKER_SUPERVISOR_SOCKET_ENV,
 	DAEMON_WORKER_TOKEN_ENV,
-} from "../../src/modes/daemon/daemon-worker-protocol.js";
+} from "../../src/modes/daemon/daemon-worker-protocol.ts";
 
 const cliPath = resolve(__dirname, "../../src/cli.ts");
 const tsxPath = resolve(__dirname, "../../../../node_modules/tsx/dist/cli.mjs");

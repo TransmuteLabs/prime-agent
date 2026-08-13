@@ -14,9 +14,9 @@ import {
 	planShutdownConfirmation,
 	sortDaemons,
 	verifyHelloSupervisorPid,
-} from "../src/cli/daemon-ps.js";
-import { getProcessStartId } from "../src/core/session-lease.js";
-import { defaultDaemonSocketDir } from "../src/modes/daemon/daemon-socket.js";
+} from "../src/cli/daemon-ps.ts";
+import { getProcessStartId } from "../src/core/session-lease.ts";
+import { defaultDaemonSocketDir } from "../src/modes/daemon/daemon-socket.ts";
 
 describe("worker socket classification", () => {
 	it.runIf(process.platform !== "win32")("recognizes only worker sockets in the default service directory", () => {

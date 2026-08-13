@@ -63,11 +63,13 @@ export function showFullPaneOverlay(
 
 export class CenteredOverlayComponent implements Component, Focusable {
 	private _focused = false;
+	private readonly component: Component;
+	private readonly options: CenteredOverlayOptions;
 
-	constructor(
-		private readonly component: Component,
-		private readonly options: CenteredOverlayOptions,
-	) {}
+	constructor(component: Component, options: CenteredOverlayOptions) {
+		this.component = component;
+		this.options = options;
+	}
 
 	get focused(): boolean {
 		return this._focused;

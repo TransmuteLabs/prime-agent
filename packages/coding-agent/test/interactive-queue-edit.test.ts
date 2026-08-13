@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
-import { QueueSelection } from "../src/modes/interactive/queue-selection.js";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { QueueSelection } from "../src/modes/interactive/queue-selection.ts";
 
 type Harness = {
 	queueSelection: QueueSelection;

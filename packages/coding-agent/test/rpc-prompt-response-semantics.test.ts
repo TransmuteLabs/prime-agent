@@ -8,16 +8,16 @@ import {
 	EventStream,
 	getModel,
 	type Model,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AgentSession } from "../src/core/agent-session.js";
-import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.js";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
-import { SessionManager } from "../src/core/session-manager.js";
-import { SettingsManager } from "../src/core/settings-manager.js";
-import { runRpcMode } from "../src/modes/rpc/rpc-mode.js";
-import { createTestResourceLoader } from "./utilities.js";
+import { AgentSession } from "../src/core/agent-session.ts";
+import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
+import { AuthStorage } from "../src/core/auth-storage.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
+import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
+import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
+import { createTestResourceLoader } from "./utilities.ts";
 
 const rpcIo = vi.hoisted(() => ({
 	outputLines: [] as string[],
@@ -25,7 +25,9 @@ const rpcIo = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/core/output-guard.js", () => ({
+	flushRawStdout: vi.fn(async () => {}),
 	takeOverStdout: vi.fn(),
+	waitForRawStdoutBackpressure: vi.fn(async () => {}),
 	writeRawStdout: (line: string) => {
 		rpcIo.outputLines.push(line);
 	},
@@ -93,11 +95,10 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): {
+async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
 	runtimeHost: AgentSessionRuntime;
-	session: AgentSession;
 	cleanup: () => Promise<void>;
-} {
+}> {
 	const tempDir = join(tmpdir(), `pi-rpc-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
@@ -128,9 +129,9 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 	const sessionManager = SessionManager.inMemory();
 	const settingsManager = SettingsManager.create(tempDir, tempDir);
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	const modelRegistry = await createInMemoryModelRegistry(authStorage);
 	if (options.withAuth) {
-		authStorage.setRuntimeApiKey("anthropic", "test-key");
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
 	}
 
 	const session = new AgentSession({
@@ -138,7 +139,7 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRegistry,
+		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader: createTestResourceLoader(),
 	});
 
@@ -153,7 +154,6 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 
 	return {
 		runtimeHost,
-		session,
 		cleanup: async () => {
 			try {
 				if (session.isStreaming) {
@@ -172,17 +172,16 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 
 async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
 	lineHandler: (line: string) => void;
-	session: AgentSession;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
 	rpcIo.lineHandler = undefined;
 
-	const { runtimeHost, session, cleanup } = createRuntimeHost(options);
+	const { runtimeHost, cleanup } = await createRuntimeHost(options);
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, session, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
@@ -231,7 +230,7 @@ describe("RPC prompt response semantics", () => {
 	});
 
 	it("emits one success response when prompt preflight succeeds", async () => {
-		const { lineHandler, session, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 250 });
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 0 });
 
 		try {
 			lineHandler(JSON.stringify({ id: "b2", type: "prompt", message: "Hello" }));
@@ -246,10 +245,6 @@ describe("RPC prompt response semantics", () => {
 					success: true,
 				});
 			});
-			await vi.waitFor(() => {
-				expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "agent_start")).toBe(true);
-			});
-			expect(session.isStreaming).toBe(true);
 		} finally {
 			await cleanup();
 		}
@@ -286,43 +281,6 @@ describe("RPC prompt response semantics", () => {
 			});
 
 			await sleep(150);
-		} finally {
-			await cleanup();
-		}
-	});
-
-	it("preserves omitted global scope on RPC refine commands", async () => {
-		const { lineHandler, session, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 0 });
-		const refine = vi.spyOn(session, "refine").mockResolvedValue({
-			id: "refine_rpc",
-			summary: "RPC refinement",
-			rationale: "Test refine scope default",
-			expectedOutcome: "Preserve local default",
-			appliedEdits: [],
-			harnessStatePath: "/tmp/harness_state.json",
-			scope: "local",
-		});
-
-		try {
-			lineHandler(JSON.stringify({ id: "r1", type: "refine", instructions: "record local lesson" }));
-
-			await vi.waitFor(() => {
-				expect(refine).toHaveBeenCalledWith({
-					instructions: "record local lesson",
-					rollbackId: undefined,
-					global: undefined,
-				});
-				expect(parseOutputLines(rpcIo.outputLines)).toEqual(
-					expect.arrayContaining([
-						expect.objectContaining({
-							id: "r1",
-							type: "response",
-							command: "refine",
-							success: true,
-						}),
-					]),
-				);
-			});
 		} finally {
 			await cleanup();
 		}

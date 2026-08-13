@@ -82,7 +82,9 @@
 		"thinkingMedium": "primarySoft",
 		"thinkingHigh": "primary",
 		"thinkingXhigh": "primary",
-		"bashMode": "success"
+		"bashMode": "success",
+		"searchMatchBg": "selectedBg",
+		"searchMatchText": "text"
 	},
 	"export": {
 		"pageBg": "bg",

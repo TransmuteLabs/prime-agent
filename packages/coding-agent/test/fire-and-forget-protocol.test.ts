@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAgentSessionMessagePrompt, parseAgentSessionMessagePromptId } from "../src/core/agent-messages.js";
+import { createAgentSessionMessagePrompt, parseAgentSessionMessagePromptId } from "../src/core/agent-messages.ts";
 
 const endpoint = { activeSessionId: "active-child", sessionId: "child-id", sessionName: "worker" };
 

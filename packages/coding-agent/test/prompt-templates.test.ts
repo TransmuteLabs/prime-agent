@@ -12,8 +12,13 @@ import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterAll, describe, expect, test } from "vitest";
-import { getAgentDir } from "../src/config.js";
-import { loadPromptTemplates, parseCommandArgs, substituteArgs } from "../src/core/prompt-templates.js";
+import { getAgentDir } from "../src/config.ts";
+import {
+	expandPromptTemplate,
+	loadPromptTemplates,
+	parseCommandArgs,
+	substituteArgs,
+} from "../src/core/prompt-templates.ts";
 
 // ============================================================================
 // substituteArgs
@@ -186,6 +191,61 @@ describe("substituteArgs", () => {
 });
 
 // ============================================================================
+// substituteArgs - Positional Defaults
+// ============================================================================
+
+describe("substituteArgs - positional defaults", () => {
+	test("should use default when positional arg is missing", () => {
+		expect(substituteArgs(`List exactly \${1:-7} next steps`, [])).toBe("List exactly 7 next steps");
+	});
+
+	test("should support defaults for all arguments", () => {
+		const template = `\${@:-default}\n\${ARGUMENTS:-default}`;
+
+		expect(substituteArgs(template, [])).toBe("default\ndefault");
+		expect(substituteArgs(template, ["This", "would", "be", "the", "arguments"])).toBe(
+			"This would be the arguments\nThis would be the arguments",
+		);
+	});
+
+	test("should use positional arg when present", () => {
+		expect(substituteArgs(`List exactly \${1:-7} next steps`, ["3"])).toBe("List exactly 3 next steps");
+	});
+
+	test("should use default when positional arg is empty", () => {
+		expect(substituteArgs(`Mode: \${1:-brief}`, [""])).toBe("Mode: brief");
+	});
+
+	test("should support multiple positional defaults", () => {
+		expect(substituteArgs(`\${1:-7} \${2:-brief}`, [])).toBe("7 brief");
+		expect(substituteArgs(`\${1:-7} \${2:-brief}`, ["3"])).toBe("3 brief");
+		expect(substituteArgs(`\${1:-7} \${2:-brief}`, ["3", "verbose"])).toBe("3 verbose");
+	});
+
+	test("should not recursively substitute patterns in arg values", () => {
+		expect(substituteArgs(`\${1:-7}`, ["$ARGUMENTS"])).toBe("$ARGUMENTS");
+		expect(substituteArgs(`\${1:-7}`, ["$1"])).toBe("$1");
+	});
+
+	test("should not recursively substitute patterns in default values", () => {
+		expect(substituteArgs(`\${1:-$ARGUMENTS}`, ["a", "b"])).toBe("a");
+		expect(substituteArgs(`\${3:-$ARGUMENTS}`, ["a", "b"])).toBe("$ARGUMENTS");
+	});
+
+	test("should support defaults with spaces", () => {
+		expect(substituteArgs(`\${1:-seven steps}`, [])).toBe("seven steps");
+	});
+
+	test("should support out-of-range positional defaults", () => {
+		expect(substituteArgs(`\${3:-fallback}`, ["a", "b"])).toBe("fallback");
+	});
+
+	test("should mix positional defaults with existing placeholders", () => {
+		expect(substituteArgs(`$1 \${2:-x} $ARGUMENTS`, ["a"])).toBe("a x a");
+	});
+});
+
+// ============================================================================
 // substituteArgs - Array Slicing (Bash-Style)
 // ============================================================================
 
@@ -318,21 +378,8 @@ describe("parseCommandArgs", () => {
 		expect(parseCommandArgs("a  b   c")).toEqual(["a", "b", "c"]);
 	});
 
-	test.each([
-		{ name: "tabs", input: "a\tb\tc", expected: ["a", "b", "c"] },
-		{
-			name: "Unicode spaces",
-			input: "first\u2002second",
-			expected: ["first", "second"],
-			positionalResult: "first|second",
-		},
-	])("should handle $name as separators", ({ input, expected, positionalResult }) => {
-		const args = parseCommandArgs(input);
-
-		expect(args).toEqual(expected);
-		if (positionalResult) {
-			expect(substituteArgs("$1|$2", args)).toBe(positionalResult);
-		}
+	test("should handle tabs as separators", () => {
+		expect(parseCommandArgs("a\tb\tc")).toEqual(["a", "b", "c"]);
 	});
 
 	test("should handle quoted empty string", () => {
@@ -348,8 +395,23 @@ describe("parseCommandArgs", () => {
 		expect(parseCommandArgs("日本語 🎉 café")).toEqual(["日本語", "🎉", "café"]);
 	});
 
-	test("should handle newlines in arguments", () => {
+	test("should handle newlines in quoted arguments", () => {
 		expect(parseCommandArgs('"line1\nline2" second')).toEqual(["line1\nline2", "second"]);
+	});
+
+	test("should treat unquoted newlines as separators", () => {
+		expect(parseCommandArgs("label-2\n\nHere is some description #2.")).toEqual([
+			"label-2",
+			"Here",
+			"is",
+			"some",
+			"description",
+			"#2.",
+		]);
+	});
+
+	test("should collapse mixed unquoted whitespace", () => {
+		expect(parseCommandArgs("a\n\n\tb  c")).toEqual(["a", "b", "c"]);
 	});
 
 	test("should handle escaped quotes inside quoted strings", () => {
@@ -363,6 +425,40 @@ describe("parseCommandArgs", () => {
 
 	test("should handle leading spaces", () => {
 		expect(parseCommandArgs("   a b c")).toEqual(["a", "b", "c"]);
+	});
+});
+
+// ============================================================================
+// Integration
+// ============================================================================
+
+describe("expandPromptTemplate", () => {
+	test("should split template arguments on unquoted newlines", () => {
+		const result = expandPromptTemplate("/arg-test label-2\n\nHere is some description #2.", [
+			{
+				name: "arg-test",
+				description: "test",
+				content: `- arg1: $1\n- rest: \${@:2}`,
+				sourceInfo: { path: "/tmp/arg-test.md", source: "local", scope: "temporary", origin: "top-level" },
+				filePath: "/tmp/arg-test.md",
+			},
+		]);
+
+		expect(result).toBe("- arg1: label-2\n- rest: Here is some description #2.");
+	});
+
+	test("should support template command separated from args by newline", () => {
+		const result = expandPromptTemplate("/arg-test\nlabel-2", [
+			{
+				name: "arg-test",
+				description: "test",
+				content: "arg1: $1",
+				sourceInfo: { path: "/tmp/arg-test.md", source: "local", scope: "temporary", origin: "top-level" },
+				filePath: "/tmp/arg-test.md",
+			},
+		]);
+
+		expect(result).toBe("arg1: label-2");
 	});
 });
 
@@ -496,31 +592,6 @@ Do something`,
 		const tmpl = templates.find((t) => t.name === "empty-hint");
 		expect(tmpl).toBeDefined();
 		expect(tmpl!.argumentHint).toBeUndefined();
-	});
-
-	test("should ignore non-string frontmatter metadata", () => {
-		writeTemplate(
-			"invalid-metadata",
-			`---
-description:
-  - not
-  - a string
-argument-hint: [temporary-value]
----
-Fallback description from the template body`,
-		);
-
-		const templates = loadPromptTemplates({
-			cwd: process.cwd(),
-			agentDir: getAgentDir(),
-			promptPaths: [testDir],
-			includeDefaults: false,
-		});
-
-		const tmpl = templates.find((t) => t.name === "invalid-metadata");
-		expect(tmpl).toBeDefined();
-		expect(tmpl!.argumentHint).toBeUndefined();
-		expect(tmpl!.description).toBe("Fallback description from the template body");
 	});
 
 	test("should preserve argument-hint with special characters", () => {

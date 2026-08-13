@@ -1,10 +1,10 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import lockfile from "proper-lockfile";
-import { APP_NAME } from "../../src/config.js";
-import { isDaemonCatalogProcess, runDaemonCatalogProcess } from "../../src/modes/daemon/daemon-catalog-process.js";
-import { DaemonSupervisor } from "../../src/modes/daemon/daemon-supervisor.js";
-import { acquireDaemonSupervisorOwnership } from "../../src/modes/daemon/daemon-supervisor-ownership.js";
+import { APP_NAME } from "../../src/config.ts";
+import { isDaemonCatalogProcess, runDaemonCatalogProcess } from "../../src/modes/daemon/daemon-catalog-process.ts";
+import { DaemonSupervisor } from "../../src/modes/daemon/daemon-supervisor.ts";
+import { acquireDaemonSupervisorOwnership } from "../../src/modes/daemon/daemon-supervisor-ownership.ts";
 
 type ControlMessage = { type: "go" | "probe" | "release" | "release_runtime" | "shutdown" | "cleanup" };
 

@@ -9,31 +9,30 @@ export {
 	type AgentSessionEventListener,
 	type ModelCycleResult,
 	type PromptOptions,
-} from "./agent-session.js";
-export type { AgentSessionRuntimeConfig } from "./agent-session-config.js";
+	type SessionStats,
+} from "./agent-session.ts";
 export {
 	AgentSessionRuntime,
-	type AgentSessionRuntimeKind,
-	type AgentSessionRuntimeMetadata,
 	type CreateAgentSessionRuntimeFactory,
 	type CreateAgentSessionRuntimeResult,
 	createAgentSessionRuntime,
-} from "./agent-session-runtime.js";
+} from "./agent-session-runtime.ts";
 export {
-	type AgentSessionCreationOptions,
 	type AgentSessionRuntimeDiagnostic,
 	type AgentSessionServices,
 	type CreateAgentSessionFromServicesOptions,
 	type CreateAgentSessionServicesOptions,
 	createAgentSessionFromServices,
 	createAgentSessionServices,
-} from "./agent-session-services.js";
-export { type BashExecutorOptions, type BashResult, executeBashWithOperations } from "./bash-executor.js";
-export type { CompactionResult } from "./compaction/index.js";
-export { createEventBus, type EventBus, type EventBusController } from "./event-bus.js";
+} from "./agent-session-services.ts";
+export { type BashExecutorOptions, type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+export type { CompactionResult } from "./compaction/index.ts";
+export { createEventBus, type EventBus, type EventBusController } from "./event-bus.ts";
+export { areExperimentalFeaturesEnabled } from "./experimental.ts";
 // Extensions system
 export {
 	type AgentEndEvent,
+	type AgentSettledEvent,
 	type AgentStartEvent,
 	type AgentToolResult,
 	type AgentToolUpdateCallback,
@@ -57,6 +56,7 @@ export {
 	ExtensionRunner,
 	type ExtensionShortcut,
 	type ExtensionUIContext,
+	type InlineExtension,
 	type LoadExtensionsResult,
 	type MessageRenderer,
 	type RegisteredCommand,
@@ -76,9 +76,42 @@ export {
 	type TurnEndEvent,
 	type TurnStartEvent,
 	type WorkingIndicatorOptions,
-} from "./extensions/index.js";
-export type { RefinementResult } from "./refinement/index.js";
-export type { CreateRlmSubagentRuntimeOptions, RlmSubagentRuntime, SubagentRuntimeHost } from "./rlm-runtime.js";
-export { SessionImportFileNotFoundError } from "./session-import-errors.js";
-export type { SessionStats } from "./session-stats.js";
-export { createSyntheticSourceInfo } from "./source-info.js";
+} from "./extensions/index.ts";
+// Continual harness / refine subsystem (standalone; host wiring deferred)
+export type { RefinementResult } from "./refinement/index.ts";
+export {
+	type AppliedRefinementEdit,
+	type AutoRefineReason,
+	type AutoRefineReview,
+	type AutoRefineReviewContext,
+	appendGlobalRefinement,
+	applyRefinementProposal,
+	formatHarnessStateForPrompt,
+	getGlobalHarnessStateDir,
+	getHarnessStatePath,
+	getLocalHarnessStateDir,
+	getRefinementHistory,
+	getRefinementHistoryPath,
+	type HarnessEntry,
+	type HarnessRefinementEvent,
+	type HarnessScope,
+	type HarnessState,
+	inferRefinementResultScope,
+	loadGlobalRefinementHistory,
+	loadHarnessState,
+	mergeHarnessStates,
+	mergeRefinementHistory,
+	planRefinement,
+	REFINE_SKILL_NAME,
+	REFINEMENT_CUSTOM_TYPE,
+	type RefinementAction,
+	type RefinementEdit,
+	type RefinementKind,
+	type RefinementPlan,
+	type RefinementProposal,
+	type RefineOptions,
+	refineHarness,
+	reviewAutoRefine,
+	saveHarnessState,
+} from "./refinement/index.ts";
+export { createSyntheticSourceInfo } from "./source-info.ts";

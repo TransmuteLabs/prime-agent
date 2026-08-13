@@ -1,8 +1,8 @@
 import stripAnsi from "strip-ansi";
 import { describe, expect, test, vi } from "vitest";
-import { AgentsViewMode } from "../../../src/modes/agents-view/agents-view-mode.js";
-import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.js";
-import { createDeferred as deferred } from "../scheduling.js";
+import { AgentsViewMode } from "../../../src/modes/agents-view/agents-view-mode.ts";
+import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.ts";
+import { createDeferred as deferred } from "../scheduling.ts";
 
 function summary(id: string): SessionSummary {
 	return {

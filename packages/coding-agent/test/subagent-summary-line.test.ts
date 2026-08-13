@@ -1,14 +1,14 @@
 import { setKeybindings } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { KeybindingsManager } from "../src/core/keybindings.js";
-import type { AgentConnectionRlmChildAgentSnapshot } from "../src/modes/agent-connection/types.js";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
+import type { AgentConnectionRlmChildAgentSnapshot } from "../src/modes/agent-connection/types.ts";
 import {
 	countDirectSubagentStatuses,
 	SubagentSummaryLine,
-} from "../src/modes/interactive/components/subagent-summary-line.js";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+} from "../src/modes/interactive/components/subagent-summary-line.ts";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 function child(
 	id: string,

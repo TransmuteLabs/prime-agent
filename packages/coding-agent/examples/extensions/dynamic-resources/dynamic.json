@@ -1,5 +1,5 @@
 {
-	"$schema": "https://raw.githubusercontent.com/earendil-works/pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+	"$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
 	"name": "dynamic-resources",
 	"vars": {
 		"cyan": "#00d7ff",
@@ -39,7 +39,6 @@
 		"toolPendingBg": "toolPendingBg",
 		"toolSuccessBg": "toolSuccessBg",
 		"toolErrorBg": "toolErrorBg",
-		"toolPanelBg": "#262630",
 		"toolTitle": "",
 		"toolOutput": "gray",
 		"mdHeading": "#f0c674",

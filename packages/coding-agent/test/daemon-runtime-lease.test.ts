@@ -6,12 +6,12 @@ import {
 	acquireSessionLease,
 	SESSION_LEASE_OWNER_ID_ENV,
 	SESSION_LEASES_ENABLED_ENV,
-} from "../src/core/session-lease.js";
-import { SessionManager } from "../src/core/session-manager.js";
-import type { ActiveSessionState } from "../src/modes/daemon/active-session-state.js";
-import { AgentDaemon } from "../src/modes/daemon/daemon-mode.js";
-import type { DaemonCommand } from "../src/modes/daemon/daemon-protocol.js";
-import { userMsg } from "./utilities.js";
+} from "../src/core/session-lease.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
+import type { ActiveSessionState } from "../src/modes/daemon/active-session-state.ts";
+import { AgentDaemon } from "../src/modes/daemon/daemon-mode.ts";
+import type { DaemonCommand } from "../src/modes/daemon/daemon-protocol.ts";
+import { userMsg } from "./utilities.ts";
 
 describe("daemon runtime session leases", () => {
 	afterEach(() => {

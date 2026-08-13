@@ -12,7 +12,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerSessionResourceCleanup } from "@earendil-works/pi-ai";
-import { FORK_SERVER_SCRIPT } from "./fork-server-script.js";
+import { FORK_SERVER_SCRIPT } from "./fork-server-script.ts";
 
 const READY_TIMEOUT_MS = 30_000;
 const SPAWN_TIMEOUT_MS = 10_000;

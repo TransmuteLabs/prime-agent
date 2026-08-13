@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { DaemonClient, DaemonClientRequestOptions } from "../src/modes/daemon/daemon-client.js";
-import type { DaemonCommand, DaemonResponse } from "../src/modes/daemon/daemon-protocol.js";
+import type { DaemonClient, DaemonClientRequestOptions } from "../src/modes/daemon/daemon-client.ts";
+import type { DaemonCommand, DaemonResponse } from "../src/modes/daemon/daemon-protocol.ts";
 import {
 	deleteDaemonSavedSession,
 	listDaemonSavedSessions,
 	renameDaemonSavedSession,
-} from "../src/modes/daemon/saved-session-catalog.js";
+} from "../src/modes/daemon/saved-session-catalog.ts";
 
 class FakeDaemonClient {
 	readonly commands: DaemonCommand[] = [];

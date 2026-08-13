@@ -2,21 +2,21 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import chalk from "chalk";
-import { APP_NAME, getAgentDir, VERSION } from "../config.js";
-import { isOrphanProcessIdentityCurrent, readActiveOrphanProcesses } from "../core/orphan-process-journal.js";
-import { getProcessStartId } from "../core/session-lease.js";
-import { DaemonClient } from "../modes/daemon/daemon-client.js";
+import { APP_NAME, getAgentDir, VERSION } from "../config.ts";
+import { isOrphanProcessIdentityCurrent, readActiveOrphanProcesses } from "../core/orphan-process-journal.ts";
+import { getProcessStartId } from "../core/session-lease.ts";
+import { DaemonClient } from "../modes/daemon/daemon-client.ts";
 import {
 	DAEMON_PROTOCOL_VERSION,
 	DAEMON_SCHEMA_ID,
 	type DaemonRuntimeIdentity,
-} from "../modes/daemon/daemon-protocol.js";
-import { defaultDaemonSocketDir, defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.js";
-import { acquireDaemonShutdownAdmission } from "../modes/daemon/daemon-supervisor-ownership.js";
-import type { DaemonWorkerDescriptor } from "../modes/daemon/daemon-worker-protocol.js";
-import { signalProcessGroupOrProcess } from "../utils/child-process.js";
-import { formatDaemonListTable } from "./daemon-ps-format.js";
-import { promptYesNo } from "./daemon-stop-confirm.js";
+} from "../modes/daemon/daemon-protocol.ts";
+import { defaultDaemonSocketDir, defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.ts";
+import { acquireDaemonShutdownAdmission } from "../modes/daemon/daemon-supervisor-ownership.ts";
+import type { DaemonWorkerDescriptor } from "../modes/daemon/daemon-worker-protocol.ts";
+import { signalProcessGroupOrProcess } from "../utils/child-process.ts";
+import { formatDaemonListTable } from "./daemon-ps-format.ts";
+import { promptYesNo } from "./daemon-stop-confirm.ts";
 
 /**
  * `daemon ps` discovers every prime-agent daemon on the machine, not just the

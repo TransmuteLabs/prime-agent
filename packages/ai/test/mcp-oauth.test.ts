@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMcpOAuthProvider } from "../src/mcp/oauth.js";
+import { createMcpOAuthProvider } from "../src/mcp/oauth.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -52,15 +52,16 @@ describe.sequential("MCP OAuth provider", () => {
 
 		const provider = createMcpOAuthProvider({ server: "demo", url: "https://srv.test/mcp" });
 		const creds = await provider.login({
-			onAuth: (info) => {
-				authUrl = info.url;
+			signal: new AbortController().signal,
+			notify: (event) => {
+				if (event.type === "auth_url") authUrl = event.url;
 			},
-			onPrompt: async () => "",
-			// Headless: supply the redirect URL via the manual-input path, which
-			// races (and wins against) the local callback server.
-			onManualCodeInput: async () => {
-				const state = new URL(authUrl).searchParams.get("state") ?? "";
-				return `${REDIRECT}?code=the-code&state=${state}`;
+			prompt: async (prompt) => {
+				if (prompt.type === "manual_code") {
+					const state = new URL(authUrl).searchParams.get("state") ?? "";
+					return `${REDIRECT}?code=the-code&state=${state}`;
+				}
+				return "";
 			},
 		});
 
@@ -97,13 +98,16 @@ describe.sequential("MCP OAuth provider", () => {
 			);
 			const provider = createMcpOAuthProvider({ server: "demo", url: "https://srv.test/mcp" });
 			const creds = await provider.login({
-				onAuth: (info) => {
-					authUrl = info.url;
+				signal: new AbortController().signal,
+				notify: (event) => {
+					if (event.type === "auth_url") authUrl = event.url;
 				},
-				onPrompt: async () => "",
-				onManualCodeInput: async () => {
-					const p = new URL(authUrl).searchParams;
-					return `${p.get("redirect_uri")}?code=x&state=${p.get("state")}`;
+				prompt: async (prompt) => {
+					if (prompt.type === "manual_code") {
+						const p = new URL(authUrl).searchParams;
+						return `${p.get("redirect_uri")}?code=x&state=${p.get("state")}`;
+					}
+					return "";
 				},
 			});
 			expect(creds.access).toBe("a");
@@ -130,13 +134,17 @@ describe.sequential("MCP OAuth provider", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		const provider = createMcpOAuthProvider({ server: "demo", url: "https://srv.test/mcp" });
-		const refreshed = await provider.refreshToken({
-			access: "access-1",
-			refresh: "old-refresh",
-			expires: Date.now() - 1000,
-			tokenEndpoint: META.token_endpoint,
-			clientId: "client-xyz",
-		} as never);
+		const refreshed = await provider.refresh(
+			{
+				type: "oauth",
+				access: "access-1",
+				refresh: "old-refresh",
+				expires: Date.now() - 1000,
+				tokenEndpoint: META.token_endpoint,
+				clientId: "client-xyz",
+			},
+			new AbortController().signal,
+		);
 
 		expect(refreshed.access).toBe("access-2");
 		expect(refreshed.refresh).toBe("old-refresh");
@@ -153,9 +161,13 @@ describe.sequential("MCP OAuth provider", () => {
 			}),
 		);
 		const provider = createMcpOAuthProvider({ server: "slackish", url: "https://srv.test/mcp" });
-		await expect(provider.login({ onAuth: () => {}, onPrompt: async () => "" })).rejects.toThrow(
-			"dynamic client registration",
-		);
+		await expect(
+			provider.login({
+				signal: new AbortController().signal,
+				notify: () => {},
+				prompt: async () => "",
+			}),
+		).rejects.toThrow("dynamic client registration");
 	});
 });
 

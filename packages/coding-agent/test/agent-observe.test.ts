@@ -4,7 +4,7 @@ import {
 	createAgentObserveMessagePreview,
 	normalizeObserveLimit,
 	normalizeObserveMaxChars,
-} from "../src/core/agent-observe.js";
+} from "../src/core/agent-observe.ts";
 
 describe("agent observe helpers", () => {
 	it("creates bounded text previews", () => {

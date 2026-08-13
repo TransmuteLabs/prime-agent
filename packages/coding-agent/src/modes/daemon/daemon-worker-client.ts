@@ -1,13 +1,13 @@
 import { createConnection, type Socket } from "node:net";
-import { serializeJsonLine } from "../rpc/jsonl.js";
-import { type PrivateFrame, PrivateFramedChannel } from "../session-worker/private-framing.js";
-import type { DaemonCommand, DaemonOutbound, DaemonResponse } from "./daemon-protocol.js";
+import { serializeJsonLine } from "../rpc/jsonl.ts";
+import { type PrivateFrame, PrivateFramedChannel } from "../session-worker/private-framing.ts";
+import type { DaemonCommand, DaemonOutbound, DaemonResponse } from "./daemon-protocol.ts";
 import {
 	type DaemonWorkerCommand,
 	type DaemonWorkerCommandBody,
 	type DaemonWorkerFrameHeader,
 	isDaemonWorkerFrameHeader,
-} from "./daemon-worker-protocol.js";
+} from "./daemon-worker-protocol.ts";
 
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 type DaemonCommandBody = DistributiveOmit<DaemonCommand, "id">;
@@ -40,7 +40,11 @@ export class DaemonWorkerClient {
 		timeout: ReturnType<typeof setTimeout>;
 	}>();
 
-	constructor(private readonly socketPath: string) {}
+	private readonly socketPath: string;
+
+	constructor(socketPath: string) {
+		this.socketPath = socketPath;
+	}
 
 	async connect(timeoutMs = 3000): Promise<void> {
 		if (this.socket) {

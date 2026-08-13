@@ -1,7 +1,7 @@
 import { Box, Markdown, type MarkdownTheme, Text } from "@earendil-works/pi-tui";
-import type { ParsedSkillBlock } from "../../../core/skill-blocks.js";
-import { getMarkdownTheme, theme } from "../theme/theme.js";
-import { expandCollapseHint } from "./keybinding-hints.js";
+import type { ParsedSkillBlock } from "../../../core/agent-session.ts";
+import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { keyText } from "./keybinding-hints.ts";
 
 /**
  * Component that renders a skill invocation message with collapsed/expanded state.
@@ -48,7 +48,7 @@ export class SkillInvocationMessageComponent extends Box {
 			const line =
 				theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m `) +
 				theme.fg("customMessageText", this.skillBlock.name) +
-				` ${expandCollapseHint("app.tools.expand", false)}`;
+				theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`);
 			this.addChild(new Text(line, 0, 0));
 		}
 	}

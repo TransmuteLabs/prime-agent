@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { APP_NAME } from "../src/config.js";
-import { formatResumeHint } from "../src/modes/interactive/resume-hint.js";
+import { APP_NAME } from "../src/config.ts";
+import { formatResumeHint } from "../src/modes/interactive/resume-hint.ts";
 
 const SESSION_ID = "0196c2e4-7f01-7abc-8def-0123456789ab";
 

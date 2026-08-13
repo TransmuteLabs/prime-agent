@@ -4,19 +4,19 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
 import { spawn } from "child_process";
-import { expandTildePath } from "../config.js";
-import type { AgentSessionEvent } from "../core/agent-session.js";
-import type { AgentSessionRuntimeConfig } from "../core/agent-session-config.js";
-import { type AgentCronJob, formatAgentCronJob } from "../core/cron-jobs.js";
-import { DaemonClient, type DaemonClientMessageListener } from "../modes/daemon/daemon-client.js";
-import type { DaemonOutbound, DaemonResponse } from "../modes/daemon/daemon-protocol.js";
-import { matchesSessionIdSuffix } from "../modes/daemon/daemon-session-id.js";
-import type { SessionSummary } from "../modes/daemon/daemon-session-list.js";
-import { defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.js";
-import { isLocalPath } from "../utils/paths.js";
-import { isValidThinkingLevel } from "./args.js";
-import { formatSessionListTable } from "./daemon-list-format.js";
-import { runPs, runReap } from "./daemon-ps.js";
+import { expandTildePath } from "../config.ts";
+import type { AgentSessionRuntimeConfig } from "../core/agent-session-config.ts";
+import { type AgentCronJob, formatAgentCronJob } from "../core/cron-jobs.ts";
+import type { AgentConnectionSessionEvent } from "../modes/agent-connection/types.ts";
+import { DaemonClient, type DaemonClientMessageListener } from "../modes/daemon/daemon-client.ts";
+import type { DaemonOutbound, DaemonResponse } from "../modes/daemon/daemon-protocol.ts";
+import { matchesSessionIdSuffix } from "../modes/daemon/daemon-session-id.ts";
+import type { SessionSummary } from "../modes/daemon/daemon-session-list.ts";
+import { defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.ts";
+import { isLocalPath } from "../utils/paths.ts";
+import { isValidThinkingLevel } from "./args.ts";
+import { formatSessionListTable } from "./daemon-list-format.ts";
+import { runPs, runReap } from "./daemon-ps.ts";
 
 interface ParsedDaemonClientCommand {
 	command: string;
@@ -1255,10 +1255,13 @@ class DaemonAttachTerminal {
 	private isStreaming = false;
 	private readonly prompt = chalk.green("prime-agent> ");
 
-	constructor(
-		private readonly client: DaemonClient,
-		private readonly activeSessionId: string,
-	) {}
+	private readonly client: DaemonClient;
+	private readonly activeSessionId: string;
+
+	constructor(client: DaemonClient, activeSessionId: string) {
+		this.client = client;
+		this.activeSessionId = activeSessionId;
+	}
 
 	async run(): Promise<void> {
 		this.rl = createInterface({
@@ -1415,7 +1418,7 @@ class DaemonAttachTerminal {
 		}
 	}
 
-	private handleSessionEvent(event: AgentSessionEvent): void {
+	private handleSessionEvent(event: AgentConnectionSessionEvent): void {
 		switch (event.type) {
 			case "agent_start":
 				this.isStreaming = true;

@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentCronJob, AgentHeartbeatManagementAction } from "../src/core/cron-jobs.js";
+import type { AgentCronJob, AgentHeartbeatManagementAction } from "../src/core/cron-jobs.ts";
 import type {
 	AgentConnectionHeartbeat,
 	AgentConnectionRlmChildAgentSnapshot,
-} from "../src/modes/agent-connection/types.js";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
+} from "../src/modes/agent-connection/types.ts";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 interface HeartbeatManagementHarness {
 	heartbeatCatalog: AgentConnectionHeartbeat[];

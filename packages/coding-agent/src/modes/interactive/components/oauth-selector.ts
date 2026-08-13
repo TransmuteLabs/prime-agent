@@ -7,9 +7,9 @@ import {
 	Spacer,
 	TruncatedText,
 } from "@earendil-works/pi-tui";
-import type { AuthStatus, AuthStorage } from "../../../core/auth-storage.js";
-import { PRIME_INFERENCE_PROVIDER_ID } from "../../../core/prime-inference-auth.js";
-import { theme } from "../theme/theme.js";
+import type { AuthStatus, AuthStorage } from "../../../core/auth-storage.ts";
+import { PRIME_INFERENCE_PROVIDER_ID } from "../../../core/prime-inference-auth.ts";
+import { theme } from "../theme/theme.ts";
 import {
 	getMenuListLayout,
 	MenuList,
@@ -17,7 +17,7 @@ import {
 	MenuRow,
 	MenuSearchInput,
 	type MenuViewportProvider,
-} from "./menu-panel.js";
+} from "./menu-panel.ts";
 
 export type AuthSelectorCategory = "provider" | "service";
 

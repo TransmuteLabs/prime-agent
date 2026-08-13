@@ -1,20 +1,16 @@
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
-import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { KeybindingsManager } from "../../../src/core/keybindings.js";
-import { ModelSelectorComponent } from "../../../src/modes/interactive/components/model-selector.js";
-import { ScopedModelsSelectorComponent } from "../../../src/modes/interactive/components/scoped-models-selector.js";
-import { initTheme } from "../../../src/modes/interactive/theme/theme.js";
-import { createHarness, type Harness } from "../harness.js";
+import { KeybindingsManager } from "../../../src/core/keybindings.ts";
+import { ModelSelectorComponent } from "../../../src/modes/interactive/components/model-selector.ts";
+import { ScopedModelsSelectorComponent } from "../../../src/modes/interactive/components/scoped-models-selector.ts";
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../../../src/utils/ansi.ts";
+import { createHarness, type Harness } from "../harness.ts";
 
 function createFakeTui(): TUI {
 	return {
 		requestRender: () => {},
 	} as unknown as TUI;
-}
-
-async function waitForAsyncRender(): Promise<void> {
-	await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("issue #3217 scoped model ordering", () => {
@@ -86,21 +82,16 @@ describe("issue #3217 scoped model ordering", () => {
 			[{ model: modelTwo }, { model: modelOne }, { model: modelThree }],
 			() => {},
 			() => {},
+			undefined,
+			{ availableModels: harness.models },
 		);
 
-		await waitForAsyncRender();
-
-		const renderedLines = stripAnsi(selector.render(120).join("\n")).split("\n");
-		const orderedIds = renderedLines
-			.flatMap((line, index) => {
-				if (line.trim() !== modelOne.provider) {
-					return [];
-				}
-				const [modelId] = renderedLines[index - 1]?.trim().split(/\s{2,}/) ?? [];
-				return modelId ? [modelId.trim()] : [];
-			})
-			.slice(0, 3);
-
-		expect(orderedIds).toEqual([modelTwo.id, modelOne.id, modelThree.id]);
+		const rendered = stripAnsi(selector.render(120).join("\n"));
+		const twoIndex = rendered.indexOf(modelTwo.id);
+		const oneIndex = rendered.indexOf(modelOne.id);
+		const threeIndex = rendered.indexOf(modelThree.id);
+		expect(twoIndex).toBeGreaterThanOrEqual(0);
+		expect(oneIndex).toBeGreaterThan(twoIndex);
+		expect(threeIndex).toBeGreaterThan(oneIndex);
 	});
 });

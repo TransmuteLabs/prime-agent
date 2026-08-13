@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import type { ExtensionAPI } from "../../src/index.js";
+import type { ExtensionAPI } from "../../src/index.ts";
 
 /**
  * Test fixture extension that writes a marker file when the first agent_start

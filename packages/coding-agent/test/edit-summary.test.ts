@@ -8,8 +8,8 @@ import {
 	formatTotalChangeSummary,
 	getToolFileChanges,
 	mergeTurnFileChanges,
-} from "../src/modes/interactive/components/edit-summary.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+} from "../src/modes/interactive/components/edit-summary.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const usage: Usage = {
 	input: 0,

@@ -5,12 +5,12 @@ import {
 	type TUI,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { KeybindingsManager } from "../src/core/keybindings.js";
-import { LoginDialogComponent } from "../src/modes/interactive/components/login-dialog.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
-import { PRIME_BUTTERFLY_LOGO } from "../src/themes/prime-logo.js";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
+import { LoginDialogComponent } from "../src/modes/interactive/components/login-dialog.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { PRIME_BUTTERFLY_LOGO } from "../src/themes/prime-logo.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 const mocks = vi.hoisted(() => ({
 	copyToClipboard: vi.fn(),

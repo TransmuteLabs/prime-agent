@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.js";
-import { convertResponsesMessages } from "../src/providers/openai-responses-shared.js";
-import type { AssistantMessage, Context, Model, ToolResultMessage, Usage } from "../src/types.js";
+import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
+import { getModel } from "../src/compat.ts";
+import type { AssistantMessage, Context, ToolResultMessage, Usage } from "../src/types.ts";
 
-const emptyUsage: Usage = {
+const usage: Usage = {
 	input: 0,
 	output: 0,
 	cacheRead: 0,
@@ -12,62 +12,47 @@ const emptyUsage: Usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-function buildContext(toolResult: ToolResultMessage, now: number): Context {
-	const assistantMessage: AssistantMessage = {
-		role: "assistant",
-		content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { cmd: "true" } }],
-		api: "openai-responses",
-		provider: "openai",
-		model: "gpt-4o-mini",
-		usage: emptyUsage,
-		stopReason: "toolUse",
-		timestamp: now,
-	};
+function buildEmptyToolResult(toolCallId: string, timestamp: number): ToolResultMessage {
 	return {
-		messages: [{ role: "user", content: "Run it", timestamp: now - 2 }, assistantMessage, toolResult],
+		role: "toolResult",
+		toolCallId,
+		toolName: "bash",
+		content: [{ type: "text", text: "" }],
+		isError: false,
+		timestamp,
 	};
 }
 
-describe("openai-responses convertResponsesMessages", () => {
-	const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
-	const model: Model<"openai-responses"> = {
-		...baseModel,
-		api: "openai-responses",
-		input: ["text", "image"],
-	};
-
-	it("does not emit the image placeholder for empty-text tool results with no image", () => {
+describe("OpenAI Responses convertResponsesMessages empty tool result", () => {
+	it("uses '(no tool output)' placeholder for empty tool results without images", () => {
+		const model = getModel("openai", "gpt-4o-mini");
 		const now = Date.now();
-		const toolResult: ToolResultMessage = {
-			role: "toolResult",
-			toolCallId: "tool-1",
-			toolName: "bash",
-			content: [{ type: "text", text: "" }],
-			isError: false,
-			timestamp: now + 1,
+		const assistant: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "true" } }],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage,
+			stopReason: "toolUse",
+			timestamp: now,
 		};
 
-		const messages = convertResponsesMessages(model, buildContext(toolResult, now), new Set(["openai"]));
-		const output = messages.find((m) => m.type === "function_call_output");
-		expect(output?.output).toBe("");
-		expect(output?.output).not.toBe("(see attached image)");
-	});
-
-	it("still attaches images for tool results that contain an image", () => {
-		const now = Date.now();
-		const toolResult: ToolResultMessage = {
-			role: "toolResult",
-			toolCallId: "tool-1",
-			toolName: "read",
-			content: [{ type: "image", data: "ZmFrZQ==", mimeType: "image/png" }],
-			isError: false,
-			timestamp: now + 1,
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "Run the command", timestamp: now - 1 },
+				assistant,
+				buildEmptyToolResult("tool-1", now + 1),
+			],
 		};
 
-		const messages = convertResponsesMessages(model, buildContext(toolResult, now), new Set(["openai"]));
-		const output = messages.find((m) => m.type === "function_call_output");
-		expect(Array.isArray(output?.output)).toBe(true);
-		const parts = output?.output as Array<{ type?: string }>;
-		expect(parts.some((p) => p.type === "input_image")).toBe(true);
+		const input = convertResponsesMessages(model, context, new Set(["openai", "openai-codex", "opencode"]));
+		const functionCallOutput = input.find((item) => item.type === "function_call_output") as
+			| { type: "function_call_output"; output: string }
+			| undefined;
+
+		expect(functionCallOutput).toBeTruthy();
+		expect(functionCallOutput?.output).toBe("(no tool output)");
+		expect(functionCallOutput?.output).not.toContain("see attached image");
 	});
 });

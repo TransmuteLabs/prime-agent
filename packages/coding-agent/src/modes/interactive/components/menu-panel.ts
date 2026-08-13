@@ -7,7 +7,7 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { theme } from "../theme/theme.js";
+import { theme } from "../theme/theme.ts";
 
 interface MenuPanelOptions {
 	title: string;
@@ -224,9 +224,11 @@ function surfaceWrappedLines(text: string, width: number, paddingX = PANEL_PADDI
 
 export class MenuPanel extends Container {
 	private title: string;
+	private readonly options: MenuPanelOptions;
 
-	constructor(private readonly options: MenuPanelOptions) {
+	constructor(options: MenuPanelOptions) {
 		super();
+		this.options = options;
 		this.title = options.title;
 	}
 
@@ -273,8 +275,11 @@ export class MenuPanel extends Container {
 export class MenuSearchInput implements Component, Focusable, FullWidthMenuComponent {
 	readonly fillsMenuPanel = true;
 	private readonly input = new Input();
+	private readonly placeholder: string;
 
-	constructor(private readonly placeholder: string) {}
+	constructor(placeholder: string) {
+		this.placeholder = placeholder;
+	}
 
 	get focused(): boolean {
 		return this.input.focused;
@@ -332,8 +337,11 @@ interface MenuRowOptions {
 
 export class MenuRow implements Component, FullWidthMenuComponent {
 	readonly fillsMenuPanel = true;
+	private readonly options: MenuRowOptions;
 
-	constructor(private readonly options: MenuRowOptions) {}
+	constructor(options: MenuRowOptions) {
+		this.options = options;
+	}
 
 	get selected(): boolean {
 		return this.options.selected;
@@ -390,9 +398,11 @@ export class MenuRow implements Component, FullWidthMenuComponent {
 
 export class MenuList extends Container implements FullWidthMenuComponent {
 	readonly fillsMenuPanel = true;
+	private readonly options: MenuListOptions;
 
-	constructor(private readonly options: MenuListOptions = {}) {
+	constructor(options: MenuListOptions = {}) {
 		super();
+		this.options = options;
 	}
 
 	override render(width: number): string[] {

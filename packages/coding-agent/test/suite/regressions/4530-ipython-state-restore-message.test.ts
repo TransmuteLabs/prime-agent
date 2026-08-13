@@ -2,18 +2,18 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { RestoreResult } from "../../../src/core/kernel/state-snapshot.js";
+import type { RestoreResult } from "../../../src/core/kernel/state-snapshot.ts";
 import {
 	type CustomMessage,
 	IPYTHON_STATE_RESTORED_CUSTOM_TYPE,
 	type IpythonStateRestoredDetails,
-} from "../../../src/core/messages.js";
+} from "../../../src/core/messages.ts";
 import {
 	InjectedPromptMessageComponent,
 	isInjectedPromptMessage,
-} from "../../../src/modes/interactive/components/injected-prompt-message.js";
-import { initTheme } from "../../../src/modes/interactive/theme/theme.js";
-import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.js";
+} from "../../../src/modes/interactive/components/injected-prompt-message.ts";
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.ts";
 
 type StateRestoreHost = {
 	_onIpythonStateRestored(result: RestoreResult): void;

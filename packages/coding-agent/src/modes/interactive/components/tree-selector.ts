@@ -9,10 +9,10 @@ import {
 	TruncatedText,
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
-import type { AgentConnectionSessionTreeNode } from "../../agent-connection/index.js";
-import { theme } from "../theme/theme.js";
-import { DynamicBorder } from "./dynamic-border.js";
-import { keyHint, keyText } from "./keybinding-hints.js";
+import type { AgentConnectionSessionTreeNode } from "../../agent-connection/index.ts";
+import { theme } from "../theme/theme.ts";
+import { DynamicBorder } from "./dynamic-border.ts";
+import { keyHint, keyText } from "./keybinding-hints.ts";
 
 /** Gutter info: position (displayIndent where connector was) and whether to show │ */
 interface GutterInfo {
@@ -1052,7 +1052,11 @@ class TreeList implements Component {
 
 /** Component that displays the current search query */
 class SearchLine implements Component {
-	constructor(private treeList: TreeList) {}
+	private treeList: TreeList;
+
+	constructor(treeList: TreeList) {
+		this.treeList = treeList;
+	}
 
 	invalidate(): void {}
 

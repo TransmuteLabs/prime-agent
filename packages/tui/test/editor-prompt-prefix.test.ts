@@ -1,13 +1,14 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
-import { Editor } from "../src/components/editor.js";
-import { TUI } from "../src/tui.js";
-import { defaultEditorTheme } from "./test-themes.js";
-import { VirtualTerminal } from "./virtual-terminal.js";
+import { Editor } from "../src/components/editor.ts";
+import type { TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
+import { defaultEditorTheme } from "./test-themes.ts";
+import { VirtualTerminal } from "./virtual-terminal.ts";
 
 function createTestTUI(cols = 80, rows = 24): TUI {
-	return new TUI(new VirtualTerminal(cols, rows));
+	return new TuiMainScreen(new VirtualTerminal(cols, rows));
 }
 
 class BashPromptEditor extends Editor {

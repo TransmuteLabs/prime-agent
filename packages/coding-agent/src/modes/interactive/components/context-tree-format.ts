@@ -1,10 +1,10 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { ContextTreeNode } from "../../../core/context-tree.js";
-import type { ContextUsage } from "../../../core/extensions/index.js";
-import { addAssistantUsage, emptyUsage } from "../../../core/usage.js";
-import { formatTokenCount } from "../agent-activity.js";
-import { theme } from "../theme/theme.js";
+import type { ContextTreeNode } from "../../../core/context-tree.ts";
+import type { ContextUsage } from "../../../core/extensions/index.ts";
+import { addAssistantUsage, emptyUsage } from "../../../core/usage.ts";
+import { formatTokenCount } from "../agent-activity.ts";
+import { theme } from "../theme/theme.ts";
 
 const CONTEXT_BAR_WIDTH = 10;
 const MIN_LABEL_WIDTH = 16;

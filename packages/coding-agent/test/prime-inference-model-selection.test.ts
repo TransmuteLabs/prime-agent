@@ -1,6 +1,6 @@
 import type { Model } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
-import { resolvePrimeInferencePostLoginModelAction } from "../src/core/prime-inference-model-selection.js";
+import { resolvePrimeInferencePostLoginModelAction } from "../src/core/prime-inference-model-selection.ts";
 
 const glmModel: Model<"openai-completions"> = {
 	id: "z-ai/glm-5.2",

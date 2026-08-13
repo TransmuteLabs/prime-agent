@@ -3,16 +3,16 @@ import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { DaemonSocketClient } from "../src/modes/daemon/active-session-state.js";
-import { DaemonCatalogClient } from "../src/modes/daemon/daemon-catalog-process.js";
+import type { DaemonSocketClient } from "../src/modes/daemon/active-session-state.ts";
+import { DaemonCatalogClient } from "../src/modes/daemon/daemon-catalog-process.ts";
 import {
 	createDaemonCommandEnvelope,
 	DAEMON_COMMAND_COMPATIBILITY,
 	type DaemonCommand,
 	type DaemonResponse,
-} from "../src/modes/daemon/daemon-protocol.js";
-import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.js";
-import { MutationDrainLatch } from "../src/modes/daemon/mutation-drain-latch.js";
+} from "../src/modes/daemon/daemon-protocol.ts";
+import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.ts";
+import { MutationDrainLatch } from "../src/modes/daemon/mutation-drain-latch.ts";
 
 interface SupervisorHarness {
 	handleLine(client: DaemonSocketClient, line: string): Promise<void>;

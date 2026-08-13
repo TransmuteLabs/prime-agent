@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import type { DaemonInfo, DaemonStatus } from "./daemon-ps.js";
+import type { DaemonInfo, DaemonStatus } from "./daemon-ps.ts";
 
 type DaemonRow = {
 	socket: string;

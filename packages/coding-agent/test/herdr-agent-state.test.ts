@@ -7,8 +7,8 @@ import {
 	createHerdrAgentStateExtension,
 	hasFileBasedHerdrIntegration,
 	herdrAgentStateExtension,
-} from "../src/core/extensions/builtin/herdr-agent-state.js";
-import type { ExtensionAPI } from "../src/core/extensions/types.js";
+} from "../src/core/extensions/builtin/herdr-agent-state.ts";
+import type { ExtensionAPI } from "../src/core/extensions/types.ts";
 
 interface RecordedRequest {
 	method: string;

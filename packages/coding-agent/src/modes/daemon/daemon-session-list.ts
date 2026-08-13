@@ -2,14 +2,14 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { compactRlmText, rlmChildLabel } from "../../core/agent-session.js";
-import type { AgentSessionRuntimeMetadata } from "../../core/agent-session-runtime.js";
-import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.js";
-import { type AgentCronJob, isHeartbeatCronJob } from "../../core/cron-jobs.js";
-import type { SessionActionSnapshot } from "../../core/session-action-store.js";
-import type { AgentTaskState, SessionInfo } from "../../core/session-manager.js";
-import type { AgentConnectionRlmChildAgentSnapshot } from "../agent-connection/types.js";
-import type { ActiveSessionState } from "./active-session-state.js";
+import { compactRlmText, rlmChildLabel } from "../../core/agent-session.ts";
+import type { AgentSessionRuntimeMetadata } from "../../core/agent-session-runtime.ts";
+import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
+import { type AgentCronJob, isHeartbeatCronJob } from "../../core/cron-jobs.ts";
+import type { SessionActionSnapshot } from "../../core/session-action-store.ts";
+import type { AgentTaskState, SessionInfo } from "../../core/session-manager.ts";
+import type { AgentConnectionRlmChildAgentSnapshot } from "../agent-connection/types.ts";
+import type { ActiveSessionState } from "./active-session-state.ts";
 
 // Durable lifecycle; decides agents-view visibility. Only "live" is shown.
 // "draft" = no message sent yet (discarded on close); "archived" = ctrl+x'd,

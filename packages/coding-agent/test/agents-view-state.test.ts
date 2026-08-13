@@ -2,10 +2,10 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
-import type { AgentSessionRuntimeConfig } from "../src/core/agent-session-config.js";
-import type { ModelRegistry } from "../src/core/model-registry.js";
-import type { SessionInfo } from "../src/core/session-manager.js";
-import type { SettingsManager } from "../src/core/settings-manager.js";
+import type { AgentSessionRuntimeConfig } from "../src/core/agent-session-config.ts";
+import type { ModelRegistry } from "../src/core/model-registry.ts";
+import type { SessionInfo } from "../src/core/session-manager.ts";
+import type { SettingsManager } from "../src/core/settings-manager.ts";
 import {
 	createAgentsViewListCommand,
 	createAgentsViewReplyHeadline,
@@ -20,7 +20,7 @@ import {
 	resolveAgentsViewOpenCwd,
 	resolveAgentsViewSessionUiServices,
 	shouldReconnectAgentsViewDaemon,
-} from "../src/modes/agents-view/agents-view-mode.js";
+} from "../src/modes/agents-view/agents-view-mode.ts";
 import {
 	type AgentsViewScopeFrame,
 	aggregateSessionHeartbeats,
@@ -38,16 +38,16 @@ import {
 	resolveAgentsViewScopeFrames,
 	resolveAgentsViewSelectionIndex,
 	resolveAgentsViewSelectionState,
-	type SessionSummary,
 	scopeToSessionSubtree,
 	sectionTitle,
 	shouldApplyScopeResolution,
 	shouldShowAgentsViewSession,
 	transitionAgentsViewScope,
-} from "../src/modes/index.js";
-import { formatAgentDepthLabel } from "../src/modes/interactive/interactive-mode.js";
-import type { InteractiveModeUiServices } from "../src/modes/interactive/interactive-mode-services.js";
-import type { Theme } from "../src/modes/interactive/theme/theme.js";
+} from "../src/modes/agents-view/agents-view-state.ts";
+import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.ts";
+import { formatAgentDepthLabel } from "../src/modes/interactive/interactive-mode.ts";
+import type { InteractiveModeUiServices } from "../src/modes/interactive/interactive-mode-services.ts";
+import type { Theme } from "../src/modes/interactive/theme/theme.ts";
 
 function heartbeat(id: string, nextRunAt?: string, activeSessionId = "child") {
 	return {

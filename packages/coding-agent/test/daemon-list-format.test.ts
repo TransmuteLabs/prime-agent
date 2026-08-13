@@ -1,8 +1,8 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import stripAnsi from "strip-ansi";
 import { describe, expect, it } from "vitest";
-import { formatSessionListTable } from "../src/cli/daemon-list-format.js";
-import type { SessionActivity, SessionLifecycle, SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
+import { formatSessionListTable } from "../src/cli/daemon-list-format.ts";
+import type { SessionActivity, SessionLifecycle, SessionSummary } from "../src/modes/daemon/daemon-session-list.ts";
 
 describe("formatSessionListTable", () => {
 	it("sorts sessions by status and renders compact suffix ids", () => {

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RunningDaemonProbe } from "../src/cli/daemon-launch.js";
+import type { RunningDaemonProbe } from "../src/cli/daemon-launch.ts";
 import {
 	confirmDaemonSessionLoss,
 	type DaemonSessionLossCopy,
 	pluralizeSessions,
-} from "../src/cli/daemon-stop-confirm.js";
-import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
+} from "../src/cli/daemon-stop-confirm.ts";
+import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.ts";
 
 const COPY: DaemonSessionLossCopy = {
 	busyDetail: (count) => `busy:${count}`,

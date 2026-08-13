@@ -1,13 +1,11 @@
-import type { TableCellSelectionRegion } from "../selection-metadata.js";
-import type { Component } from "../tui.js";
-import { applyBackgroundToLine, visibleWidth } from "../utils.js";
+import type { Component } from "../tui.ts";
+import { applyBackgroundToLine, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
 	childLines: string[];
 	width: number;
 	bgSample: string | undefined;
 	lines: string[];
-	selectionRegions: TableCellSelectionRegion[];
 };
 
 /**
@@ -75,7 +73,6 @@ export class Box implements Component {
 
 	render(width: number): string[] {
 		if (this.children.length === 0) {
-			this.cache = undefined;
 			return [];
 		}
 
@@ -84,28 +81,14 @@ export class Box implements Component {
 
 		// Render all children
 		const childLines: string[] = [];
-		const selectionRegions: TableCellSelectionRegion[] = [];
 		for (const child of this.children) {
-			const lineOffset = childLines.length;
 			const lines = child.render(contentWidth);
-			for (const region of child.getSelectionRegions?.() ?? []) {
-				selectionRegions.push({
-					...region,
-					line: region.line + lineOffset + this.paddingY,
-					col: region.col + this.paddingX,
-					tableTop: region.tableTop + lineOffset + this.paddingY,
-					tableBottom: region.tableBottom + lineOffset + this.paddingY,
-					tableLeft: region.tableLeft + this.paddingX,
-					tableRight: region.tableRight + this.paddingX,
-				});
-			}
 			for (const line of lines) {
 				childLines.push(leftPad + line);
 			}
 		}
 
 		if (childLines.length === 0) {
-			this.cache = undefined;
 			return [];
 		}
 
@@ -114,7 +97,6 @@ export class Box implements Component {
 
 		// Check cache validity
 		if (this.matchCache(width, childLines, bgSample)) {
-			this.cache!.selectionRegions = selectionRegions;
 			return this.cache!.lines;
 		}
 
@@ -137,13 +119,9 @@ export class Box implements Component {
 		}
 
 		// Update cache
-		this.cache = { childLines, width, bgSample, lines: result, selectionRegions };
+		this.cache = { childLines, width, bgSample, lines: result };
 
 		return result;
-	}
-
-	getSelectionRegions(): ReadonlyArray<TableCellSelectionRegion> {
-		return this.cache?.selectionRegions ?? [];
 	}
 
 	private applyBg(line: string, width: number): string {

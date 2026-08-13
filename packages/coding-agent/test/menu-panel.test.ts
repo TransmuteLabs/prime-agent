@@ -1,5 +1,4 @@
 import { type Component, TruncatedText, visibleWidth } from "@earendil-works/pi-tui";
-import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
 	getMenuListLayout,
@@ -7,8 +6,9 @@ import {
 	MenuPanel,
 	MenuRow,
 	MenuSearchInput,
-} from "../src/modes/interactive/components/menu-panel.js";
-import { initTheme, theme } from "../src/modes/interactive/theme/theme.js";
+} from "../src/modes/interactive/components/menu-panel.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 class StaticComponent implements Component {
 	invalidate(): void {

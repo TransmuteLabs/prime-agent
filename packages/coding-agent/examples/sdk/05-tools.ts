@@ -1,7 +1,7 @@
 /**
  * Tools Configuration
  *
- * Use tool names to choose which built-in, extension, or custom tools are enabled.
+ * Use tool names to choose which built-in tools are enabled.
  *
  * Tool names are matched against all available tools. If you use a custom `cwd`,
  * createAgentSession() applies that cwd when it builds the actual built-in tools.
@@ -12,33 +12,37 @@
 
 import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 
-// Default tool surface
-await createAgentSession({
-	tools: ["ipython"],
+// Read-only mode (no edit/write)
+const { session: readOnlySession } = await createAgentSession({
+	tools: ["read", "grep", "find", "ls"],
 	sessionManager: SessionManager.inMemory(),
 });
-console.log("IPython session created");
+console.log("Read-only session created");
+readOnlySession.dispose();
 
 // Custom tool selection
-await createAgentSession({
-	tools: ["ipython"],
+const { session: customToolsSession } = await createAgentSession({
+	tools: ["read", "bash", "grep"],
 	sessionManager: SessionManager.inMemory(),
 });
-console.log("Explicit IPython session created");
+console.log("Custom tools session created");
+customToolsSession.dispose();
 
 // With custom cwd
 const customCwd = "/path/to/project";
-await createAgentSession({
+const { session: customCwdSession } = await createAgentSession({
 	cwd: customCwd,
-	tools: ["ipython"],
+	tools: ["read", "bash", "edit", "write"],
 	sessionManager: SessionManager.inMemory(customCwd),
 });
 console.log("Custom cwd session created");
+customCwdSession.dispose();
 
 // Or pick specific tools for custom cwd
-await createAgentSession({
+const { session: specificToolsSession } = await createAgentSession({
 	cwd: customCwd,
-	tools: ["ipython"],
+	tools: ["read", "bash", "grep"],
 	sessionManager: SessionManager.inMemory(customCwd),
 });
 console.log("Specific tools with custom cwd session created");
+specificToolsSession.dispose();

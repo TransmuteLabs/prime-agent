@@ -1,6 +1,6 @@
 import { Box, Container, Text } from "@earendil-works/pi-tui";
-import { parseSlashCommand } from "../../../core/slash-commands.js";
-import { theme } from "../theme/theme.js";
+import { parseSlashCommand } from "../../../core/slash-commands.ts";
+import { theme } from "../theme/theme.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";

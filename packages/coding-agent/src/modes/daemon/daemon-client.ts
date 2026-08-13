@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
-import { getDaemonLogPath } from "../../config.js";
-import { attachJsonlLineReader, serializeJsonLine } from "../rpc/jsonl.js";
+import { getDaemonLogPath } from "../../config.ts";
+import { attachJsonlLineReader, serializeJsonLine } from "../rpc/jsonl.ts";
 import {
 	createDaemonCommandEnvelope,
 	DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION,
@@ -18,8 +18,8 @@ import {
 	type DaemonServerCapability,
 	getDaemonCommandCompatibilities,
 	isDaemonMutatingCommand,
-} from "./daemon-protocol.js";
-import type { DaemonWorkerCommand, DaemonWorkerCommandBody } from "./daemon-worker-protocol.js";
+} from "./daemon-protocol.ts";
+import type { DaemonWorkerCommand, DaemonWorkerCommandBody } from "./daemon-worker-protocol.ts";
 
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 type DaemonCommandBody = DistributiveOmit<DaemonCommand, "id">;
@@ -55,31 +55,33 @@ function daemonEndpointDetails(socketPath: string): string {
 }
 
 export class DaemonSocketClosedError extends Error {
-	constructor(
-		socketPath: string,
-		readonly daemonClosingReason?: DaemonClosingReason,
-		cause?: string,
-	) {
+	readonly daemonClosingReason?: DaemonClosingReason;
+
+	constructor(socketPath: string, daemonClosingReason?: DaemonClosingReason, cause?: string) {
 		const reasonDetails = daemonClosingReason ? ` Reason: ${daemonClosingReason}.` : "";
 		const causeDetails = cause ? ` Cause: ${cause}.` : "";
 		super(
 			`Connection to the Prime Agent daemon closed.${reasonDetails}${causeDetails} ${daemonEndpointDetails(socketPath)}`,
 		);
+		this.daemonClosingReason = daemonClosingReason;
 		this.name = "DaemonSocketClosedError";
 	}
 }
 
 export class DaemonCapabilityUnavailableError extends Error {
-	constructor(
-		readonly command: DaemonCommand["type"],
-		readonly capability: DaemonServerCapability | undefined,
-		readonly afterReconnect = false,
-	) {
+	readonly command: DaemonCommand["type"];
+	readonly capability: DaemonServerCapability | undefined;
+	readonly afterReconnect;
+
+	constructor(command: DaemonCommand["type"], capability: DaemonServerCapability | undefined, afterReconnect = false) {
 		super(
 			capability
 				? `The running Prime Agent daemon does not support ${capability}.`
 				: `The running Prime Agent daemon does not support ${command}.`,
 		);
+		this.command = command;
+		this.capability = capability;
+		this.afterReconnect = afterReconnect;
 		this.name = "DaemonCapabilityUnavailableError";
 	}
 }
@@ -125,7 +127,11 @@ export class DaemonClient {
 		timeout: ReturnType<typeof setTimeout>;
 	}>();
 
-	constructor(private readonly socketPath: string) {}
+	private readonly socketPath: string;
+
+	constructor(socketPath: string) {
+		this.socketPath = socketPath;
+	}
 
 	get hello(): DaemonHello | undefined {
 		return this.helloMessage;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../src/core/prompt-admission.js";
+import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../src/core/prompt-admission.ts";
 
 describe("waitForPromptAdmission", () => {
 	it("observes already-running work when admission is pre-aborted", async () => {

@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Component, MarkdownTheme, TUI } from "@earendil-works/pi-tui";
-import { isAgentSessionMessage } from "../../../core/agent-messages.js";
+import { isAgentSessionMessage } from "../../../core/agent-messages.ts";
 import {
 	COMPACTION_OUTCOME_CUSTOM_TYPE,
 	isCompactionOutcomeMessage,
@@ -8,25 +8,25 @@ import {
 	isSessionSlashCommandResultMessage,
 	SESSION_SLASH_COMMAND_CUSTOM_TYPE,
 	SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
-} from "../../../core/messages.js";
-import { AgentMessageComponent } from "./agent-message.js";
-import { AssistantMessageComponent } from "./assistant-message.js";
-import { BashExecutionComponent } from "./bash-execution.js";
+} from "../../../core/messages.ts";
+import { AgentMessageComponent } from "./agent-message.ts";
+import { AssistantMessageComponent } from "./assistant-message.ts";
+import { BashExecutionComponent } from "./bash-execution.ts";
 import {
 	CompactionOutcomeMessageComponent,
 	MalformedCompactionOutcomeMessageComponent,
-} from "./compaction-outcome-message.js";
-import { InjectedPromptMessageComponent, isInjectedPromptMessage } from "./injected-prompt-message.js";
-import { IPythonCellComponent } from "./ipython-cell.js";
-import { SlashCommandMessageComponent } from "./slash-command-message.js";
-import { SlashCommandResultMessageComponent } from "./slash-command-result-message.js";
+} from "./compaction-outcome-message.ts";
+import { InjectedPromptMessageComponent, isInjectedPromptMessage } from "./injected-prompt-message.ts";
+import { IPythonCellComponent } from "./ipython-cell.ts";
+import { SlashCommandMessageComponent } from "./slash-command-message.ts";
+import { SlashCommandResultMessageComponent } from "./slash-command-result-message.ts";
 import {
 	selectLatestToolExpandHint,
 	ToolExecutionComponent,
 	type ToolExecutionDefinition,
 	type ToolExecutionOptions,
-} from "./tool-execution.js";
-import { UserMessageComponent } from "./user-message.js";
+} from "./tool-execution.ts";
+import { UserMessageComponent } from "./user-message.ts";
 
 export interface ConversationComponentsOptions {
 	ui: TUI;

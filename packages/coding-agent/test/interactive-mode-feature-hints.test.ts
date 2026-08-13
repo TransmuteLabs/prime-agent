@@ -1,10 +1,10 @@
 import { type Component, Container, visibleWidth } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { FEATURE_HINT_ANIMATION_INTERVAL_MS } from "../src/modes/interactive/components/feature-hint.js";
-import { FEATURE_HINTS, FeatureHintDeck } from "../src/modes/interactive/feature-hints.js";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import { FEATURE_HINT_ANIMATION_INTERVAL_MS } from "../src/modes/interactive/components/feature-hint.ts";
+import { FEATURE_HINTS, FeatureHintDeck } from "../src/modes/interactive/feature-hints.ts";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 class FakeLoader implements Component {
 	readonly stop = vi.fn();

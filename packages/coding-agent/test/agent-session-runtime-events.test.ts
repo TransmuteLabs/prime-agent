@@ -1,18 +1,30 @@
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import { afterEach, describe, expect, it } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
 	createAgentSessionRuntime,
 	createAgentSessionServices,
-} from "../src/core/agent-session-runtime.js";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../src/core/session-lease.js";
-import { SessionManager } from "../src/core/session-manager.js";
-import type { ExtensionFactory } from "../src/index.js";
+} from "../src/core/agent-session-runtime.ts";
+import { AuthStorage } from "../src/core/auth-storage.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
+import type {
+	ExtensionFactory,
+	SessionBeforeForkEvent,
+	SessionBeforeSwitchEvent,
+	SessionShutdownEvent,
+	SessionStartEvent,
+} from "../src/index.ts";
+
+type RecordedSessionEvent =
+	| SessionBeforeSwitchEvent
+	| SessionBeforeForkEvent
+	| SessionShutdownEvent
+	| SessionStartEvent;
 
 describe("AgentSessionRuntime session lifecycle events", () => {
 	const cleanups: Array<() => Promise<void> | void> = [];
@@ -21,7 +33,6 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		while (cleanups.length > 0) {
 			await cleanups.pop()?.();
 		}
-		vi.unstubAllEnvs();
 	});
 
 	async function createRuntimeHost(extensionFactory: ExtensionFactory) {
@@ -32,11 +43,33 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
 
 		const authStorage = AuthStorage.inMemory();
-		authStorage.setRuntimeApiKey(faux.getModel().provider, "faux-key");
+		await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
+		const modelRuntime = await ModelRuntime.create({
+			credentials: authStorage,
+			modelsPath: join(tempDir, "models.json"),
+		});
+		const model = faux.getModel();
+		modelRuntime.registerProvider(model.provider, {
+			baseUrl: model.baseUrl,
+			api: model.api,
+			models: [
+				{
+					id: model.id,
+					name: model.name,
+					api: model.api,
+					reasoning: model.reasoning,
+					input: model.input,
+					cost: model.cost,
+					contextWindow: model.contextWindow,
+					maxTokens: model.maxTokens,
+					baseUrl: model.baseUrl,
+				},
+			],
+		});
 
 		const runtimeOptions = {
 			agentDir: tempDir,
-			authStorage,
+			modelRuntime,
 			model: faux.getModel(),
 			resourceLoaderOptions: {
 				extensionFactories: [extensionFactory],
@@ -64,7 +97,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		const runtimeHost = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(tempDir, join(tempDir, "sessions")),
+			sessionManager: SessionManager.create(tempDir),
 		});
 		await runtimeHost.session.bindExtensions({});
 
@@ -78,6 +111,74 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 
 		return { runtimeHost, faux };
 	}
+
+	it("emits session_before_switch and session_start for new and resume flows", async () => {
+		const events: RecordedSessionEvent[] = [];
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.on("session_before_switch", (event) => {
+				events.push(event);
+			});
+			pi.on("session_shutdown", (event) => {
+				events.push(event);
+			});
+			pi.on("session_start", (event) => {
+				events.push(event);
+			});
+		});
+
+		expect(events).toEqual([{ type: "session_start", reason: "startup" }]);
+		events.length = 0;
+
+		await runtimeHost.session.prompt("hello");
+		const originalSessionFile = runtimeHost.session.sessionFile;
+		expect(originalSessionFile).toBeTruthy();
+
+		const newSessionResult = await runtimeHost.newSession();
+		expect(newSessionResult.cancelled).toBe(false);
+		await runtimeHost.session.bindExtensions({});
+		const secondSessionFile = runtimeHost.session.sessionFile;
+		expect(events).toEqual([
+			{ type: "session_before_switch", reason: "new", targetSessionFile: undefined },
+			{ type: "session_shutdown", reason: "new", targetSessionFile: secondSessionFile },
+			{ type: "session_start", reason: "new", previousSessionFile: originalSessionFile },
+		]);
+
+		events.length = 0;
+		expect(secondSessionFile).toBeTruthy();
+
+		const switchResult = await runtimeHost.switchSession(originalSessionFile!);
+		expect(switchResult.cancelled).toBe(false);
+		await runtimeHost.session.bindExtensions({});
+		expect(events).toEqual([
+			{ type: "session_before_switch", reason: "resume", targetSessionFile: originalSessionFile },
+			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
+			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
+		]);
+	});
+
+	it("honors session_before_switch cancellation", async () => {
+		const events: RecordedSessionEvent[] = [];
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.on("session_before_switch", (event) => {
+				events.push(event);
+				return { cancel: true };
+			});
+			pi.on("session_start", (event) => {
+				events.push(event);
+			});
+		});
+
+		expect(events).toEqual([{ type: "session_start", reason: "startup" }]);
+		events.length = 0;
+
+		await runtimeHost.session.prompt("hello");
+		const originalSessionFile = runtimeHost.session.sessionFile;
+
+		const result = await runtimeHost.newSession();
+		expect(result.cancelled).toBe(true);
+		expect(runtimeHost.session.sessionFile).toBe(originalSessionFile);
+		expect(events).toEqual([{ type: "session_before_switch", reason: "new", targetSessionFile: undefined }]);
+	});
 
 	it("runs beforeSessionInvalidate after session_shutdown and before rebindSession", async () => {
 		const phases: string[] = [];
@@ -105,17 +206,52 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		runtimeHost.setRebindSession(undefined);
 	});
 
-	it("releases a replacement lease when current-session teardown fails", async () => {
-		vi.stubEnv(SESSION_LEASES_ENABLED_ENV, "1");
-		vi.stubEnv(SESSION_LEASE_OWNER_ID_ENV, "runtime-events");
-		const { runtimeHost } = await createRuntimeHost(() => undefined);
-		runtimeHost.setBeforeSessionInvalidate(() => {
-			throw new Error("teardown failed");
+	it("emits session_before_fork and session_start and honors cancellation", async () => {
+		const events: RecordedSessionEvent[] = [];
+		let cancelNextFork = false;
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.on("session_before_fork", (event) => {
+				events.push(event);
+				if (cancelNextFork) {
+					cancelNextFork = false;
+					return { cancel: true };
+				}
+			});
+			pi.on("session_shutdown", (event) => {
+				events.push(event);
+			});
+			pi.on("session_start", (event) => {
+				events.push(event);
+			});
 		});
 
-		await expect(runtimeHost.newSession()).rejects.toThrow("teardown failed");
-		runtimeHost.setBeforeSessionInvalidate(undefined);
-		const leaseRoot = join(runtimeHost.services.agentDir, "session-leases");
-		expect(readdirSync(leaseRoot).filter((entry) => entry.endsWith(".lock"))).toHaveLength(1);
+		expect(events).toEqual([{ type: "session_start", reason: "startup" }]);
+		events.length = 0;
+
+		await runtimeHost.session.prompt("hello");
+		const userMessage = runtimeHost.session.getUserMessagesForForking()[0];
+		const previousSessionFile = runtimeHost.session.sessionFile;
+
+		const successResult = await runtimeHost.fork(userMessage.entryId);
+		expect(successResult.cancelled).toBe(false);
+		expect(successResult.selectedText).toBe("hello");
+		await runtimeHost.session.bindExtensions({});
+		expect(events).toEqual([
+			{ type: "session_before_fork", entryId: userMessage.entryId, position: "before" },
+			{ type: "session_shutdown", reason: "fork", targetSessionFile: runtimeHost.session.sessionFile },
+			{ type: "session_start", reason: "fork", previousSessionFile },
+		]);
+
+		events.length = 0;
+		cancelNextFork = true;
+		const cancelResult = await runtimeHost.fork(userMessage.entryId);
+		expect(cancelResult).toEqual({ cancelled: true });
+		expect(events).toEqual([{ type: "session_before_fork", entryId: userMessage.entryId, position: "before" }]);
+
+		events.length = 0;
+		cancelNextFork = true;
+		const cancelAtResult = await runtimeHost.fork("missing-entry", { position: "at" });
+		expect(cancelAtResult).toEqual({ cancelled: true });
+		expect(events).toEqual([{ type: "session_before_fork", entryId: "missing-entry", position: "at" }]);
 	});
 });

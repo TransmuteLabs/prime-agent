@@ -2,10 +2,10 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.js";
-import type { DeleteSessionFileResult } from "../../core/session-file-actions.js";
-import { deleteSessionFile } from "../../core/session-file-actions.js";
-import { readSessionInfo, type SessionInfo, SessionManager } from "../../core/session-manager.js";
+import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.ts";
+import type { DeleteSessionFileResult } from "../../core/session-file-actions.ts";
+import { deleteSessionFile } from "../../core/session-file-actions.ts";
+import { readSessionInfo, type SessionInfo, SessionManager } from "../../core/session-manager.ts";
 
 export const DAEMON_CATALOG_ROLE_ENV = "PRIME_AGENT_INTERNAL_DAEMON_CATALOG";
 
@@ -305,7 +305,11 @@ export class DaemonCatalogClient {
 		}
 	>();
 
-	constructor(private readonly onDiagnostic: (message: string) => void) {}
+	private readonly onDiagnostic: (message: string) => void;
+
+	constructor(onDiagnostic: (message: string) => void) {
+		this.onDiagnostic = onDiagnostic;
+	}
 
 	async start(): Promise<void> {
 		if (this.child?.connected) {

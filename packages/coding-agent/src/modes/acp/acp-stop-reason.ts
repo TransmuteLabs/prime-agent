@@ -1,5 +1,5 @@
-import type { AgentAutonomousStatus } from "../../core/autonomous.js";
-import { autonomousLimitReason } from "../../core/autonomous.js";
+import type { AgentAutonomousStatus } from "../../core/autonomous.ts";
+import { autonomousLimitReason } from "../../core/autonomous.ts";
 
 /**
  * ACP stop reasons. `session/prompt` resolves with one of these after the agent

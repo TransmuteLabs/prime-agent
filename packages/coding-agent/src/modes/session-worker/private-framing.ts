@@ -53,10 +53,16 @@ export function encodePrivateFrame<THeader extends object>(
 export class PrivateFrameDecoder<THeader extends object> {
 	private buffered: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
+	private readonly validateHeader: PrivateFrameHeaderValidator<THeader>;
+	private readonly limits: PrivateFrameLimits;
+
 	constructor(
-		private readonly validateHeader: PrivateFrameHeaderValidator<THeader>,
-		private readonly limits: PrivateFrameLimits = DEFAULT_PRIVATE_FRAME_LIMITS,
-	) {}
+		validateHeader: PrivateFrameHeaderValidator<THeader>,
+		limits: PrivateFrameLimits = DEFAULT_PRIVATE_FRAME_LIMITS,
+	) {
+		this.validateHeader = validateHeader;
+		this.limits = limits;
+	}
 
 	get bufferedBytes(): number {
 		return this.buffered.length;
@@ -125,11 +131,16 @@ export class PrivateFramedChannel<THeader extends object> {
 	private readonly listeners = new Set<PrivateFrameListener<THeader>>();
 	private closed = false;
 
+	private readonly stream: Duplex;
+	private readonly limits: PrivateFrameLimits;
+
 	constructor(
-		private readonly stream: Duplex,
+		stream: Duplex,
 		validateHeader: PrivateFrameHeaderValidator<THeader>,
-		private readonly limits: PrivateFrameLimits = DEFAULT_PRIVATE_FRAME_LIMITS,
+		limits: PrivateFrameLimits = DEFAULT_PRIVATE_FRAME_LIMITS,
 	) {
+		this.stream = stream;
+		this.limits = limits;
 		this.decoder = new PrivateFrameDecoder(validateHeader, limits);
 		stream.on("data", this.handleData);
 		stream.on("end", this.handleEnd);

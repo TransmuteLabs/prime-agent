@@ -5,18 +5,18 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DaemonSocketClient } from "../../../src/modes/daemon/active-session-state.js";
-import { AgentDaemon } from "../../../src/modes/daemon/daemon-mode.js";
+import type { DaemonSocketClient } from "../../../src/modes/daemon/active-session-state.ts";
+import { AgentDaemon } from "../../../src/modes/daemon/daemon-mode.ts";
 import {
 	DAEMON_PROTOCOL_INFO,
 	type DaemonAttachResult,
 	type DaemonOutbound,
-} from "../../../src/modes/daemon/daemon-protocol.js";
-import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.js";
-import { DaemonSupervisor } from "../../../src/modes/daemon/daemon-supervisor.js";
-import type { DaemonWorkerFrameHeader } from "../../../src/modes/daemon/daemon-worker-protocol.js";
-import { SnapshotTranscriptCache } from "../../../src/modes/daemon/snapshot-transcript-cache.js";
-import type { PrivateFrame } from "../../../src/modes/session-worker/private-framing.js";
+} from "../../../src/modes/daemon/daemon-protocol.ts";
+import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.ts";
+import { DaemonSupervisor } from "../../../src/modes/daemon/daemon-supervisor.ts";
+import type { DaemonWorkerFrameHeader } from "../../../src/modes/daemon/daemon-worker-protocol.ts";
+import { SnapshotTranscriptCache } from "../../../src/modes/daemon/snapshot-transcript-cache.ts";
+import type { PrivateFrame } from "../../../src/modes/session-worker/private-framing.ts";
 
 const activeSessionId = "active-4677";
 const directories: string[] = [];

@@ -3,18 +3,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import lockfile from "proper-lockfile";
-import { ENV_AGENT_DIR, SELF_UPDATE_INTERACTIVE_CHILD_ENV } from "../config.js";
-import { ORPHAN_PROCESS_JOURNAL_ENV } from "../core/orphan-process-journal.js";
-import { getProcessStartId, SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../core/session-lease.js";
-import { defaultDaemonSocketDir, defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.js";
+import { ENV_AGENT_DIR, SELF_UPDATE_INTERACTIVE_CHILD_ENV } from "../config.ts";
+import { ORPHAN_PROCESS_JOURNAL_ENV } from "../core/orphan-process-journal.ts";
+import { getProcessStartId, SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../core/session-lease.ts";
+import { defaultDaemonSocketDir, defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.ts";
 import {
 	DAEMON_WORKER_ACTIVE_SESSION_ID_ENV,
 	DAEMON_WORKER_RECOVERY_JOURNAL_ENV,
 	DAEMON_WORKER_ROLE_ENV,
 	DAEMON_WORKER_SUPERVISOR_SOCKET_ENV,
 	DAEMON_WORKER_TOKEN_ENV,
-} from "../modes/daemon/daemon-worker-protocol.js";
-import { createCliSubprocessLaunchSpec } from "./subprocess-launch.js";
+} from "../modes/daemon/daemon-worker-protocol.ts";
+import { createCliSubprocessLaunchSpec } from "./subprocess-launch.ts";
 
 export const DAEMON_UPDATE_RESTART_COORDINATOR_FLAG = "--internal-update-restart-coordinator";
 export const DAEMON_UPDATE_RESTART_STATUS_FLAG = "--internal-update-restart-status";
@@ -248,11 +248,10 @@ function readTerminalDaemonUpdateRestartStatus(path: string): DaemonUpdateRestar
 export class DaemonUpdateRestartStatusWriter {
 	private status: DaemonUpdateRestartStatus;
 
-	constructor(
-		private readonly path: string,
-		requestId: string,
-		socketPath: string,
-	) {
+	private readonly path: string;
+
+	constructor(path: string, requestId: string, socketPath: string) {
+		this.path = path;
 		const now = new Date().toISOString();
 		const processStartId = getProcessStartId(process.pid);
 		this.status = {
@@ -414,11 +413,15 @@ function readCoordinatorRecord(path: string): DaemonUpdateRestartCoordinatorReco
 export class DaemonUpdateRestartCoordinatorLease {
 	private released = false;
 
-	constructor(
-		readonly record: DaemonUpdateRestartCoordinatorRecord,
-		private readonly registryDir: string,
-		private readonly path: string,
-	) {}
+	readonly record: DaemonUpdateRestartCoordinatorRecord;
+	private readonly registryDir: string;
+	private readonly path: string;
+
+	constructor(record: DaemonUpdateRestartCoordinatorRecord, registryDir: string, path: string) {
+		this.record = record;
+		this.registryDir = registryDir;
+		this.path = path;
+	}
 
 	async release(): Promise<void> {
 		if (this.released) {
@@ -435,8 +438,11 @@ export class DaemonUpdateRestartCoordinatorLease {
 }
 
 export class DaemonUpdateRestartCoordinatorAlreadyRunningError extends Error {
-	constructor(readonly record: DaemonUpdateRestartCoordinatorRecord) {
+	readonly record: DaemonUpdateRestartCoordinatorRecord;
+
+	constructor(record: DaemonUpdateRestartCoordinatorRecord) {
 		super(`Another daemon update restart is already running for ${record.socketPath}`);
+		this.record = record;
 		this.name = "DaemonUpdateRestartCoordinatorAlreadyRunningError";
 	}
 }

@@ -1,9 +1,9 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.3.5/schema.json",
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"preset": "recommended",
+			"recommended": true,
 			"style": {
 				"noNonNullAssertion": "off",
 				"useConst": "error",
@@ -13,12 +13,6 @@
 				"noExplicitAny": "off",
 				"noControlCharactersInRegex": "off",
 				"noEmptyInterface": "off"
-			},
-			"complexity": {
-				"useOptionalChain": "off"
-			},
-			"correctness": {
-				"noUnsafeOptionalChaining": "off"
 			}
 		}
 	},
@@ -33,14 +27,15 @@
 		"includes": [
 			"packages/*/src/**/*.ts",
 			"packages/*/test/**/*.ts",
+			"packages/session-backends/*/src/**/*.ts",
+			"packages/session-backends/*/test/**/*.ts",
 			"packages/coding-agent/examples/**/*.ts",
 			"!**/node_modules/**/*",
 			"!**/test-sessions.ts",
 			"!**/models.generated.ts",
+			"!**/*.models.ts",
 			"!packages/mom/data/**/*",
-			"!!**/node_modules",
-			"!.worktrees",
-			"!.claude/worktrees"
+			"!!**/node_modules"
 		]
 	}
 }

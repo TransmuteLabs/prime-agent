@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assertNodeVersion, MIN_NODE_VERSION } from "../src/cli/node-version-check.js";
+import { assertNodeVersion, MIN_NODE_VERSION } from "../src/cli/node-version-check.ts";
 
 function run(version: string) {
 	const logs: string[] = [];

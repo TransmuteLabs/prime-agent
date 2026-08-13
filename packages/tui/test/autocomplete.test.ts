@@ -4,8 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it, test } from "node:test";
-import { CombinedAutocompleteProvider } from "../src/autocomplete.js";
-import { getSlashCommandContext } from "../src/slash-command-context.js";
+import { CombinedAutocompleteProvider } from "../src/autocomplete.ts";
 
 const resolveFdPath = (): string | null => {
 	const command = process.platform === "win32" ? "where" : "which";
@@ -55,161 +54,7 @@ const getSuggestions = (
 	force: boolean = false,
 ) => provider.getSuggestions(lines, cursorLine, cursorCol, { signal: new AbortController().signal, force });
 
-describe("slash command context", () => {
-	it("finds inline command tokens on any line", () => {
-		assert.deepStrictEqual(getSlashCommandContext(["Please use /skill:brain"], 0, 23), {
-			kind: "name",
-			prefix: "/skill:brain",
-			isAtPromptStart: false,
-		});
-		assert.deepStrictEqual(getSlashCommandContext(["First line", "Then /he"], 1, 8), {
-			kind: "name",
-			prefix: "/he",
-			isAtPromptStart: false,
-		});
-	});
-
-	it("keeps standalone command arguments distinct from inline references", () => {
-		assert.deepStrictEqual(getSlashCommandContext(["/model gpt"], 0, 10), {
-			kind: "argument",
-			commandName: "model",
-			prefix: "gpt",
-			isAtPromptStart: true,
-		});
-	});
-
-	it("ignores URLs and path fragments", () => {
-		assert.strictEqual(getSlashCommandContext(["Visit https://example.com"], 0, 25), null);
-		assert.strictEqual(getSlashCommandContext(["Open src/components"], 0, 19), null);
-	});
-});
-
 describe("CombinedAutocompleteProvider", () => {
-	describe("slash commands", () => {
-		it("matches command aliases while previewing and completing the canonical command", async () => {
-			const provider = new CombinedAutocompleteProvider(
-				[
-					{
-						name: "new",
-						aliases: ["clear"],
-						description: "Start a new session",
-					},
-				],
-				"/tmp",
-			);
-			const result = await getSuggestions(provider, ["/clear"], 0, 6);
-
-			assert.deepStrictEqual(result, {
-				prefix: "/clear",
-				kind: "slash-command",
-				items: [{ value: "new", label: "new", description: "Start a new session" }],
-			});
-		});
-
-		it("surfaces takesArgument on free-form-argument commands and omits it otherwise", async () => {
-			const provider = new CombinedAutocompleteProvider(
-				[
-					{ name: "goal", description: "Set a goal", takesArgument: true },
-					{ name: "new", description: "Start a new session" },
-				],
-				"/tmp",
-			);
-
-			const goal = await getSuggestions(provider, ["/goal"], 0, 5);
-			assert.deepStrictEqual(goal?.items, [
-				{ value: "goal", label: "goal", description: "Set a goal", takesArgument: true },
-			]);
-
-			const fresh = await getSuggestions(provider, ["/new"], 0, 4);
-			assert.deepStrictEqual(fresh?.items, [{ value: "new", label: "new", description: "Start a new session" }]);
-		});
-
-		it("keeps argument hints and source tags separate from descriptions", async () => {
-			const provider = new CombinedAutocompleteProvider(
-				[
-					{
-						name: "compact",
-						description: "Compact the session context",
-						argumentHint: "[instructions]",
-					},
-					{
-						name: "skill:compact",
-						description: "Check context usage",
-						sourceTag: "#builtin",
-					},
-				],
-				"/tmp",
-			);
-
-			const result = await getSuggestions(provider, ["/compact"], 0, 8);
-
-			assert.deepStrictEqual(result?.items, [
-				{
-					value: "compact",
-					label: "compact",
-					description: "Compact the session context",
-					argumentHint: "[instructions]",
-				},
-				{
-					value: "skill:compact",
-					label: "skill:compact",
-					description: "Check context usage",
-					sourceTag: "#builtin",
-				},
-			]);
-		});
-
-		it("suggests skill commands for inline references", async () => {
-			const provider = new CombinedAutocompleteProvider(
-				[{ name: "skill:brainstorm", description: "Brainstorm approaches" }],
-				"/tmp",
-			);
-			const line = "Please use /skill:brain";
-			const result = await getSuggestions(provider, [line], 0, line.length);
-
-			assert.deepStrictEqual(result, {
-				prefix: "/skill:brain",
-				kind: "slash-command",
-				items: [{ value: "skill:brainstorm", label: "skill:brainstorm", description: "Brainstorm approaches" }],
-			});
-		});
-
-		it("suggests commands on later prompt lines", async () => {
-			const provider = new CombinedAutocompleteProvider([{ name: "help", description: "Show help" }], "/tmp");
-			const lines = ["First line", "Then /he"];
-			const result = await getSuggestions(provider, lines, 1, lines[1]!.length);
-
-			assert.deepStrictEqual(result, {
-				prefix: "/he",
-				kind: "slash-command",
-				items: [{ value: "help", label: "help", description: "Show help" }],
-			});
-		});
-
-		it("does not fall back to file suggestions for unmatched command tokens", async () => {
-			const provider = new CombinedAutocompleteProvider([], "/tmp");
-			const result = await getSuggestions(provider, ["/tm"], 0, 3);
-
-			assert.strictEqual(result, null);
-		});
-
-		it("replaces only the inline command token without duplicating whitespace", async () => {
-			const provider = new CombinedAutocompleteProvider([{ name: "help", description: "Show help" }], "/tmp");
-			const line = "Please use /he later";
-			const cursorCol = line.indexOf(" later");
-			const result = await getSuggestions(provider, [line], 0, cursorCol);
-			const item = result?.items[0];
-			assert.ok(result && item);
-
-			const applied = provider.applyCompletion([line], 0, cursorCol, item, result.prefix);
-			assert.deepStrictEqual(applied, {
-				lines: ["Please use /help later"],
-				cursorLine: 0,
-				cursorCol: "Please use /help ".length,
-			});
-		});
-	});
-
 	describe("extractPathPrefix", () => {
 		it("extracts / from 'hey /' when forced", async () => {
 			const provider = new CombinedAutocompleteProvider([], "/tmp");
@@ -222,7 +67,6 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.notEqual(result, null, "Should return suggestions for root directory");
 			if (result) {
 				assert.strictEqual(result.prefix, "/", "Prefix should be '/'");
-				assert.strictEqual(result.kind, "file");
 			}
 		});
 
@@ -521,7 +365,7 @@ describe("CombinedAutocompleteProvider", () => {
 				dirs: ["packages/coding-agent/examples/extensions/plan-mode"],
 				files: {
 					"packages/coding-agent/examples/extensions/plan-mode/README.md": "readme",
-					"packages/agent/docs/plan.md": "plan",
+					"packages/tui/docs/plan.md": "plan",
 				},
 			};
 			setupFolder(normalBaseDir, structure);
@@ -541,7 +385,7 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(
 				normalize(normalResult).includes("plan-mode/ :: packages/coding-agent/examples/extensions/plan-mode"),
 			);
-			assert.ok(normalize(normalResult).includes("plan.md :: packages/agent/docs/plan.md"));
+			assert.ok(normalize(normalResult).includes("plan.md :: packages/tui/docs/plan.md"));
 		});
 
 		test("continues autocomplete inside quoted @ paths", async () => {

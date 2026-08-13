@@ -13,7 +13,7 @@ import {
 	resolveHeartbeatStreamingBehavior,
 	SESSION_SCHEDULED_JOBS_FILENAME,
 	shouldDeferHeartbeatCronJob,
-} from "../src/core/cron-jobs.js";
+} from "../src/core/cron-jobs.ts";
 
 const start = new Date("2026-01-01T12:34:00.000Z");
 

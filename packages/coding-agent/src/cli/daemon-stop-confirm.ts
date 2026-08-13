@@ -12,7 +12,7 @@
 
 import { createInterface } from "node:readline";
 import chalk from "chalk";
-import { isSessionBusy, type RunningDaemonProbe } from "./daemon-launch.js";
+import { isSessionBusy, type RunningDaemonProbe } from "./daemon-launch.ts";
 
 /** Prompt for a yes/no answer at a TTY. Empty/anything-but-yes resolves false (default No). */
 export function promptYesNo(message: string): Promise<boolean> {

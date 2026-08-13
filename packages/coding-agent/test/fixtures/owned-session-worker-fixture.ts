@@ -3,8 +3,8 @@ import {
 	closeOwnedSessionWorkerOwnerWatch,
 	installOwnedSessionWorkerOwnerWatch,
 	maybeRunOwnedSessionWorkerFrontend,
-} from "../../src/cli/owned-session-worker.js";
-import { attachJsonlLineReader, serializeJsonLine } from "../../src/modes/rpc/jsonl.js";
+} from "../../src/cli/owned-session-worker.ts";
+import { attachJsonlLineReader, serializeJsonLine } from "../../src/modes/rpc/jsonl.ts";
 
 const args = process.argv.slice(2);
 if (process.env.PRIME_AGENT_TEST_STDIN_TTY) {

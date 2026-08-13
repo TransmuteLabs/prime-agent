@@ -1,29 +1,29 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, ServiceTier, Transport } from "@earendil-works/pi-ai";
-import { appendRotatingLog, getAgentLogPath, getDaemonLogPath } from "../../config.js";
-import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.js";
-import type { AgentSessionEvent } from "../../core/agent-session.js";
-import type { AgentAutonomousStatus } from "../../core/autonomous.js";
-import type { BashResult } from "../../core/bash-executor.js";
-import type { CompactionResult } from "../../core/compaction/index.js";
-import type { ContextTreeNode } from "../../core/context-tree.js";
+import type { ImageContent, Transport } from "@earendil-works/pi-ai";
+import { appendRotatingLog, getAgentLogPath, getDaemonLogPath } from "../../config.ts";
+import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.ts";
+
+import type { AgentAutonomousStatus } from "../../core/autonomous.ts";
+import type { BashResult } from "../../core/bash-executor.ts";
+import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { ContextTreeNode } from "../../core/context-tree.ts";
 import type {
 	AgentCronJob,
 	AgentHeartbeatDeliveryMode,
 	AgentHeartbeatManagementAction,
 	AgentHeartbeatUpdateAction,
-} from "../../core/cron-jobs.js";
-import type { RefinementResult } from "../../core/refinement/index.js";
-import type { DeleteSessionFileResult } from "../../core/session-file-actions.js";
-import { SessionAlreadyActiveError } from "../../core/session-lease.js";
-import type { SessionStats } from "../../core/session-stats.js";
+} from "../../core/cron-jobs.ts";
+import type { RefinementResult } from "../../core/refinement/index.ts";
+import type { DeleteSessionFileResult } from "../../core/session-file-actions.ts";
+import { SessionAlreadyActiveError } from "../../core/session-lease.ts";
+import type { SessionStats } from "../../core/session-stats.ts";
 import {
 	DaemonCapabilityUnavailableError,
 	type DaemonClient,
 	getDaemonSocketCloseReason,
-} from "../daemon/daemon-client.js";
-import { deserializeDaemonError } from "../daemon/daemon-errors.js";
+} from "../daemon/daemon-client.ts";
+import { deserializeDaemonError } from "../daemon/daemon-errors.ts";
 import {
 	collectDaemonClientEnv,
 	collectDaemonLaunchEnv,
@@ -35,14 +35,15 @@ import {
 	type DaemonSessionClosedReason,
 	type DaemonSessionSnapshot,
 	isUnknownDaemonCommandError,
-} from "../daemon/daemon-protocol.js";
-import type { SessionSummary } from "../daemon/daemon-session-list.js";
-import { listDaemonHeartbeats } from "../daemon/heartbeat-catalog.js";
+} from "../daemon/daemon-protocol.ts";
+import type { SessionSummary } from "../daemon/daemon-session-list.ts";
+import { listDaemonHeartbeats } from "../daemon/heartbeat-catalog.ts";
+import type { ServiceTier } from "../daemon/prime-port-ai-compat.ts";
 import {
 	deleteDaemonSavedSession,
 	listDaemonSavedSessions,
 	renameDaemonSavedSession,
-} from "../daemon/saved-session-catalog.js";
+} from "../daemon/saved-session-catalog.ts";
 import type {
 	AgentConnection,
 	AgentConnectionBeforeSessionInvalidateListener,
@@ -69,6 +70,7 @@ import type {
 	AgentConnectionSavedSessionScope,
 	AgentConnectionScopedModel,
 	AgentConnectionSessionContext,
+	AgentConnectionSessionEvent,
 	AgentConnectionSessionHeader,
 	AgentConnectionSessionListCallbacks,
 	AgentConnectionSessionTreeFlatNode,
@@ -82,8 +84,8 @@ import type {
 	AgentConnectionSwitchSessionOptions,
 	AgentConnectionToolDefinition,
 	AgentConnectionUserMessage,
-} from "./types.js";
-import { AgentConnectionPromptAdmissionError } from "./types.js";
+} from "./types.ts";
+import { AgentConnectionPromptAdmissionError } from "./types.ts";
 
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 type DaemonCommandBody = DistributiveOmit<DaemonCommand, "id">;
@@ -234,11 +236,14 @@ export class DaemonAgentConnection implements AgentConnection {
 	private disposing = false;
 	private disposed = false;
 
-	constructor(
-		private readonly client: DaemonClient,
-		private activeSessionId: string,
-		private readonly options: DaemonAgentConnectionOptions = {},
-	) {
+	private readonly client: DaemonClient;
+	private activeSessionId: string;
+	private readonly options: DaemonAgentConnectionOptions;
+
+	constructor(client: DaemonClient, activeSessionId: string, options: DaemonAgentConnectionOptions = {}) {
+		this.client = client;
+		this.activeSessionId = activeSessionId;
+		this.options = options;
 		if (options.recoverDaemon) {
 			this.client.enableRequestRecovery();
 		}
@@ -1914,7 +1919,7 @@ export class DaemonAgentConnection implements AgentConnection {
 		}
 	}
 
-	private observeStreamingMessage(event: AgentSessionEvent): void {
+	private observeStreamingMessage(event: AgentConnectionSessionEvent): void {
 		if (!this.latestSnapshot) {
 			return;
 		}

@@ -8,17 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import {
-	type Api,
-	type AssistantMessage,
-	type ImageContent,
-	type Message,
-	type Model,
-	type ServiceTier,
-	supportsFastMode,
-	type ToolCall,
-} from "@earendil-works/pi-ai";
-import { BUILTIN_MCP_CATALOG } from "@earendil-works/pi-ai/mcp";
+import type { Api, AssistantMessage, ImageContent, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -29,11 +19,14 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	SlashCommand,
+	Terminal,
+	TUI,
 } from "@earendil-works/pi-tui";
 import {
 	CombinedAutocompleteProvider,
 	type Component,
 	Container,
+	isViewportTUI,
 	Loader,
 	type LoaderIndicatorOptions,
 	Markdown,
@@ -43,7 +36,9 @@ import {
 	setKeybindings,
 	Text,
 	TruncatedText,
-	TUI,
+	TuiAltScreen,
+	TuiMainScreen,
+	type TuiMainScreenRenderState,
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -52,7 +47,7 @@ import {
 	buildDaemonUpdateRestartReport,
 	launchDaemonUpdateRestartCoordinator,
 	resolveDaemonUpdateRestartSocketPath,
-} from "../../cli/daemon-update-restart.js";
+} from "../../cli/daemon-update-restart.ts";
 import {
 	APP_NAME,
 	APP_TITLE,
@@ -64,8 +59,8 @@ import {
 	SELF_UPDATE_INTERACTIVE_CHILD_ENV,
 	SELF_UPDATE_NOT_ATTEMPTED_EXIT_CODE,
 	VERSION,
-} from "../../config.js";
-import { AGENT_MESSAGE_RECEIVED_PREVIEW_LABEL, isAgentSessionMessage } from "../../core/agent-messages.js";
+} from "../../config.ts";
+import { AGENT_MESSAGE_RECEIVED_PREVIEW_LABEL, isAgentSessionMessage } from "../../core/agent-messages.ts";
 import {
 	type AgentTracePreviewResult,
 	type AgentTraceUploadAllResult,
@@ -74,14 +69,15 @@ import {
 	previewAgentTraceFile,
 	uploadAgentTraceFile,
 	uploadAllAgentTraces,
-} from "../../core/agent-traces.js";
-import { isNoModelsAvailableMessage } from "../../core/auth-guidance.js";
+} from "../../core/agent-traces.ts";
+import { isNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
+import type { AuthStorage } from "../../core/auth-storage.ts";
 import {
 	type AgentCronJob,
 	type AgentHeartbeatManagementAction,
 	DEFAULT_HEARTBEAT_DELIVERY_MODE,
 	parseHeartbeatCommand,
-} from "../../core/cron-jobs.js";
+} from "../../core/cron-jobs.ts";
 import type {
 	AutocompleteProviderFactory,
 	ContextUsage,
@@ -92,11 +88,11 @@ import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
-} from "../../core/extensions/index.js";
-import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.js";
-import { emptyGoalState, formatGoalUsage, GOAL_CONTEXT_PREVIEW_LABEL, type GoalState } from "../../core/goals.js";
-import type { KernelSentAgentMessage } from "../../core/kernel/index.js";
-import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.js";
+} from "../../core/extensions/index.ts";
+import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
+import { emptyGoalState, formatGoalUsage, GOAL_CONTEXT_PREVIEW_LABEL, type GoalState } from "../../core/goals.ts";
+import type { KernelSentAgentMessage } from "../../core/kernel/index.ts";
+import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import {
 	bashOutputToText,
 	COMPACTION_OUTCOME_CUSTOM_TYPE,
@@ -108,38 +104,42 @@ import {
 	isSessionSlashCommandResultMessage,
 	SESSION_SLASH_COMMAND_CUSTOM_TYPE,
 	SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
-} from "../../core/messages.js";
-import { findExactModelReferenceMatch, resolveModelScopeFromModels } from "../../core/model-resolver.js";
-import { parseNewSessionCommand } from "../../core/new-session-command.js";
-import { resolvePrimeAgentTracesBaseUrl } from "../../core/prime-inference-auth.js";
-import { resolvePrimeInferencePostLoginModelAction } from "../../core/prime-inference-model-selection.js";
-import { parseCommandArgs } from "../../core/prompt-templates.js";
-import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.js";
-import { SessionImportFileNotFoundError } from "../../core/session-import-errors.js";
-import { parseSkillBlock } from "../../core/skill-blocks.js";
+} from "../../core/messages.ts";
+import { findExactModelReferenceMatch, resolveModelScopeFromModels } from "../../core/model-resolver.ts";
+import { parseNewSessionCommand } from "../../core/new-session-command.ts";
+import { resolvePrimeAgentTracesBaseUrl } from "../../core/prime-inference-auth.ts";
+import { resolvePrimeInferencePostLoginModelAction } from "../../core/prime-inference-model-selection.ts";
+import { parseCommandArgs } from "../../core/prompt-templates.ts";
+import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
+import { SessionImportFileNotFoundError } from "../../core/session-import-errors.ts";
+import type { SessionManager } from "../../core/session-manager.ts";
+import type { TuiMode } from "../../core/settings-manager.ts";
+import { parseSkillBlock } from "../../core/skill-blocks.ts";
 import {
 	BUILTIN_SLASH_COMMANDS,
 	builtinSlashCommandTakesArgument,
 	isBuiltinSlashCommandName,
 	parseSlashCommand,
 	resolveBuiltinSlashCommandName,
-} from "../../core/slash-commands.js";
+} from "../../core/slash-commands.ts";
 import {
 	captureAgentCommandUsed,
 	captureOnboardingCompleted,
 	type TelemetryOnboardingOutcome,
-} from "../../core/telemetry.js";
-import { type TruncationResult, truncateTail } from "../../core/tools/truncate.js";
-import { PRIME_BUTTERFLY_LOGO } from "../../themes/prime-logo.js";
-import { getChangelogPath, parseChangelog } from "../../utils/changelog.js";
-import { copyToClipboard } from "../../utils/clipboard.js";
-import { readClipboardImage } from "../../utils/clipboard-image.js";
-import { parseGitUrl } from "../../utils/git.js";
-import { resizeImage } from "../../utils/image-resize.js";
-import { getCwdRelativePath } from "../../utils/paths.js";
-import { killTrackedDetachedChildren } from "../../utils/shell.js";
-import { ensureTool, ensureToolWithStatus, formatMissingRipgrepMessage } from "../../utils/tools-manager.js";
-import { checkForNewPiVersion } from "../../utils/version-check.js";
+} from "../../core/telemetry.ts";
+import { type TruncationResult, truncateTail } from "../../core/tools/truncate.ts";
+import { hasProjectConfigDir, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { PRIME_BUTTERFLY_LOGO } from "../../themes/prime-logo.ts";
+import { getChangelogPath, parseChangelog } from "../../utils/changelog.ts";
+import { copyToClipboard } from "../../utils/clipboard.ts";
+import { readClipboardImage } from "../../utils/clipboard-image.ts";
+import { parseGitUrl } from "../../utils/git.ts";
+import { resizeImage } from "../../utils/image-resize.ts";
+import { openBrowser } from "../../utils/open-browser.ts";
+import { getCwdRelativePath } from "../../utils/paths.ts";
+import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { ensureTool, ensureToolWithStatus, formatMissingRipgrepMessage } from "../../utils/tools-manager.ts";
+import { checkForNewPiVersion } from "../../utils/version-check.ts";
 import type {
 	AgentConnection,
 	AgentConnectionExtensionUiRequest,
@@ -161,92 +161,93 @@ import type {
 	AgentConnectionSourceInfo,
 	AgentConnectionState,
 	AgentConnectionToolDefinition,
-} from "../agent-connection/index.js";
-import { AgentConnectionPromptAdmissionError } from "../agent-connection/index.js";
-import { getModelArgumentCompletions } from "../model-autocomplete.js";
+} from "../agent-connection/index.ts";
+import { AgentConnectionPromptAdmissionError } from "../agent-connection/index.ts";
+import { getModelArgumentCompletions } from "../model-autocomplete.ts";
 import {
 	checkForPackageUpdates,
 	checkTmuxKeyboardSetup,
 	formatPackageUpdateNotice,
 	formatUpdateAvailableNotice,
-} from "../shared/startup-notices.js";
-import { AGENT_ACTIVITY_LABELS, AgentActivityTracker, formatTokenCount } from "./agent-activity.js";
-import { type AuthenticationResult, getAnthropicSubscriptionAuthWarning, ProviderAuthFlows } from "./auth-flows.js";
-import { AgentMessageComponent } from "./components/agent-message.js";
-import { ArminComponent } from "./components/armin.js";
-import { AssistantMessageComponent } from "./components/assistant-message.js";
-import { BashExecutionComponent } from "./components/bash-execution.js";
-import { BorderedLoader } from "./components/bordered-loader.js";
-import { BranchSummaryMessageComponent } from "./components/branch-summary-message.js";
-import { type FullPaneOverlayOptions, showFullPaneOverlay } from "./components/centered-overlay.js";
+} from "../shared/startup-notices.ts";
+import { AGENT_ACTIVITY_LABELS, AgentActivityTracker, formatTokenCount } from "./agent-activity.ts";
+import { type AuthenticationResult, getAnthropicSubscriptionAuthWarning, ProviderAuthFlows } from "./auth-flows.ts";
+import { BUILTIN_MCP_CATALOG, type ServiceTier, supportsFastMode } from "./compat/pi-ai-compat.ts";
+import { AgentMessageComponent } from "./components/agent-message.ts";
+import { ArminComponent } from "./components/armin.ts";
+import { AssistantMessageComponent } from "./components/assistant-message.ts";
+import { BashExecutionComponent } from "./components/bash-execution.ts";
+import { BorderedLoader } from "./components/bordered-loader.ts";
+import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
+import { type FullPaneOverlayOptions, showFullPaneOverlay } from "./components/centered-overlay.ts";
 import {
 	CompactionOutcomeMessageComponent,
 	MalformedCompactionOutcomeMessageComponent,
-} from "./components/compaction-outcome-message.js";
-import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.js";
-import { ConfigurationMenuComponent, type ConfigurationMenuTab } from "./components/configuration-menu.js";
-import { formatContextTree } from "./components/context-tree-format.js";
-import { isCompactAgentMessageNeighbor } from "./components/conversation-components.js";
-import { CountdownTimer } from "./components/countdown-timer.js";
-import { CustomEditor } from "./components/custom-editor.js";
-import { CustomMessageComponent } from "./components/custom-message.js";
-import { DaxnutsComponent } from "./components/daxnuts.js";
-import { DynamicBorder } from "./components/dynamic-border.js";
-import { EarendilAnnouncementComponent } from "./components/earendil-announcement.js";
-import { type FileChangeSummary, formatTotalChangeSummary, mergeTurnFileChanges } from "./components/edit-summary.js";
-import { ExtensionEditorComponent } from "./components/extension-editor.js";
-import { ExtensionInputComponent } from "./components/extension-input.js";
-import { ExtensionSelectorComponent } from "./components/extension-selector.js";
-import { FEATURE_HINT_ANIMATION_INTERVAL_MS, FeatureHintComponent } from "./components/feature-hint.js";
-import { FooterComponent } from "./components/footer.js";
-import { HeartbeatManagerComponent } from "./components/heartbeat-manager.js";
-import { InjectedPromptMessageComponent, isInjectedPromptMessage } from "./components/injected-prompt-message.js";
-import { formatKeyText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.js";
-import type { AuthSelectorProvider } from "./components/oauth-selector.js";
-import { PrimeOnboardingSplashComponent } from "./components/prime-onboarding-splash.js";
-import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
-import { SettingsSelectorComponent } from "./components/settings-selector.js";
-import { SideQuestionComponent } from "./components/side-question.js";
-import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.js";
+} from "./components/compaction-outcome-message.ts";
+import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
+import { ConfigurationMenuComponent, type ConfigurationMenuTab } from "./components/configuration-menu.ts";
+import { formatContextTree } from "./components/context-tree-format.ts";
+import { isCompactAgentMessageNeighbor } from "./components/conversation-components.ts";
+import { CountdownTimer } from "./components/countdown-timer.ts";
+import { CustomEditor } from "./components/custom-editor.ts";
+import { CustomMessageComponent } from "./components/custom-message.ts";
+import { DaxnutsComponent } from "./components/daxnuts.ts";
+import { DynamicBorder } from "./components/dynamic-border.ts";
+import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
+import { type FileChangeSummary, formatTotalChangeSummary, mergeTurnFileChanges } from "./components/edit-summary.ts";
+import { ExtensionEditorComponent } from "./components/extension-editor.ts";
+import { ExtensionInputComponent } from "./components/extension-input.ts";
+import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
+import { FEATURE_HINT_ANIMATION_INTERVAL_MS, FeatureHintComponent } from "./components/feature-hint.ts";
+import { FooterComponent } from "./components/footer.ts";
+import { HeartbeatManagerComponent } from "./components/heartbeat-manager.ts";
+import { InjectedPromptMessageComponent, isInjectedPromptMessage } from "./components/injected-prompt-message.ts";
+import { formatKeyText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
+import type { AuthSelectorProvider } from "./components/oauth-selector.ts";
+import { PrimeOnboardingSplashComponent } from "./components/prime-onboarding-splash.ts";
+import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
+import { SettingsSelectorComponent } from "./components/settings-selector.ts";
+import { SideQuestionComponent } from "./components/side-question.ts";
+import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.ts";
 import {
 	isLeadingSlashCommand,
 	SlashCommandMessageComponent,
 	styleSlashCommandText,
-} from "./components/slash-command-message.js";
-import { SlashCommandResultMessageComponent } from "./components/slash-command-result-message.js";
-import { countDirectSubagentStatuses, SubagentSummaryLine } from "./components/subagent-summary-line.js";
-import { ThinkingSelectorComponent } from "./components/thinking-selector.js";
+} from "./components/slash-command-message.ts";
+import { SlashCommandResultMessageComponent } from "./components/slash-command-result-message.ts";
+import { countDirectSubagentStatuses, SubagentSummaryLine } from "./components/subagent-summary-line.ts";
+import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import {
 	selectLatestToolExpandHint,
 	ToolExecutionComponent,
 	type ToolExecutionDefinition,
-} from "./components/tool-execution.js";
-import { TreeSelectorComponent } from "./components/tree-selector.js";
-import { UserMessageComponent } from "./components/user-message.js";
-import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
-import { FeatureHintDeck } from "./feature-hints.js";
-import { scopeHeartbeatsToSession } from "./heartbeat-scope.js";
+} from "./components/tool-execution.ts";
+import { TreeSelectorComponent } from "./components/tree-selector.ts";
+import { UserMessageComponent } from "./components/user-message.ts";
+import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { FeatureHintDeck } from "./feature-hints.ts";
+import { scopeHeartbeatsToSession } from "./heartbeat-scope.ts";
 import {
 	collectMarkedImages,
 	evictImagesToBudget,
 	formatImageMarker,
 	imageMarkerIds,
 	remapImageMarkers,
-} from "./image-markers.js";
+} from "./image-markers.ts";
 import type {
 	InteractiveModeLocalSessionHost,
 	InteractiveModeLocalToolRendererDefinition,
 	InteractiveModeUiServices,
-} from "./interactive-mode-services.js";
+} from "./interactive-mode-services.ts";
 import {
 	isOnboardingModelReady,
 	type OnboardingStartupState,
 	shouldRunOnboarding,
 	shouldRunPrimeCliOnboardingSplash,
-} from "./onboarding.js";
-import type { ClientPromptStashStore, PromptStash, PromptStashState } from "./prompt-stash-state.js";
-import { QueueSelection } from "./queue-selection.js";
-import { formatResumeHint } from "./resume-hint.js";
+} from "./onboarding.ts";
+import type { ClientPromptStashStore, PromptStash, PromptStashState } from "./prompt-stash-state.ts";
+import { QueueSelection } from "./queue-selection.ts";
+import { formatResumeHint } from "./resume-hint.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -262,8 +263,28 @@ import {
 	Theme,
 	type ThemeColor,
 	theme,
-} from "./theme/theme.js";
-import { setWorkingPulseFrame, WORKING_ICON_INTERVAL_MS } from "./theme/working-icon.js";
+} from "./theme/theme.ts";
+import { setWorkingPulseFrame, WORKING_ICON_INTERVAL_MS } from "./theme/working-icon.ts";
+
+function quoteIfNeeded(value: string): string {
+	return /[\s"']/.test(value) ? JSON.stringify(value) : value;
+}
+
+/** CLI resume command for the current session (tests + exit hints). */
+export function formatResumeCommand(sessionManager: SessionManager): string | undefined {
+	if (!process.stdout.isTTY) return undefined;
+	if (!sessionManager.isPersisted()) return undefined;
+
+	const sessionFile = sessionManager.getSessionFile();
+	if (!sessionFile || !fs.existsSync(sessionFile)) return undefined;
+
+	const args = [APP_NAME];
+	if (!sessionManager.usesDefaultSessionDir()) {
+		args.push("--session-dir", quoteIfNeeded(sessionManager.getSessionDir()));
+	}
+	args.push("--session", sessionManager.getSessionId());
+	return args.join(" ");
+}
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
@@ -321,14 +342,19 @@ function isExpandable(obj: unknown): obj is Expandable {
 }
 
 class ExpandableText extends Text implements Expandable {
+	private readonly getCollapsedText: () => string;
+	private readonly getExpandedText: () => string;
+
 	constructor(
-		private readonly getCollapsedText: () => string,
-		private readonly getExpandedText: () => string,
+		getCollapsedText: () => string,
+		getExpandedText: () => string,
 		expanded = false,
 		paddingX = 0,
 		paddingY = 0,
 	) {
 		super(expanded ? getExpandedText() : getCollapsedText(), paddingX, paddingY);
+		this.getCollapsedText = getCollapsedText;
+		this.getExpandedText = getExpandedText;
 	}
 
 	setExpanded(expanded: boolean): void {
@@ -405,19 +431,85 @@ export interface BrandSplashHeaderOptions {
 	getStartHint?: () => string;
 }
 
+interface InteractiveTuiOptions {
+	tuiMode: TuiMode;
+	showHardwareCursor: boolean;
+	logDirectory: string;
+	terminal?: Terminal;
+	mouse?: boolean;
+	onRightClickPaste?: () => void;
+}
+
+/** Composition root for selecting the interactive terminal renderer. */
+export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
+	const terminal = options.terminal ?? new ProcessTerminal();
+	if (options.tuiMode === "fullscreen") {
+		const styleSearchMatch = (text: string) => theme.bg("selectedBg", theme.fg("text", text));
+		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
+			mouse: options.mouse,
+			searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
+			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
+			openUrl: openBrowser,
+			onRightClickPaste: options.onRightClickPaste,
+		});
+	}
+	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
+}
+
+/** Stable reference for components while InteractiveMode replaces the active renderer. */
+export function createInteractiveTuiReference(getTui: () => TUI): TUI {
+	return new Proxy({} as TUI, {
+		get: (_target, property) => {
+			const tui = getTui();
+			const value = Reflect.get(tui, property, tui);
+			if (typeof value !== "function") return value;
+			let methodTui = tui;
+			let method = value;
+			return (...args: unknown[]) => {
+				const currentTui = getTui();
+				if (currentTui !== methodTui) {
+					const currentMethod = Reflect.get(currentTui, property, currentTui);
+					if (typeof currentMethod !== "function") {
+						throw new TypeError(`TUI property ${String(property)} is not callable`);
+					}
+					methodTui = currentTui;
+					method = currentMethod;
+				}
+				return Reflect.apply(method, methodTui, args);
+			};
+		},
+		set: (_target, property, value) => {
+			const tui = getTui();
+			return Reflect.set(tui, property, value, tui);
+		},
+		has: (_target, property) => Reflect.has(getTui(), property),
+		getPrototypeOf: () => Reflect.getPrototypeOf(getTui()),
+	});
+}
+
 export class BrandSplashHeader implements Component {
 	private readonly logoRaw: string[];
 	private readonly logoCanvasWidth: number;
 	private readonly gutter = 4;
 	private readonly labelWidth = 9;
+	private readonly version: string;
+	private readonly getModelId: () => string | undefined;
+	private readonly getCwd: () => string;
+	private readonly verboseInstructions?: string;
+	private readonly options: BrandSplashHeaderOptions;
 
 	constructor(
-		private readonly version: string,
-		private readonly getModelId: () => string | undefined,
-		private readonly getCwd: () => string,
-		private readonly verboseInstructions?: string,
-		private readonly options: BrandSplashHeaderOptions = {},
+		version: string,
+		getModelId: () => string | undefined,
+		getCwd: () => string,
+		verboseInstructions?: string,
+		options: BrandSplashHeaderOptions = {},
 	) {
+		this.version = version;
+		this.getModelId = getModelId;
+		this.getCwd = getCwd;
+		this.verboseInstructions = verboseInstructions;
+		this.options = options;
 		this.logoRaw = (options.logo ?? PRIME_BUTTERFLY_LOGO).split("\n");
 		this.logoCanvasWidth = this.logoRaw.reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
 	}
@@ -753,10 +845,14 @@ export interface InteractiveInitialPrompt {
 }
 
 export interface InteractiveModeOptions {
+	/** Preferred TUI renderer mode (regular main-screen or fullscreen alt-screen). */
+	tuiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
 	migratedProviders?: string[];
 	/** Warning message if session model couldn't be restored */
 	modelFallbackMessage?: string;
+	/** Cwd to trust after reload if it gained a project config dir during this implicitly trusted session. */
+	autoTrustOnReloadCwd?: string;
 	/** One-off warning shown on startup. */
 	startupNotice?: string;
 	/** Initial message to send on startup (can include @file content) */
@@ -822,7 +918,10 @@ export class InteractiveMode {
 	private agentConnection: AgentConnection;
 	private localSessionHost: InteractiveModeLocalSessionHost | undefined;
 	private bindLocalSessionExtensions: boolean;
+	private renderer: TuiMainScreen | TuiAltScreen;
 	private ui: TUI;
+	private mainScreenRenderState: TuiMainScreenRenderState | undefined;
+	private fullscreenLayoutRoot: Component | undefined;
 	private chatContainer: Container;
 	private shortcutGuideContainer: Container;
 	private pendingMessagesContainer: Container;
@@ -1045,7 +1144,24 @@ export class InteractiveMode {
 		return this.uiServices.modelRegistry;
 	}
 
-	constructor(private options: InteractiveModeOptions) {
+	private getAuthStorage(): AuthStorage {
+		return this.modelRegistry.authStorage;
+	}
+
+	private requireAuthStorage(): AuthStorage {
+		return this.modelRegistry.authStorage;
+	}
+
+	private readonly onRightClickPaste = (): void => {
+		void this.handleClipboardImagePaste();
+	};
+
+	private options: InteractiveModeOptions;
+	private autoTrustOnReloadCwd: string | undefined;
+
+	constructor(options: InteractiveModeOptions) {
+		this.options = options;
+		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
 		const uiServices = options.uiServices ?? options.localSessionHost?.createUiServices();
 		if (!uiServices) {
 			throw new Error("InteractiveMode requires uiServices when no localSessionHost is supplied");
@@ -1069,11 +1185,17 @@ export class InteractiveMode {
 			this.resetSideQuestion();
 		});
 		this.version = VERSION;
-		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
+		const tuiMode = this.options.tuiMode ?? this.settingsManager.getTuiMode();
+		this.options = { ...this.options, tuiMode };
+		this.renderer = createInteractiveTui({
+			tuiMode,
+			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
+			logDirectory: getAgentDir(),
+			mouse: this.settingsManager.getFullscreenMouse(),
+			onRightClickPaste: this.onRightClickPaste,
+		});
+		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-		this.ui.onCopy = (text) => {
-			void this.copyFullscreenSelection(text);
-		};
 		this.headerContainer = new Container();
 		this.chatContainer = new Container();
 		this.shortcutGuideContainer = new Container();
@@ -1618,7 +1740,7 @@ export class InteractiveMode {
 			void newVersionPromise
 				?.then((newVersion) => {
 					if (newVersion) {
-						this.showNewVersionNotification(newVersion);
+						this.showNewVersionNotification(newVersion.version);
 					}
 				})
 				.catch(() => {});
@@ -1740,7 +1862,7 @@ export class InteractiveMode {
 		} finally {
 			const model = this.getCurrentModel();
 			const authStatus = model ? this.modelRegistry.getProviderAuthStatus(model.provider) : undefined;
-			const storedCredential = model ? this.modelRegistry.authStorage.get(model.provider) : undefined;
+			const storedCredential = model ? this.getAuthStorage().get(model.provider) : undefined;
 			void captureOnboardingCompleted({
 				agentDir: getAgentDir(),
 				settingsManager: this.settingsManager,
@@ -3090,11 +3212,14 @@ export class InteractiveMode {
 		const localSessionHost = this.getLocalSessionHost();
 		const createContext = (): ExtensionContext => ({
 			ui: this.createExtensionUIContext(),
+			mode: "tui",
 			hasUI: true,
 			cwd: this.getCurrentCwd(),
 			sessionManager: localSessionHost.getSessionManager(),
 			modelRegistry: this.modelRegistry,
 			model: this.getCurrentModel(),
+			scopedModels: this.getScopedModelState(),
+			isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 			isIdle: () => !this.isAgentStreaming(),
 			signal: localSessionHost.getAbortSignal(),
 			abort: () => this.agentConnection.abort(),
@@ -4250,10 +4375,12 @@ export class InteractiveMode {
 		this.promptStash = this.promptStashState?.queuedStashes?.shift();
 		if (this.promptStashState?.queuedStashes?.length === 0) this.promptStashState.queuedStashes = undefined;
 		const canRestorePasteSnapshot =
-			stash.pasteSnapshot === undefined || this.editor.restorePasteSnapshot !== undefined;
+			stash.pasteSnapshot === undefined ||
+			(this.editor as { restorePasteSnapshot?: unknown }).restorePasteSnapshot !== undefined;
 		this.editor.setText(canRestorePasteSnapshot ? stash.text : (stash.expandedText ?? stash.text));
-		if (stash.pasteSnapshot && this.editor.restorePasteSnapshot) {
-			this.editor.restorePasteSnapshot(stash.pasteSnapshot);
+		const restorePaste = (this.editor as { restorePasteSnapshot?: (s: unknown) => void }).restorePasteSnapshot;
+		if (stash.pasteSnapshot && restorePaste) {
+			restorePaste(stash.pasteSnapshot);
 		}
 		this.latestEditorPromptStash = this.snapshotPromptStash(this.editor.getText());
 		this.showStatus("Restored stashed prompt");
@@ -4357,22 +4484,23 @@ export class InteractiveMode {
 			// Resize down to the inline image size limit, mirroring the CLI @file
 			// path, so large screenshots don't exceed provider limits. Fall back to
 			// the raw bytes if resizing is unavailable.
-			const raw: ImageContent = {
-				type: "image",
-				data: Buffer.from(image.bytes).toString("base64"),
-				mimeType: image.mimeType,
-			};
-			const resized = await resizeImage(raw);
+			const resized = await resizeImage(image.bytes, image.mimeType);
 			const attachment: ImageContent = resized
 				? { type: "image", data: resized.data, mimeType: resized.mimeType }
-				: raw;
+				: {
+						type: "image",
+						data: Buffer.from(image.bytes).toString("base64"),
+						mimeType: image.mimeType,
+					};
 
 			// Register the image and insert a visible marker. The image is attached to
 			// the prompt as multimodal content rather than written to disk, so a vision
 			// model receives it directly.
 			const markerId = this.nextImageMarkerId++;
 			this.rememberPastedImage(markerId, attachment);
-			this.editor.insertTextAtCursor?.(formatImageMarker(markerId));
+			(this.editor as { insertTextAtCursor?: (t: string) => void }).insertTextAtCursor?.(
+				formatImageMarker(markerId),
+			);
 			this.ui.requestRender();
 
 			const model = this.getCurrentModel();
@@ -4413,7 +4541,7 @@ export class InteractiveMode {
 		for (const stash of [this.promptStash, ...(this.promptStashState?.queuedStashes ?? [])]) {
 			if (stash) add(stash.text);
 		}
-		for (const entry of this.editor.getHistory?.() ?? []) {
+		for (const entry of (this.editor as { getHistory?: () => string[] }).getHistory?.() ?? []) {
 			add(entry);
 		}
 		for (const msg of [...this.connectionQueue.steering, ...this.connectionQueue.followUp]) {
@@ -6203,15 +6331,6 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private async copyFullscreenSelection(text: string): Promise<void> {
-		try {
-			await copyToClipboard(text);
-			this.showStatus("Copied selection to clipboard");
-		} catch (error) {
-			this.showError(`Failed to copy selection: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
-
 	// Local slash commands (/context, /system-prompt, …) print into the chat
 	// without round-tripping through the agent, so no user message event echoes
 	// the typed command. Render the turn ourselves, mirroring the "user" case
@@ -6406,8 +6525,9 @@ export class InteractiveMode {
 		const summary = messages[summaryIndex];
 		if (summary.role !== "compactionSummary") return messages;
 		const remaining = messages.filter((_, index) => index !== summaryIndex);
-		if (Number.isSafeInteger(summary.retainedMessageCount) && summary.retainedMessageCount! >= 0) {
-			const boundary = Math.min(summary.retainedMessageCount!, remaining.length);
+		const retainedCount = (summary as { retainedMessageCount?: number }).retainedMessageCount;
+		if (Number.isSafeInteger(retainedCount) && retainedCount! >= 0) {
+			const boundary = Math.min(retainedCount!, remaining.length);
 			return [...remaining.slice(0, boundary), summary, ...remaining.slice(boundary)];
 		}
 
@@ -7191,7 +7311,9 @@ export class InteractiveMode {
 	private updateEditorBorderColor(): void {
 		const editorTheme = getEditorTheme();
 		this.editor.borderColor = editorTheme.borderColor;
-		this.editor.backgroundColor = editorTheme.backgroundColor;
+		(this.editor as { backgroundColor?: string | undefined }).backgroundColor = (
+			editorTheme as { backgroundColor?: string }
+		).backgroundColor;
 		this.ui.requestRender();
 	}
 
@@ -7207,20 +7329,79 @@ export class InteractiveMode {
 	private applyFullscreen(enabled: boolean): void {
 		if (enabled) {
 			if (!process.stdout.isTTY) return;
-			this.ui.enterFullscreen({
-				scroll: [
-					this.headerContainer,
-					this.mainViewContainer,
-					this.widgetContainerAbove,
-					...this.getPromptContextContainers(),
-					this.widgetContainerBelow,
-				],
-				dock: this.promptDock,
-				mouse: this.settingsManager.getFullscreenMouse(),
-			});
+			// pi-tui uses TuiAltScreen as the fullscreen renderer.
+			this.ensureFullscreenLayoutRoot();
+			this.switchTuiMode("fullscreen");
 		} else {
-			this.ui.exitFullscreen();
+			this.switchTuiMode("regular");
 		}
+	}
+
+	private ensureFullscreenLayoutRoot(): void {
+		if (this.fullscreenLayoutRoot) return;
+		// Layout root is the main container tree already mounted on the TUI.
+		this.fullscreenLayoutRoot = this.mainContainer;
+	}
+
+	private mountInteractiveTui(tui: TuiMainScreen | TuiAltScreen, components: readonly Component[]): void {
+		for (const component of components) tui.addChild(component);
+		if (isViewportTUI(tui)) {
+			if (!this.fullscreenLayoutRoot) {
+				this.ensureFullscreenLayoutRoot();
+			}
+			if (this.fullscreenLayoutRoot) {
+				tui.setLayoutRoot(this.fullscreenLayoutRoot);
+			}
+		}
+	}
+
+	private switchTuiMode(mode: TuiMode, restoreProgress = true, startRenderer = true): boolean {
+		const previousUi = this.renderer;
+		if (mode === previousUi.mode) return true;
+		if (previousUi.hasOverlayEntries) return false;
+
+		const components = [...previousUi.children];
+		const focus = previousUi.getFocusedComponent();
+		const terminal = previousUi.terminal;
+		const showHardwareCursor = previousUi.getShowHardwareCursor();
+		const clearOnShrink = previousUi.getClearOnShrink();
+		const onDebug = previousUi.onDebug;
+		if (previousUi instanceof TuiMainScreen) {
+			this.mainScreenRenderState = previousUi.captureRenderState();
+		}
+
+		previousUi.stop({ preserveScreen: true });
+		previousUi.setFocus(null);
+		previousUi.clear();
+		if (isViewportTUI(previousUi)) previousUi.setLayoutRoot(undefined);
+
+		const nextUi = createInteractiveTui({
+			tuiMode: mode,
+			showHardwareCursor,
+			logDirectory: getAgentDir(),
+			terminal,
+			mouse: this.settingsManager.getFullscreenMouse(),
+			onRightClickPaste: this.onRightClickPaste,
+		});
+		nextUi.setClearOnShrink(clearOnShrink);
+		nextUi.onDebug = onDebug;
+		if (nextUi instanceof TuiMainScreen && this.mainScreenRenderState) {
+			nextUi.restoreRenderState(this.mainScreenRenderState);
+		}
+		this.renderer = nextUi;
+		this.options.tuiMode = mode;
+		this.mountInteractiveTui(nextUi, components);
+		nextUi.invalidate();
+		nextUi.setFocus(focus);
+		if (!startRenderer) return true;
+		nextUi.start();
+		if (restoreProgress && this.settingsManager.getShowTerminalProgress()) {
+			const streaming = this.connectionState?.isStreaming === true || this.connectionState?.isCompacting === true;
+			if (streaming) {
+				terminal.setProgress(true);
+			}
+		}
+		return true;
 	}
 
 	private setFullscreenMode(enabled: boolean): void {
@@ -7232,7 +7413,7 @@ export class InteractiveMode {
 		}
 		this.fullscreenEnabled = enabled;
 		this.applyFullscreen(enabled);
-		const followKey = this.getEditorKeyDisplay("tui.viewport.follow");
+		const followKey = this.getEditorKeyDisplay("tui.altScreen.bottom");
 		this.showStatus(
 			enabled
 				? `Fullscreen rendering on — wheel/pageUp scroll, ${followKey} follows output`
@@ -7273,11 +7454,8 @@ export class InteractiveMode {
 		// otherwise force a full redraw that scrolls to the top and replays the
 		// whole transcript. Keep the user anchored at their current position.
 		// Fullscreen frames have no scrollback to preserve.
-		if (this.ui.isFullscreen()) {
-			this.ui.requestRender();
-		} else {
-			this.ui.requestRenderPreservingViewport();
-		}
+		// pi-tui: fullscreen (alt-screen) has no scrollback to preserve.
+		this.ui.requestRender();
 	}
 
 	private toggleThinkingBlockVisibility(): void {
@@ -8108,7 +8286,7 @@ export class InteractiveMode {
 			menu = new ConfigurationMenuComponent({
 				initialTab,
 				tui: this.ui,
-				authStorage: this.modelRegistry.authStorage,
+				authStorage: this.requireAuthStorage(),
 				providerOptions,
 				modelRegistry: this.modelRegistry,
 				currentModel: this.getCurrentModel(),
@@ -8180,8 +8358,8 @@ export class InteractiveMode {
 			// Fall back to settings
 			const patterns = this.settingsManager.getEnabledModels();
 			if (patterns !== undefined && patterns.length > 0) {
-				const scopedModels = resolveModelScopeFromModels(patterns, allModels);
-				currentEnabledIds = scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
+				const scopeResult = resolveModelScopeFromModels(patterns, allModels);
+				currentEnabledIds = scopeResult.scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
 			}
 		}
 
@@ -8584,7 +8762,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		const authStorage = this.modelRegistry.authStorage;
+		const authStorage = this.getAuthStorage();
 		const isAuthed = (name: string) => authStorage.get(`mcp:${name}`) !== undefined;
 
 		if (sub === "list") {
@@ -8840,14 +9018,45 @@ export class InteractiveMode {
 				force: false,
 				showDiagnosticsWhenQuiet: true,
 			});
+			const savedImplicitProjectTrust = this.maybeSaveImplicitProjectTrustAfterReload();
 			const modelsJsonError = this.modelRegistry.getError();
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
-			this.showStatus("Reloaded keybindings, extensions, skills, prompts, themes");
+			this.showStatus(
+				savedImplicitProjectTrust
+					? "Reloaded keybindings, extensions, skills, prompts, themes; saved project trust"
+					: "Reloaded keybindings, extensions, skills, prompts, themes",
+			);
 		} catch (error) {
 			dismissReloadBox(previousEditor as Component);
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	private maybeSaveImplicitProjectTrustAfterReload(): boolean {
+		const cwd = this.connectionState?.cwd ?? this.uiServices.getInitialCwd();
+		if (this.autoTrustOnReloadCwd !== cwd) {
+			return false;
+		}
+		if (!this.settingsManager.isProjectTrusted() || !hasProjectConfigDir(cwd)) {
+			return false;
+		}
+
+		const trustStore = new ProjectTrustStore(getAgentDir());
+		try {
+			if (trustStore.get(cwd) !== null) {
+				this.autoTrustOnReloadCwd = undefined;
+				return false;
+			}
+			trustStore.set(cwd, true);
+			this.autoTrustOnReloadCwd = undefined;
+			return true;
+		} catch (error) {
+			this.showWarning(
+				`Could not save project trust after reload: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return false;
 		}
 	}
 
@@ -9217,7 +9426,7 @@ export class InteractiveMode {
 		const state = await this.agentConnection.getState();
 		return uploadAgentTraceFile({
 			sessionFile: state.sessionFile,
-			authStorage: this.modelRegistry.authStorage,
+			authStorage: this.requireAuthStorage(),
 			settingsManager: this.settingsManager,
 			requireEnabled: false,
 			reloadConfig: false,
@@ -9283,7 +9492,7 @@ export class InteractiveMode {
 
 	private async uploadAllTraces(sessionDir?: string, signal?: AbortSignal): Promise<AgentTraceUploadAllResult> {
 		return uploadAllAgentTraces({
-			authStorage: this.modelRegistry.authStorage,
+			authStorage: this.requireAuthStorage(),
 			settingsManager: this.settingsManager,
 			sessionDir,
 			requireEnabled: false,
@@ -9308,7 +9517,7 @@ export class InteractiveMode {
 
 		if (command === "status") {
 			await this.settingsManager.reload().catch(() => undefined);
-			const credential = await getPrimeAgentTraceCredential(this.modelRegistry.authStorage);
+			const credential = await getPrimeAgentTraceCredential(this.getAuthStorage());
 			const state = await this.agentConnection.getState();
 			const info = [
 				theme.bold("Trace Sharing"),
@@ -9347,13 +9556,13 @@ export class InteractiveMode {
 		}
 
 		if (command === "on" || command === "enable") {
-			let credential = await getPrimeAgentTraceCredential(this.modelRegistry.authStorage);
+			let credential = await getPrimeAgentTraceCredential(this.getAuthStorage());
 			if (!credential) {
 				const authResult = await this.createAuthFlows().runPrimeAgentTracesLogin();
 				if (authResult.status !== "success") {
 					return;
 				}
-				credential = await getPrimeAgentTraceCredential(this.modelRegistry.authStorage);
+				credential = await getPrimeAgentTraceCredential(this.getAuthStorage());
 			}
 			if (!credential) {
 				this.showError("Trace sharing needs a Prime API key.");
@@ -9372,7 +9581,7 @@ export class InteractiveMode {
 		}
 
 		if (command === "upload" || command === "upload-current") {
-			const credential = await getPrimeAgentTraceCredential(this.modelRegistry.authStorage);
+			const credential = await getPrimeAgentTraceCredential(this.getAuthStorage());
 			if (!credential) {
 				this.showError("Trace sharing needs a Prime API key. Run /traces login.");
 				return;
@@ -9388,7 +9597,7 @@ export class InteractiveMode {
 		}
 
 		if (command === "upload-all") {
-			const credential = await getPrimeAgentTraceCredential(this.modelRegistry.authStorage);
+			const credential = await getPrimeAgentTraceCredential(this.getAuthStorage());
 			if (!credential) {
 				this.showError("Trace sharing needs a Prime API key. Run /traces login.");
 				return;
@@ -9664,15 +9873,15 @@ export class InteractiveMode {
 	/**
 	 * Get capitalized display string for an app keybinding action.
 	 */
-	private getAppKeyDisplay(action: AppKeybinding): string {
-		return this.capitalizeKey(keyText(action));
+	private getAppKeyDisplay(action: string): string {
+		return this.capitalizeKey(keyText(action as Keybinding));
 	}
 
 	/**
 	 * Get capitalized display string for an editor keybinding action.
 	 */
-	private getEditorKeyDisplay(action: Keybinding): string {
-		return this.capitalizeKey(keyText(action));
+	private getEditorKeyDisplay(action: string): string {
+		return this.capitalizeKey(keyText(action as Keybinding));
 	}
 
 	private getShortcutGuide(): string {
@@ -9744,10 +9953,10 @@ ${shortcutsKey ? `\`${shortcutsKey}\` quick shortcuts · ` : ""}\`/hotkeys\` ful
 		const browseQueue = this.getAppKeyDisplay("app.message.navigateOlder");
 		const reorderQueue = `${this.getAppKeyDisplay("app.message.moveEarlier")} / ${this.getAppKeyDisplay("app.message.moveLater")}`;
 		const pasteImage = this.getAppKeyDisplay("app.clipboard.pasteImage");
-		const viewportPageUp = this.getEditorKeyDisplay("tui.viewport.pageUp");
-		const viewportPageDown = this.getEditorKeyDisplay("tui.viewport.pageDown");
-		const viewportTop = this.getEditorKeyDisplay("tui.viewport.top");
-		const viewportFollow = this.getEditorKeyDisplay("tui.viewport.follow");
+		const viewportPageUp = this.getEditorKeyDisplay("tui.altScreen.pageUp");
+		const viewportPageDown = this.getEditorKeyDisplay("tui.altScreen.pageDown");
+		const viewportTop = this.getEditorKeyDisplay("tui.altScreen.top");
+		const viewportFollow = this.getEditorKeyDisplay("tui.altScreen.bottom");
 
 		let hotkeys = `
 **Navigation**
@@ -9888,7 +10097,7 @@ ${interrupt ? `| \`${interrupt}\` | Interrupt current operation |\n` : ""}${shor
 	private async handleDebugCommand(): Promise<void> {
 		const width = this.ui.terminal.columns;
 		const height = this.ui.terminal.rows;
-		const allLines = this.ui.render(width);
+		const allLines = this.renderer.render(width);
 		try {
 			const messages = await this.agentConnection.getMessages();
 			const debugLogPath = getDebugLogPath();
@@ -9966,8 +10175,7 @@ ${interrupt ? `| \`${interrupt}\` | Interrupt current operation |\n` : ""}${shor
 		}
 		if (this.isInitialized) {
 			this.ui.stop({
-				preserveAltScreen: options.preserveAltScreen,
-				flushFullscreen: options.preserveAltScreen ? false : undefined,
+				preserveScreen: options.preserveAltScreen === true,
 			});
 			this.isInitialized = false;
 		}

@@ -4,15 +4,20 @@ import { describe, expect, it } from "vitest";
 describe("export HTML markdown link sanitization", () => {
 	const templateJs = readFileSync(new URL("../src/core/export-html/template.js", import.meta.url), "utf-8");
 
-	it("overrides the marked link renderer to block javascript: protocol", () => {
-		// The custom link renderer must check for dangerous protocols
+	it("overrides the marked link renderer to use scheme allow-list sanitization", () => {
 		expect(templateJs).toMatch(/link\s*\(\s*token\s*\)/);
-		expect(templateJs).toMatch(/javascript/i);
-		expect(templateJs).toMatch(/vbscript/i);
+		expect(templateJs).toMatch(/sanitizeMarkdownUrl\(token\.href\)/);
+		expect(templateJs).toMatch(/\^\(https\?\|mailto\|tel\|ftp\)/);
 	});
 
-	it("overrides the marked image renderer to block javascript: protocol", () => {
+	it("overrides the marked image renderer to use scheme allow-list sanitization", () => {
 		expect(templateJs).toMatch(/image\s*\(\s*token\s*\)/);
+		expect(templateJs).toMatch(/sanitizeMarkdownUrl\(token\.href\)/);
+	});
+
+	it("strips C0 controls before checking and emitting markdown URLs", () => {
+		expect(templateJs).toContain("replace(/[\\x00-\\x1f\\x7f]/g, '')");
+		expect(templateJs).not.toMatch(/\^\\s\*\(javascript\|vbscript\|data\):/i);
 	});
 
 	it("escapes href attributes in the custom link renderer", () => {
@@ -46,13 +51,11 @@ describe("export HTML markdown link sanitization", () => {
 		expect(templateJs).not.toMatch(/\[\$\{msg\.role\}\]/);
 		expect(templateJs).not.toMatch(/\[model: \$\{entry\.modelId\}\]/);
 		expect(templateJs).not.toMatch(/\[thinking: \$\{entry\.thinkingLevel\}\]/);
-		expect(templateJs).not.toMatch(/\[service tier: \$\{entry\.serviceTier\}\]/);
 		expect(templateJs).not.toMatch(/\[\$\{entry\.type\}\]/);
 		expect(templateJs).toMatch(/\$\{escapeHtml\(msg\.toolName \|\| 'tool'\)\}/);
 		expect(templateJs).toMatch(/\$\{escapeHtml\(msg\.role\)\}/);
 		expect(templateJs).toMatch(/\$\{escapeHtml\(entry\.modelId\)\}/);
 		expect(templateJs).toMatch(/\$\{escapeHtml\(entry\.thinkingLevel\)\}/);
-		expect(templateJs).toMatch(/\$\{escapeHtml\(entry\.serviceTier \|\| 'default'\)\}/);
 		expect(templateJs).toMatch(/\$\{escapeHtml\(entry\.type\)\}/);
 	});
 

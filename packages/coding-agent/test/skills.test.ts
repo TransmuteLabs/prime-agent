@@ -1,17 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { homedir, tmpdir } from "os";
+import { homedir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
-import type { ResourceDiagnostic } from "../src/core/diagnostics.js";
-import {
-	formatSkillsForPrompt,
-	getPythonSkillRuntimeInfo,
-	loadSkills,
-	loadSkillsFromDir,
-	type Skill,
-	type SkillPythonMetadata,
-} from "../src/core/skills.js";
-import { createSyntheticSourceInfo } from "../src/core/source-info.js";
+import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
+import { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, type Skill } from "../src/core/skills.ts";
+import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
 const fixturesDir = resolve(__dirname, "fixtures/skills");
 const collisionFixturesDir = resolve(__dirname, "fixtures/skills-collision");
@@ -22,10 +14,9 @@ function createTestSkill(options: {
 	filePath: string;
 	baseDir: string;
 	disableModelInvocation?: boolean;
-	python?: SkillPythonMetadata;
 	source?: string;
 }): Skill {
-	const base = {
+	return {
 		name: options.name,
 		description: options.description,
 		filePath: options.filePath,
@@ -33,40 +24,6 @@ function createTestSkill(options: {
 		sourceInfo: createSyntheticSourceInfo(options.filePath, { source: options.source ?? "test" }),
 		disableModelInvocation: options.disableModelInvocation ?? false,
 	};
-	return options.python
-		? {
-				...base,
-				kind: "python",
-				python: options.python,
-			}
-		: {
-				...base,
-				kind: "markdown",
-			};
-}
-
-function writePythonSkill(root: string, name: string): void {
-	const skillDir = join(root, name);
-	const importName = name.replaceAll("-", "_");
-	mkdirSync(join(skillDir, "src", importName), { recursive: true });
-	writeFileSync(
-		join(skillDir, "SKILL.md"),
-		`---
-name: ${name}
-description: Test skill ${name}
----
-
-Use this skill for tests.
-`,
-	);
-	writeFileSync(
-		join(skillDir, "pyproject.toml"),
-		`[project]
-name = "${name}"
-version = "0.1.0"
-`,
-	);
-	writeFileSync(join(skillDir, "src", importName, "__init__.py"), "async def run():\n    return 'ok'\n");
 }
 
 describe("skills", () => {
@@ -84,7 +41,7 @@ describe("skills", () => {
 			expect(diagnostics).toHaveLength(0);
 		});
 
-		it("should warn when name doesn't match parent directory", () => {
+		it("should allow names that don't match parent directory", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "name-mismatch"),
 				source: "test",
@@ -94,7 +51,7 @@ describe("skills", () => {
 			expect(skills[0].name).toBe("different-name");
 			expect(
 				diagnostics.some((d: ResourceDiagnostic) => d.message.includes("does not match parent directory")),
-			).toBe(true);
+			).toBe(false);
 		});
 
 		it("should warn when name contains invalid characters", () => {
@@ -262,49 +219,6 @@ describe("skills", () => {
 			expect(skills).toHaveLength(1);
 			expect(skills[0].disableModelInvocation).toBe(false);
 		});
-
-		it("should load Python-backed skills from the same skill root", () => {
-			const skillDir = join(fixturesDir, "python-skill");
-			const { skills, diagnostics } = loadSkillsFromDir({
-				dir: skillDir,
-				source: "test",
-			});
-
-			expect(skills).toHaveLength(1);
-			expect(skills[0]).toMatchObject({
-				name: "python-skill",
-				kind: "python",
-				python: {
-					importName: "python_skill",
-					packagePath: skillDir,
-					pyprojectPath: join(skillDir, "pyproject.toml"),
-				},
-			});
-			expect(getPythonSkillRuntimeInfo(skills)).toEqual([
-				{
-					name: "python-skill",
-					importName: "python_skill",
-					packagePath: skillDir,
-					pyprojectPath: join(skillDir, "pyproject.toml"),
-				},
-			]);
-			expect(diagnostics).toHaveLength(0);
-		});
-
-		it("should warn and keep metadata-only skills when Python package files are missing", () => {
-			const { skills, diagnostics } = loadSkillsFromDir({
-				dir: join(fixturesDir, "python-package-missing"),
-				source: "test",
-			});
-
-			expect(skills).toHaveLength(1);
-			expect(skills[0].kind).toBe("markdown");
-			expect(
-				diagnostics.some((d: ResourceDiagnostic) =>
-					d.message.includes("python skill package src/python_package_missing/__init__.py not found"),
-				),
-			).toBe(true);
-		});
 	});
 
 	describe("formatSkillsForPrompt", () => {
@@ -329,30 +243,8 @@ describe("skills", () => {
 			expect(result).toContain("</available_skills>");
 			expect(result).toContain("<skill>");
 			expect(result).toContain("<name>test-skill</name>");
-			expect(result).toContain("<type>markdown</type>");
 			expect(result).toContain("<description>A test skill.</description>");
 			expect(result).toContain("<location>/path/to/skill/SKILL.md</location>");
-		});
-
-		it("should include Python import metadata for Python-backed skills", () => {
-			const skills: Skill[] = [
-				createTestSkill({
-					name: "python-skill",
-					description: "A Python skill.",
-					filePath: "/path/to/skill/SKILL.md",
-					baseDir: "/path/to/skill",
-					python: {
-						importName: "python_skill",
-						packagePath: "/path/to/skill",
-						pyprojectPath: "/path/to/skill/pyproject.toml",
-					},
-				}),
-			];
-
-			const result = formatSkillsForPrompt(skills);
-
-			expect(result).toContain("<type>python</type>");
-			expect(result).toContain("<python_import>python_skill</python_import>");
 		});
 
 		it("should include intro text before XML", () => {
@@ -370,8 +262,7 @@ describe("skills", () => {
 			const introText = result.substring(0, xmlStart);
 
 			expect(introText).toContain("The following skills provide specialized instructions");
-			expect(introText).toContain("Use ipython to inspect a skill's file");
-			expect(introText).toContain("Skills with a python_import are prepared");
+			expect(introText).toContain("Use the read tool to load a skill's file");
 		});
 
 		it("should escape XML special characters", () => {
@@ -496,32 +387,6 @@ describe("skills", () => {
 				includeDefaults: true,
 			});
 			expect(withTilde.length).toBe(withoutTilde.length);
-		});
-
-		it("should warn when Python skills share an import name", () => {
-			const tempDir = mkdtempSync(join(tmpdir(), "prime-agent-skills-"));
-			try {
-				writePythonSkill(tempDir, "web-search");
-				writePythonSkill(tempDir, "web_search");
-
-				const { skills, diagnostics } = loadSkills({
-					agentDir: emptyAgentDir,
-					cwd: emptyCwd,
-					skillPaths: [tempDir],
-					includeDefaults: false,
-				});
-
-				expect(skills.map((skill) => skill.name).sort()).toEqual(["web-search", "web_search"]);
-				expect(
-					diagnostics.some((d: ResourceDiagnostic) =>
-						d.message.includes(
-							'python import name "web_search" is shared by skills "web-search" and "web_search"',
-						),
-					),
-				).toBe(true);
-			} finally {
-				rmSync(tempDir, { recursive: true, force: true });
-			}
 		});
 	});
 

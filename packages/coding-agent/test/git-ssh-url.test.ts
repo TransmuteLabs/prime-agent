@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseGitUrl } from "../src/utils/git.js";
+import { parseGitUrl } from "../src/utils/git.ts";
 
 describe("Git URL Parsing", () => {
 	describe("protocol URLs (accepted without git: prefix)", () => {
@@ -9,6 +9,15 @@ describe("Git URL Parsing", () => {
 				host: "github.com",
 				path: "user/repo",
 				repo: "https://github.com/user/repo",
+			});
+		});
+
+		it("should parse ssh:// URL", () => {
+			const result = parseGitUrl("ssh://git@github.com/user/repo");
+			expect(result).toMatchObject({
+				host: "github.com",
+				path: "user/repo",
+				repo: "ssh://git@github.com/user/repo",
 			});
 		});
 
@@ -51,6 +60,19 @@ describe("Git URL Parsing", () => {
 				repo: "git@github.com:user/repo",
 			});
 		});
+	});
+
+	it("should reject unsafe git install path inputs", () => {
+		for (const source of [
+			"git:git@evil.example:../../victim/repo",
+			"https://evil.example/..%2F..%2Fvictim/repo",
+			"https://evil.example/..%2F..%2Fvictim/repo%",
+			"git:git@evil.example:/absolute/repo",
+			"git:git@evil.example:user\\repo/name",
+			"git:git@evil.example:user/repo\0name",
+		]) {
+			expect(parseGitUrl(source)).toBeNull();
+		}
 	});
 
 	describe("unsupported without git: prefix", () => {

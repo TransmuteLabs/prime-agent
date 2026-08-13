@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ModelRegistry } from "./model-registry.js";
-import { PRIME_INFERENCE_DEFAULT_MODEL_ID } from "./model-resolver.js";
-import { PRIME_INFERENCE_PROVIDER_ID } from "./prime-inference-auth.js";
+import type { ModelRegistry } from "./model-registry.ts";
+import { PRIME_INFERENCE_DEFAULT_MODEL_ID } from "./model-resolver.ts";
+import { PRIME_INFERENCE_PROVIDER_ID } from "./prime-inference-auth.ts";
 
 type ProviderLoginResult =
 	| { status: "success"; providerId: string; kind?: "provider" | "service" }

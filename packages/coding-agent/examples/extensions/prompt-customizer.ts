@@ -24,20 +24,25 @@ function addToolGuidance(options: BuildSystemPromptOptions, basePrompt: string):
 
 	const parts: string[] = [];
 
-	if (hasTool("ipython")) {
+	if (hasTool("read")) {
 		parts.push(
-			"• Use the `ipython` tool for Python execution, file access, data inspection, and shell subprocesses.",
+			"• Use the `read` tool for file contents (supports text and images).",
+			"  - For large files, use `offset` and `limit` to read in chunks.",
 		);
 	}
 
 	if (hasTool("bash")) {
-		parts.push("• Execute shell commands with the `bash` tool when it is explicitly enabled.");
+		parts.push("• Execute commands with the `bash` tool. Use it for file operations like `ls`, `find`, `grep`.");
 	}
 
 	if (hasTool("edit")) {
 		parts.push(
 			"• Use the `edit` tool for precise text replacements in files. Match exact content including whitespace.",
 		);
+	}
+
+	if (hasTool("write")) {
+		parts.push("• Use the `write` tool to create new files or overwrite existing ones completely.");
 	}
 
 	if (options.skills && options.skills.length > 0) {

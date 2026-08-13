@@ -1,26 +1,26 @@
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, ServiceTier, TextContent, Transport } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent, Transport } from "@earendil-works/pi-ai";
 import type {
 	AgentSessionMessageDeliveryMode,
 	AgentSessionMessageReceipt,
 	AgentSessionMessageSafetyStatus,
-} from "../../core/agent-messages.js";
-import type { SessionActionRecoverySnapshot } from "../../core/agent-session.js";
-import type { AgentSessionRuntimeConfig } from "../../core/agent-session-config.js";
-import type { AgentSessionRuntimeMetadata } from "../../core/agent-session-runtime.js";
-import type { AgentAutonomousStatus } from "../../core/autonomous.js";
-import type { BashResult } from "../../core/bash-executor.js";
+} from "../../core/agent-messages.ts";
+import type { SessionActionRecoverySnapshot } from "../../core/agent-session.ts";
+import type { AgentSessionRuntimeConfig } from "../../core/agent-session-config.ts";
+import type { AgentSessionRuntimeMetadata } from "../../core/agent-session-runtime.ts";
+import type { AgentAutonomousStatus } from "../../core/autonomous.ts";
+import type { BashResult } from "../../core/bash-executor.ts";
 import type {
 	AgentCronJob,
 	AgentHeartbeatDeliveryMode,
 	AgentHeartbeatManagementAction,
 	AgentHeartbeatUpdateAction,
-} from "../../core/cron-jobs.js";
-import type { InputSource } from "../../core/extensions/types.js";
-import type { CustomMessage } from "../../core/messages.js";
-import type { QueuedMessageLane, QueuedMessageMutation } from "../../core/session-action-store.js";
-import type { SessionCwdIssue } from "../../core/session-cwd.js";
-import type { DeleteSessionFileResult } from "../../core/session-file-actions.js";
+} from "../../core/cron-jobs.ts";
+import type { InputSource } from "../../core/extensions/types.ts";
+import type { CustomMessage } from "../../core/messages.ts";
+import type { QueuedMessageLane, QueuedMessageMutation } from "../../core/session-action-store.ts";
+import type { SessionCwdIssue } from "../../core/session-cwd.ts";
+import type { DeleteSessionFileResult } from "../../core/session-file-actions.ts";
 import type {
 	AgentConnectionAgentStatus,
 	AgentConnectionHeartbeat,
@@ -37,8 +37,9 @@ import type {
 	AgentConnectionSideQuestionEvent,
 	AgentConnectionSideQuestionTurn,
 	AgentConnectionState,
-} from "../agent-connection/types.js";
-import type { SessionSummary } from "./daemon-session-list.js";
+} from "../agent-connection/types.ts";
+import type { SessionSummary } from "./daemon-session-list.ts";
+import type { ServiceTier } from "./prime-port-ai-compat.ts";
 
 /**
  * Local daemon JSONL protocol.

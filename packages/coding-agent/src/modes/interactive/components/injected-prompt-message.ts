@@ -8,7 +8,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { GOAL_CONTEXT_CUSTOM_TYPE, type GoalContextDetails } from "../../../core/goals.js";
+import { GOAL_CONTEXT_CUSTOM_TYPE, type GoalContextDetails } from "../../../core/goals.ts";
 import {
 	type CustomMessage,
 	HEARTBEAT_PROMPT_CUSTOM_TYPE,
@@ -19,9 +19,9 @@ import {
 	RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE,
 	type RlmChildFailureDetails,
 	type RlmChildTerminalNoticeDetails,
-} from "../../../core/messages.js";
-import { getMarkdownTheme, theme } from "../theme/theme.js";
-import { expandCollapseHint } from "./keybinding-hints.js";
+} from "../../../core/messages.ts";
+import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { expandCollapseHint } from "./keybinding-hints.ts";
 
 type InjectedPromptDetails =
 	| GoalContextDetails
@@ -83,12 +83,13 @@ export class InjectedPromptMessageComponent extends Container {
 	private readonly content = new Container();
 	private readonly header = new Text("", 1, 0);
 	private expanded = false;
+	private readonly message: InjectedPromptMessage;
+	private readonly markdownTheme: MarkdownTheme;
 
-	constructor(
-		private readonly message: InjectedPromptMessage,
-		private readonly markdownTheme: MarkdownTheme = getMarkdownTheme(),
-	) {
+	constructor(message: InjectedPromptMessage, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
 		super();
+		this.message = message;
+		this.markdownTheme = markdownTheme;
 		this.addChild(new Spacer(1));
 		this.addChild(this.content);
 		this.updateDisplay();

@@ -1,14 +1,14 @@
 import { Container, setKeybindings } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { KeybindingsManager } from "../src/core/keybindings.js";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
 import {
 	BrandSplashHeader,
 	getRandomStartHint,
 	InteractiveMode,
 	START_HINTS,
-} from "../src/modes/interactive/interactive-mode.js";
-import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.js";
+} from "../src/modes/interactive/interactive-mode.ts";
+import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 describe("InteractiveMode startup hints", () => {
 	beforeAll(() => {

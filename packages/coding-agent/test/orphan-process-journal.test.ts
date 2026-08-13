@@ -8,7 +8,7 @@ import {
 	ORPHAN_PROCESS_JOURNAL_ENV,
 	readActiveOrphanProcesses,
 	recordOrphanProcessState,
-} from "../src/core/orphan-process-journal.js";
+} from "../src/core/orphan-process-journal.ts";
 
 const tempDirs: string[] = [];
 const originalJournalPath = process.env[ORPHAN_PROCESS_JOURNAL_ENV];

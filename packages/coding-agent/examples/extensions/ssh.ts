@@ -2,7 +2,7 @@
  * SSH Remote Execution Example
  *
  * Demonstrates delegating tool operations to a remote machine via SSH.
- * When --ssh is provided, edit and bash run on the remote.
+ * When --ssh is provided, read/write/edit/bash run on the remote.
  *
  * Usage:
  *   pi -e ./ssh.ts --ssh user@host
@@ -19,7 +19,11 @@ import {
 	type BashOperations,
 	createBashTool,
 	createEditTool,
+	createReadTool,
+	createWriteTool,
 	type EditOperations,
+	type ReadOperations,
+	type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 
 function sshExec(remote: string, command: string): Promise<Buffer> {
@@ -40,19 +44,38 @@ function sshExec(remote: string, command: string): Promise<Buffer> {
 	});
 }
 
-function createRemoteEditOps(remote: string, remoteCwd: string, localCwd: string): EditOperations {
+function createRemoteReadOps(remote: string, remoteCwd: string, localCwd: string): ReadOperations {
 	const toRemote = (p: string) => p.replace(localCwd, remoteCwd);
 	return {
 		readFile: (p) => sshExec(remote, `cat ${JSON.stringify(toRemote(p))}`),
-		access: (p) =>
-			sshExec(remote, `test -r ${JSON.stringify(toRemote(p))} && test -w ${JSON.stringify(toRemote(p))}`).then(
-				() => {},
-			),
+		access: (p) => sshExec(remote, `test -r ${JSON.stringify(toRemote(p))}`).then(() => {}),
+		detectImageMimeType: async (p) => {
+			try {
+				const r = await sshExec(remote, `file --mime-type -b ${JSON.stringify(toRemote(p))}`);
+				const m = r.toString().trim();
+				return ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(m) ? m : null;
+			} catch {
+				return null;
+			}
+		},
+	};
+}
+
+function createRemoteWriteOps(remote: string, remoteCwd: string, localCwd: string): WriteOperations {
+	const toRemote = (p: string) => p.replace(localCwd, remoteCwd);
+	return {
 		writeFile: async (p, content) => {
 			const b64 = Buffer.from(content).toString("base64");
 			await sshExec(remote, `echo ${JSON.stringify(b64)} | base64 -d > ${JSON.stringify(toRemote(p))}`);
 		},
+		mkdir: (dir) => sshExec(remote, `mkdir -p ${JSON.stringify(toRemote(dir))}`).then(() => {}),
 	};
+}
+
+function createRemoteEditOps(remote: string, remoteCwd: string, localCwd: string): EditOperations {
+	const r = createRemoteReadOps(remote, remoteCwd, localCwd);
+	const w = createRemoteWriteOps(remote, remoteCwd, localCwd);
+	return { readFile: r.readFile, access: r.access, writeFile: w.writeFile };
 }
 
 function createRemoteBashOps(remote: string, remoteCwd: string, localCwd: string): BashOperations {
@@ -92,6 +115,8 @@ export default function (pi: ExtensionAPI) {
 	pi.registerFlag("ssh", { description: "SSH remote: user@host or user@host:/path", type: "string" });
 
 	const localCwd = process.cwd();
+	const localRead = createReadTool(localCwd);
+	const localWrite = createWriteTool(localCwd);
 	const localEdit = createEditTool(localCwd);
 	const localBash = createBashTool(localCwd);
 
@@ -99,6 +124,34 @@ export default function (pi: ExtensionAPI) {
 	let resolvedSsh: { remote: string; remoteCwd: string } | null = null;
 
 	const getSsh = () => resolvedSsh;
+
+	pi.registerTool({
+		...localRead,
+		async execute(id, params, signal, onUpdate, _ctx) {
+			const ssh = getSsh();
+			if (ssh) {
+				const tool = createReadTool(localCwd, {
+					operations: createRemoteReadOps(ssh.remote, ssh.remoteCwd, localCwd),
+				});
+				return tool.execute(id, params, signal, onUpdate);
+			}
+			return localRead.execute(id, params, signal, onUpdate);
+		},
+	});
+
+	pi.registerTool({
+		...localWrite,
+		async execute(id, params, signal, onUpdate, _ctx) {
+			const ssh = getSsh();
+			if (ssh) {
+				const tool = createWriteTool(localCwd, {
+					operations: createRemoteWriteOps(ssh.remote, ssh.remoteCwd, localCwd),
+				});
+				return tool.execute(id, params, signal, onUpdate);
+			}
+			return localWrite.execute(id, params, signal, onUpdate);
+		},
+	});
 
 	pi.registerTool({
 		...localEdit,

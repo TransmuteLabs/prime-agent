@@ -6,14 +6,11 @@
  * - `pi --mode json "prompt"` - JSON event stream
  */
 
-import type { ImageContent } from "@earendil-works/pi-ai";
-import type { AgentSessionRuntime } from "../core/agent-session-runtime.js";
-import { type AgentAutonomousStatus, type AutonomousLimitReason, autonomousLimitReason } from "../core/autonomous.js";
-import { flushRawStdout, writeRawStdout } from "../core/output-guard.js";
-import { killTrackedDetachedChildren } from "../utils/shell.js";
-import { InProcessAgentConnection } from "./agent-connection/in-process-agent-connection.js";
-import type { AgentConnection } from "./agent-connection/types.js";
-import { latestAutonomousGateAttempt, selectHeadlessTerminalResult } from "./headless-completion.js";
+import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
+import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
+import { killTrackedDetachedChildren } from "../utils/shell.ts";
+import { toJsonEvent } from "./json-event.ts";
 
 /**
  * Options for print mode.
@@ -29,133 +26,133 @@ export interface PrintModeOptions {
 	initialImages?: ImageContent[];
 }
 
-function describeAutonomousLimit(status: AgentAutonomousStatus, reason: AutonomousLimitReason): string {
-	if (reason === "maxContinuations") {
-		return `maxContinuations reached (${status.continuationsUsed}/${status.limits.maxContinuations})`;
-	}
-	if (reason === "maxTurns") {
-		return `maxTurns reached (${status.turnsUsed}/${status.limits.maxTurns})`;
-	}
-	if (reason === "maxTokens") {
-		return `maxTokens reached (${status.tokensUsed}/${status.limits.maxTokens})`;
-	}
-	const elapsed = status.startedAt === undefined ? 0 : Math.max(0, Date.now() - status.startedAt);
-	return `timeoutMs reached (${elapsed}/${status.limits.timeoutMs})`;
-}
-
 /**
  * Run in print (single-shot) mode.
  * Sends prompts to the agent and outputs the result.
  */
 export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: PrintModeOptions): Promise<number> {
-	const connection = new InProcessAgentConnection(runtimeHost);
-	return runPrintModeWithConnectionInternal(connection, options, () => connection.bindHeadlessExtensions());
-}
-
-export async function runPrintModeWithConnection(
-	connection: AgentConnection,
-	options: PrintModeOptions,
-): Promise<number> {
-	return runPrintModeWithConnectionInternal(connection, options);
-}
-
-async function runPrintModeWithConnectionInternal(
-	connection: AgentConnection,
-	options: PrintModeOptions,
-	bindHeadlessExtensions?: () => Promise<void>,
-): Promise<number> {
 	const { mode, messages = [], initialMessage, initialImages } = options;
 	let exitCode = 0;
-	let disposed = false;
+	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
+	let unsubscribeBackpressure: (() => void) | undefined;
+	let disposed = false;
 	const signalCleanupHandlers: Array<() => void> = [];
 
-	const disposeConnection = async (): Promise<void> => {
+	const disposeRuntime = async (): Promise<void> => {
 		if (disposed) return;
 		disposed = true;
 		unsubscribe?.();
-		await connection.dispose();
+		unsubscribeBackpressure?.();
+		await runtimeHost.dispose();
 	};
 
-	for (const signal of [
-		"SIGINT",
-		"SIGTERM",
-		...(process.platform === "win32" ? [] : ["SIGHUP"]),
-	] as NodeJS.Signals[]) {
-		const handler = () => {
-			killTrackedDetachedChildren();
-			void disposeConnection().finally(() => {
-				const exitCode = signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143;
-				process.exit(exitCode);
-			});
-		};
-		process.on(signal, handler);
-		signalCleanupHandlers.push(() => process.off(signal, handler));
-	}
+	const registerSignalHandlers = (): void => {
+		const signals: NodeJS.Signals[] = ["SIGTERM"];
+		if (process.platform !== "win32") {
+			signals.push("SIGHUP");
+		}
+
+		for (const signal of signals) {
+			const handler = () => {
+				killTrackedDetachedChildren();
+				void disposeRuntime().finally(() => {
+					process.exit(signal === "SIGHUP" ? 129 : 143);
+				});
+			};
+			process.on(signal, handler);
+			signalCleanupHandlers.push(() => process.off(signal, handler));
+		}
+	};
+
+	registerSignalHandlers();
+
+	runtimeHost.setRebindSession(async () => {
+		await rebindSession();
+	});
+
+	const rebindSession = async (): Promise<void> => {
+		session = runtimeHost.session;
+		await session.bindExtensions({
+			mode: mode === "json" ? "json" : "print",
+			commandContextActions: {
+				waitForIdle: () => session.waitForIdle(),
+				newSession: async (newSessionOptions) => runtimeHost.newSession(newSessionOptions),
+				fork: async (entryId, forkOptions) => {
+					const result = await runtimeHost.fork(entryId, forkOptions);
+					return { cancelled: result.cancelled };
+				},
+				navigateTree: async (targetId, navigateOptions) => {
+					const result = await session.navigateTree(targetId, {
+						summarize: navigateOptions?.summarize,
+						customInstructions: navigateOptions?.customInstructions,
+						replaceInstructions: navigateOptions?.replaceInstructions,
+						label: navigateOptions?.label,
+					});
+					return { cancelled: result.cancelled };
+				},
+				switchSession: async (sessionPath, switchOptions) => {
+					return runtimeHost.switchSession(sessionPath, switchOptions);
+				},
+				reload: async () => {
+					await session.reload();
+				},
+			},
+			onError: (err) => {
+				console.error(`Extension error (${err.extensionPath}): ${err.error}`);
+			},
+		});
+
+		unsubscribe?.();
+		unsubscribeBackpressure?.();
+		unsubscribe = session.subscribe((event) => {
+			if (mode === "json") {
+				writeRawStdout(`${JSON.stringify(toJsonEvent(event))}\n`);
+			}
+		});
+		unsubscribeBackpressure =
+			mode === "json"
+				? session.agent.subscribe(async () => {
+						await waitForRawStdoutBackpressure();
+					})
+				: undefined;
+	};
 
 	try {
 		if (mode === "json") {
-			const header = await connection.getSessionHeader();
+			const header = session.sessionManager.getHeader();
 			if (header) {
 				writeRawStdout(`${JSON.stringify(header)}\n`);
 			}
 		}
 
-		unsubscribe = connection.subscribe((event) => {
-			if (mode === "json" && event.type === "session_event") {
-				writeRawStdout(`${JSON.stringify(event.event)}\n`);
-			}
-			if (event.type === "extension_error") {
-				console.error(`Extension error (${event.extensionPath}): ${event.error}`);
-			}
-		});
-		await bindHeadlessExtensions?.();
+		await rebindSession();
 
 		if (initialMessage) {
-			await connection.promptAndWait(initialMessage, { images: initialImages });
-		}
-		for (const message of messages) {
-			await connection.promptAndWait(message);
+			await session.prompt(initialMessage, { images: initialImages });
 		}
 
-		const autonomousStatus = await connection.waitForHeadlessCompletion();
+		for (const message of messages) {
+			await session.prompt(message);
+		}
+
 		if (mode === "text") {
-			const { primary, compactionOutcomes } = selectHeadlessTerminalResult(await connection.getMessages());
-			if (primary?.role === "assistant") {
-				if (primary.stopReason === "error" || primary.stopReason === "aborted") {
-					console.error(primary.errorMessage || `Request ${primary.stopReason}`);
+			const state = session.state;
+			const lastMessage = state.messages[state.messages.length - 1];
+
+			if (lastMessage?.role === "assistant") {
+				const assistantMsg = lastMessage as AssistantMessage;
+				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
 					exitCode = 1;
 				} else {
-					for (const content of primary.content) {
+					for (const content of assistantMsg.content) {
 						if (content.type === "text") {
 							writeRawStdout(`${content.text}\n`);
 						}
 					}
 				}
-			} else if (primary) {
-				writeRawStdout(`${primary.content}\n`);
-				if (!primary.details.success || primary.details.severity === "error") exitCode = 1;
 			}
-			for (const outcome of compactionOutcomes) {
-				console.error(outcome.content);
-				if (outcome.details.outcome === "failed") exitCode = 1;
-			}
-		}
-
-		const autonomousLimit = autonomousLimitReason(autonomousStatus);
-		if (autonomousStatus.enabled && autonomousStatus.gates.commands.length > 0 && autonomousStatus.lastGateFailure) {
-			const limitText = autonomousLimit
-				? `; autonomous limit reached: ${describeAutonomousLimit(autonomousStatus, autonomousLimit)}`
-				: "";
-			console.error(
-				`Autonomous quality gate still failing after attempt ${latestAutonomousGateAttempt(autonomousStatus)}/${autonomousStatus.gates.maxRetries}: ${autonomousStatus.lastGateFailure.exitText}${limitText}`,
-			);
-			exitCode = 1;
-		} else if (autonomousStatus.enabled && autonomousStatus.gates.commands.length === 0 && autonomousLimit) {
-			console.error(
-				`Autonomous run stopped before terminal evidence; ${describeAutonomousLimit(autonomousStatus, autonomousLimit)}`,
-			);
-			exitCode = 1;
 		}
 
 		return exitCode;
@@ -166,7 +163,7 @@ async function runPrintModeWithConnectionInternal(
 		for (const cleanup of signalCleanupHandlers) {
 			cleanup();
 		}
-		await disposeConnection();
+		await disposeRuntime();
 		await flushRawStdout();
 	}
 }

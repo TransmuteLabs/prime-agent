@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Restored the RLM doctrine system prompt (`prompts/rlm.ts`) as the default agent base prompt, replacing the generic coding-assistant template.
+- Added `--mode acp`: Prime Agent runs as an Agent Client Protocol agent over NDJSON on stdio.
+- Fixed implicit project trust persistence after `/reload` when a project config dir appears mid-session.
+- Added MCP integration manager with catalog OAuth login, `/mcp` host handlers, and skill gating by auth.
+
 ## [0.7.2] - 2026-08-11
 
 - Fixed Down Arrow focusing the Agents View entry before moving a nonempty prompt cursor to the end ([ENG-5147](https://linear.app/primeintellect/issue/ENG-5147/keep-down-arrow-in-the-prompt-until-the-cursor-reaches-the-end)).

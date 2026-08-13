@@ -1,15 +1,11 @@
-import { getLogger } from "@earendil-works/pi-ai";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import ignore from "ignore";
-import { homedir } from "os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "path";
-import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
-import { parseFrontmatter } from "../utils/frontmatter.js";
-import { canonicalizePath } from "../utils/paths.js";
-import type { ResourceDiagnostic } from "./diagnostics.js";
-import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
-
-const log = getLogger("coding-agent.skills");
+import { basename, dirname, join, relative, resolve, sep } from "path";
+import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
+import { parseFrontmatter } from "../utils/frontmatter.ts";
+import { canonicalizePath, resolvePath } from "../utils/paths.ts";
+import type { ResourceDiagnostic } from "./diagnostics.ts";
+import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 
 /** Max name length per spec */
 const MAX_NAME_LENGTH = 64;
@@ -64,9 +60,7 @@ function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
 			if (patterns.length > 0) {
 				ig.add(patterns);
 			}
-		} catch {
-			// Unreadable ignore file: skip it rather than failing skill discovery.
-		}
+		} catch {}
 	}
 }
 
@@ -77,15 +71,7 @@ export interface SkillFrontmatter {
 	[key: string]: unknown;
 }
 
-export type SkillKind = "markdown" | "python";
-
-export interface SkillPythonMetadata {
-	importName: string;
-	packagePath: string;
-	pyprojectPath: string;
-}
-
-interface BaseSkill {
+export interface Skill {
 	name: string;
 	description: string;
 	filePath: string;
@@ -94,20 +80,34 @@ interface BaseSkill {
 	disableModelInvocation: boolean;
 }
 
-export interface MarkdownSkill extends BaseSkill {
-	kind: "markdown";
-	python?: undefined;
+/** Metadata for a Python skill package installable into the IPython kernel. */
+export interface SkillPythonMetadata {
+	importName: string;
+	packagePath: string;
+	pyprojectPath: string;
 }
 
-export interface PythonSkill extends BaseSkill {
-	kind: "python";
-	python: SkillPythonMetadata;
-}
-
-export type Skill = MarkdownSkill | PythonSkill;
-
+/** Runtime view of a Python skill used by the kernel bootstrap / RLM tooling. */
 export interface PythonSkillRuntimeInfo extends SkillPythonMetadata {
 	name: string;
+}
+
+/** Collect Python skill runtime metadata when skills carry optional python metadata. */
+export function getPythonSkillRuntimeInfo(skills: readonly Skill[]): PythonSkillRuntimeInfo[] {
+	return skills.flatMap((skill) => {
+		const python = (skill as Skill & { python?: SkillPythonMetadata }).python;
+		if (!python) {
+			return [];
+		}
+		return [
+			{
+				name: skill.name,
+				importName: python.importName,
+				packagePath: python.packagePath,
+				pyprojectPath: python.pyprojectPath,
+			},
+		];
+	});
 }
 
 export interface LoadSkillsResult {
@@ -119,12 +119,8 @@ export interface LoadSkillsResult {
  * Validate skill name per Agent Skills spec.
  * Returns array of validation error messages (empty if valid).
  */
-function validateName(name: string, parentDirName: string): string[] {
+function validateName(name: string): string[] {
 	const errors: string[] = [];
-
-	if (name !== parentDirName) {
-		errors.push(`name "${name}" does not match parent directory "${parentDirName}"`);
-	}
 
 	if (name.length > MAX_NAME_LENGTH) {
 		errors.push(`name exceeds ${MAX_NAME_LENGTH} characters (${name.length})`);
@@ -189,79 +185,6 @@ function createSkillSourceInfo(filePath: string, baseDir: string, source: string
 		default:
 			return createSyntheticSourceInfo(filePath, { source, baseDir });
 	}
-}
-
-function pythonImportNameForSkill(name: string): string {
-	return name.replaceAll("-", "_");
-}
-
-function isValidPythonImportName(name: string): boolean {
-	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
-}
-
-function detectPythonSkill(
-	skillDir: string,
-	name: string,
-	diagnostics: ResourceDiagnostic[],
-): SkillPythonMetadata | null {
-	const pyprojectPath = join(skillDir, "pyproject.toml");
-	if (!existsSync(pyprojectPath)) {
-		return null;
-	}
-
-	try {
-		if (!statSync(pyprojectPath).isFile()) {
-			return null;
-		}
-	} catch {
-		return null;
-	}
-
-	const importName = pythonImportNameForSkill(name);
-	if (!isValidPythonImportName(importName)) {
-		diagnostics.push({
-			type: "warning",
-			message: `python skill import name "${importName}" is invalid`,
-			path: pyprojectPath,
-		});
-		return null;
-	}
-
-	const packageInitPath = join(skillDir, "src", importName, "__init__.py");
-	try {
-		if (!statSync(packageInitPath).isFile()) {
-			diagnostics.push({
-				type: "warning",
-				message: `python skill package src/${importName}/__init__.py not found`,
-				path: pyprojectPath,
-			});
-			return null;
-		}
-	} catch {
-		diagnostics.push({
-			type: "warning",
-			message: `python skill package src/${importName}/__init__.py not found`,
-			path: pyprojectPath,
-		});
-		return null;
-	}
-
-	return {
-		importName,
-		packagePath: skillDir,
-		pyprojectPath,
-	};
-}
-
-export function getPythonSkillRuntimeInfo(skills: readonly Skill[]): PythonSkillRuntimeInfo[] {
-	return skills
-		.filter((skill): skill is PythonSkill => skill.kind === "python")
-		.map((skill) => ({
-			name: skill.name,
-			importName: skill.python.importName,
-			packagePath: skill.python.packagePath,
-			pyprojectPath: skill.python.pyprojectPath,
-		}));
 }
 
 /**
@@ -376,12 +299,7 @@ function loadSkillsFromDirInternal(
 			}
 			diagnostics.push(...result.diagnostics);
 		}
-	} catch (error) {
-		log.warn("skill directory scan failed", {
-			dir,
-			error: error instanceof Error ? error.message : String(error),
-		});
-	}
+	} catch {}
 
 	return { skills, diagnostics };
 }
@@ -408,7 +326,7 @@ function loadSkillFromFile(
 		const name = frontmatter.name || parentDirName;
 
 		// Validate name
-		const nameErrors = validateName(name, parentDirName);
+		const nameErrors = validateName(name);
 		for (const error of nameErrors) {
 			diagnostics.push({ type: "warning", message: error, path: filePath });
 		}
@@ -418,18 +336,15 @@ function loadSkillFromFile(
 			return { skill: null, diagnostics };
 		}
 
-		const python = basename(filePath) === "SKILL.md" ? detectPythonSkill(skillDir, name, diagnostics) : null;
-		const baseSkill: BaseSkill = {
-			name,
-			description: frontmatter.description,
-			filePath,
-			baseDir: skillDir,
-			sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
-			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
-		};
-
 		return {
-			skill: python ? { ...baseSkill, kind: "python", python } : { ...baseSkill, kind: "markdown" },
+			skill: {
+				name,
+				description: frontmatter.description,
+				filePath,
+				baseDir: skillDir,
+				sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
+				disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+			},
 			diagnostics,
 		};
 	} catch (error) {
@@ -456,8 +371,7 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
 
 	const lines = [
 		"\n\nThe following skills provide specialized instructions for specific tasks.",
-		"Use ipython to inspect a skill's file when the task matches its description.",
-		"Skills with a python_import are prepared in the persistent IPython kernel when available and can be called directly by that import name.",
+		"Use the read tool to load a skill's file when the task matches its description.",
 		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
 		"",
 		"<available_skills>",
@@ -466,10 +380,6 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
 	for (const skill of visibleSkills) {
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
-		lines.push(`    <type>${skill.kind}</type>`);
-		if (skill.kind === "python") {
-			lines.push(`    <python_import>${escapeXml(skill.python.importName)}</python_import>`);
-		}
 		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
 		lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
 		lines.push("  </skill>");
@@ -500,35 +410,21 @@ export interface LoadSkillsOptions {
 	includeDefaults: boolean;
 }
 
-function normalizePath(input: string): string {
-	const trimmed = input.trim();
-	if (trimmed === "~") return homedir();
-	if (trimmed.startsWith("~/")) return join(homedir(), trimmed.slice(2));
-	if (trimmed.startsWith("~")) return join(homedir(), trimmed.slice(1));
-	return trimmed;
-}
-
-function resolveSkillPath(p: string, cwd: string): string {
-	const normalized = normalizePath(p);
-	return isAbsolute(normalized) ? normalized : resolve(cwd, normalized);
-}
-
 /**
  * Load skills from all configured locations.
  * Returns skills and any validation diagnostics.
  */
 export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
-	const { cwd, agentDir, skillPaths, includeDefaults } = options;
+	const { agentDir, skillPaths, includeDefaults } = options;
 
 	// Resolve agentDir - if not provided, use default from config
-	const resolvedAgentDir = agentDir ?? getAgentDir();
+	const resolvedCwd = resolvePath(options.cwd);
+	const resolvedAgentDir = resolvePath(agentDir ?? getAgentDir());
 
 	const skillMap = new Map<string, Skill>();
 	const realPathSet = new Set<string>();
-	const pythonImportMap = new Map<string, Skill>();
 	const allDiagnostics: ResourceDiagnostic[] = [];
 	const collisionDiagnostics: ResourceDiagnostic[] = [];
-	const pythonImportDiagnostics: ResourceDiagnostic[] = [];
 
 	function addSkills(result: LoadSkillsResult) {
 		allDiagnostics.push(...result.diagnostics);
@@ -557,29 +453,17 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 			} else {
 				skillMap.set(skill.name, skill);
 				realPathSet.add(realPath);
-				if (skill.kind === "python") {
-					const existingPythonSkill = pythonImportMap.get(skill.python.importName);
-					if (existingPythonSkill) {
-						pythonImportDiagnostics.push({
-							type: "warning",
-							message: `python import name "${skill.python.importName}" is shared by skills "${existingPythonSkill.name}" and "${skill.name}"`,
-							path: skill.filePath,
-						});
-					} else {
-						pythonImportMap.set(skill.python.importName, skill);
-					}
-				}
 			}
 		}
 	}
 
 	if (includeDefaults) {
 		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
-		addSkills(loadSkillsFromDirInternal(resolve(cwd, CONFIG_DIR_NAME, "skills"), "project", true));
+		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", true));
 	}
 
 	const userSkillsDir = join(resolvedAgentDir, "skills");
-	const projectSkillsDir = resolve(cwd, CONFIG_DIR_NAME, "skills");
+	const projectSkillsDir = resolve(resolvedCwd, CONFIG_DIR_NAME, "skills");
 
 	const isUnderPath = (target: string, root: string): boolean => {
 		const normalizedRoot = resolve(root);
@@ -599,7 +483,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	};
 
 	for (const rawPath of skillPaths) {
-		const resolvedPath = resolveSkillPath(rawPath, cwd);
+		const resolvedPath = resolvePath(rawPath, resolvedCwd, { trim: true });
 		if (!existsSync(resolvedPath)) {
 			allDiagnostics.push({ type: "warning", message: "skill path does not exist", path: resolvedPath });
 			continue;
@@ -628,6 +512,6 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 
 	return {
 		skills: Array.from(skillMap.values()),
-		diagnostics: [...allDiagnostics, ...collisionDiagnostics, ...pythonImportDiagnostics],
+		diagnostics: [...allDiagnostics, ...collisionDiagnostics],
 	};
 }

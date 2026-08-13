@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { fuzzyFilter, fuzzyFilterScored, fuzzyMatch } from "../src/fuzzy.js";
+import { fuzzyFilter, fuzzyMatch } from "../src/fuzzy.ts";
 
 describe("fuzzyMatch", () => {
 	it("empty query matches everything with score 0", () => {
@@ -102,32 +102,11 @@ describe("fuzzyFilter", () => {
 		assert.ok(result.map((r) => r.name).includes("foo"));
 		assert.ok(result.map((r) => r.name).includes("foobar"));
 	});
-});
 
-describe("fuzzyFilterScored", () => {
-	it("empty query returns all items with score 0", () => {
-		const items = ["apple", "banana"];
-		const result = fuzzyFilterScored(items, "", (x: string) => x);
-		assert.deepStrictEqual(
-			result.map((r) => r.item),
-			items,
-		);
-		assert.ok(result.every((r) => r.score === 0));
-	});
+	it("matches slash-separated provider/model queries against reordered text", () => {
+		const item = { id: "gpt-5.5", provider: "openai-codex" };
+		const result = fuzzyFilter([item], "openai-codex/gpt-5.5", (model) => `${model.id} ${model.provider}`);
 
-	it("returns scores sorted best-first", () => {
-		const items = ["a_p_p", "app"];
-		const result = fuzzyFilterScored(items, "app", (x: string) => x);
-		assert.strictEqual(result[0]?.item, "app");
-		assert.ok(result[0].score <= (result[1]?.score ?? Infinity));
-	});
-
-	it("assigns equal scores to equally-good matches, enabling a stable tie-break", () => {
-		// glm-5 / glm-5.1 / glm-5.2 all match "glm" identically; caller breaks the tie.
-		const items = ["glm-5", "glm-5.1", "glm-5.2"];
-		const result = fuzzyFilterScored(items, "glm", (x: string) => x);
-		assert.strictEqual(result.length, 3);
-		assert.strictEqual(result[0]?.score, result[1]?.score);
-		assert.strictEqual(result[1]?.score, result[2]?.score);
+		assert.deepStrictEqual(result, [item]);
 	});
 });

@@ -1,4 +1,4 @@
-import { APP_NAME } from "../config.js";
+import { APP_NAME } from "../config.ts";
 
 export interface CommandSpec {
 	path: readonly string[];

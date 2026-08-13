@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
 	type BranchSummaryEntry,
+	buildContextEntries,
 	buildSessionContext,
 	type CompactionEntry,
+	type CustomEntry,
 	type ModelChangeEntry,
-	type ServiceTierChangeEntry,
 	type SessionEntry,
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
-} from "../../src/core/session-manager.js";
+} from "../../src/core/session-manager.ts";
 
 function msg(id: string, parentId: string | null, role: "user" | "assistant", text: string): SessionMessageEntry {
 	const base = { type: "message" as const, id, parentId, timestamp: "2025-01-01T00:00:00Z" };
@@ -53,6 +54,10 @@ function branchSummary(id: string, parentId: string | null, summary: string, fro
 	return { type: "branch_summary", id, parentId, timestamp: "2025-01-01T00:00:00Z", summary, fromId };
 }
 
+function custom(id: string, parentId: string | null, customType: string, data?: unknown): CustomEntry {
+	return { type: "custom", id, parentId, timestamp: "2025-01-01T00:00:00Z", customType, data };
+}
+
 function thinkingLevel(id: string, parentId: string | null, level: string): ThinkingLevelChangeEntry {
 	return { type: "thinking_level_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", thinkingLevel: level };
 }
@@ -61,17 +66,12 @@ function modelChange(id: string, parentId: string | null, provider: string, mode
 	return { type: "model_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", provider, modelId };
 }
 
-function serviceTier(id: string, parentId: string | null, tier: "default" | "priority"): ServiceTierChangeEntry {
-	return { type: "service_tier_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", serviceTier: tier };
-}
-
 describe("buildSessionContext", () => {
 	describe("trivial cases", () => {
 		it("empty entries returns empty context", () => {
 			const ctx = buildSessionContext([]);
 			expect(ctx.messages).toEqual([]);
 			expect(ctx.thinkingLevel).toBe("off");
-			expect(ctx.serviceTier).toBe("default");
 			expect(ctx.model).toBeNull();
 		});
 
@@ -103,18 +103,6 @@ describe("buildSessionContext", () => {
 			const ctx = buildSessionContext(entries);
 			expect(ctx.thinkingLevel).toBe("high");
 			expect(ctx.messages).toHaveLength(2);
-		});
-
-		it("tracks service tier changes on the active branch", () => {
-			const entries: SessionEntry[] = [
-				msg("1", null, "user", "hello"),
-				serviceTier("2", "1", "priority"),
-				msg("3", "2", "assistant", "fast response"),
-				serviceTier("4", "1", "default"),
-			];
-
-			expect(buildSessionContext(entries, "3").serviceTier).toBe("priority");
-			expect(buildSessionContext(entries, "4").serviceTier).toBe("default");
 		});
 
 		it("tracks model from assistant message", () => {
@@ -171,19 +159,6 @@ describe("buildSessionContext", () => {
 			expect((ctx.messages[0] as any).summary).toContain("Empty summary");
 		});
 
-		it("carries customInstructions onto the summary message", () => {
-			const entries: SessionEntry[] = [
-				msg("1", null, "user", "first"),
-				msg("2", "1", "assistant", "response"),
-				{ ...compaction("3", "2", "Summary", "1"), customInstructions: "focus on the auth refactor" },
-				msg("4", "3", "user", "second"),
-			];
-			const ctx = buildSessionContext(entries);
-
-			expect((ctx.messages[0] as any).summary).toContain("Summary");
-			expect((ctx.messages[0] as any).customInstructions).toBe("focus on the auth refactor");
-		});
-
 		it("multiple compactions uses latest", () => {
 			const entries: SessionEntry[] = [
 				msg("1", null, "user", "a"),
@@ -199,6 +174,37 @@ describe("buildSessionContext", () => {
 			// Should use second summary, keep from 4
 			expect(ctx.messages).toHaveLength(4);
 			expect((ctx.messages[0] as any).summary).toContain("Second summary");
+		});
+
+		it("buildContextEntries returns compaction-aware entries including custom entries", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				custom("2", "1", "old-state", { hidden: true }),
+				msg("3", "2", "assistant", "response1"),
+				custom("4", "3", "kept-card", { title: "Kept" }),
+				msg("5", "4", "user", "second"),
+				compaction("6", "5", "Summary", "4"),
+				custom("7", "6", "after-card", { title: "After" }),
+				msg("8", "7", "assistant", "response2"),
+			];
+
+			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["6", "4", "5", "7", "8"]);
+			const ctx = buildSessionContext(entries);
+			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user", "assistant"]);
+		});
+
+		it("keeps settings from the full path after compaction", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				thinkingLevel("2", "1", "high"),
+				msg("3", "2", "assistant", "response1"),
+				msg("4", "3", "user", "second"),
+				compaction("5", "4", "Summary", "4"),
+			];
+
+			const ctx = buildSessionContext(entries);
+			expect(ctx.thinkingLevel).toBe("high");
+			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user"]);
 		});
 	});
 

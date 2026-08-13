@@ -10,7 +10,7 @@ import {
 	getKernelVenvDir,
 	type KernelPythonSkill,
 	resolveRuntimeIdentity,
-} from "../src/core/kernel/bootstrap.js";
+} from "../src/core/kernel/bootstrap.ts";
 
 let tempDir = "";
 let originalEnv: NodeJS.ProcessEnv;

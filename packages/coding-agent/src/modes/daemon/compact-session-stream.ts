@@ -1,5 +1,5 @@
 import { type AssistantMessage, type AssistantMessageEvent, parseStreamingJson } from "@earendil-works/pi-ai";
-import type { DaemonEventMeta, DaemonOutbound } from "./daemon-protocol.js";
+import type { DaemonEventMeta, DaemonOutbound } from "./daemon-protocol.ts";
 
 type SessionEvent = Extract<DaemonOutbound, { type: "session_event" }>["event"];
 type MessageUpdateEvent = Extract<SessionEvent, { type: "message_update" }>;

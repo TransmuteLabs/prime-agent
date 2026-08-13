@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { KernelManager } from "../src/core/kernel/index.js";
-import { buildRlmBootstrapCode } from "../src/core/tools/ipython.js";
+import { KernelManager } from "../src/core/kernel/index.ts";
+import { buildRlmBootstrapCode } from "../src/core/tools/ipython.ts";
 
 describe("IPython RLM bootstrap", () => {
 	it("pre-imports asyncio so the prompt's subagent patterns work without a manual import", () => {

@@ -1,5 +1,5 @@
-import type { ToolDefinition } from "../../core/extensions/index.js";
-import type { AgentConnectionToolDefinition } from "./types.js";
+import type { ToolDefinition } from "../../core/extensions/index.ts";
+import type { AgentConnectionToolDefinition } from "./types.ts";
 
 export function createAgentConnectionToolDefinition(
 	definition: ToolDefinition | undefined,
@@ -16,8 +16,8 @@ export function createAgentConnectionToolDefinition(
 		...(definition.promptGuidelines !== undefined ? { promptGuidelines: [...definition.promptGuidelines] } : {}),
 		parameters: definition.parameters,
 		...(definition.renderShell !== undefined ? { renderShell: definition.renderShell } : {}),
-		...(definition.replayBuiltInToolName !== undefined
-			? { replayBuiltInToolName: definition.replayBuiltInToolName }
+		...("replayBuiltInToolName" in definition && definition.replayBuiltInToolName !== undefined
+			? { replayBuiltInToolName: String(definition.replayBuiltInToolName) }
 			: {}),
 	};
 }

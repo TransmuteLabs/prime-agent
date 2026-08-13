@@ -13,7 +13,7 @@ vi.mock("node:fs", async (importOriginal) => {
 	};
 });
 
-const { readLinesAsBuffers } = await import("../src/utils/file-lines.js");
+const { readLinesAsBuffers } = await import("../src/utils/file-lines.ts");
 
 afterEach(() => {
 	fsMocks.createReadStream.mockReset();

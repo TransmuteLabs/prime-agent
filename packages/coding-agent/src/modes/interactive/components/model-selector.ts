@@ -9,9 +9,9 @@ import {
 	Text,
 	type TUI,
 } from "@earendil-works/pi-tui";
-import type { ModelRegistry } from "../../../core/model-registry.js";
-import { theme } from "../theme/theme.js";
-import { keyHint } from "./keybinding-hints.js";
+import type { ModelRegistry } from "../../../core/model-registry.ts";
+import { theme } from "../theme/theme.ts";
+import { keyHint } from "./keybinding-hints.ts";
 import {
 	getMenuListLayout,
 	MenuList,
@@ -19,8 +19,8 @@ import {
 	MenuRow,
 	MenuSearchInput,
 	type MenuViewportProvider,
-} from "./menu-panel.js";
-import { shouldTreatAsBack } from "./modal-back.js";
+} from "./menu-panel.ts";
+import { shouldTreatAsBack } from "./modal-back.ts";
 
 interface ModelItem {
 	provider: string;

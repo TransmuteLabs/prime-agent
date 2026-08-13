@@ -1,6 +1,6 @@
-import { matchesSavedSessionSelector, normalizeSessionId } from "./session-id.js";
-import type { SessionInfo } from "./session-manager.js";
-import { SessionManager } from "./session-manager.js";
+import { matchesSavedSessionSelector, normalizeSessionId } from "./session-id.ts";
+import type { SessionInfo } from "./session-manager.ts";
+import { SessionManager } from "./session-manager.ts";
 
 export type ResolvedSession =
 	| { type: "path"; path: string }
@@ -8,36 +8,36 @@ export type ResolvedSession =
 	| { type: "global"; path: string; cwd: string };
 
 export class SessionSelectorError extends Error {
-	constructor(
-		message: string,
-		readonly selector: string,
-	) {
+	readonly selector: string;
+
+	constructor(message: string, selector: string) {
 		super(message);
+		this.selector = selector;
 		this.name = "SessionSelectorError";
 	}
 }
 
 export class SessionSelectorNotFoundError extends SessionSelectorError {
-	constructor(
-		selector: string,
-		readonly suggestion?: string,
-	) {
+	readonly suggestion?: string;
+
+	constructor(selector: string, suggestion?: string) {
 		super(`No session found matching '${selector}'`, selector);
+		this.suggestion = suggestion;
 		this.name = "SessionSelectorNotFoundError";
 	}
 }
 
 export class SessionSelectorAmbiguousError extends SessionSelectorError {
-	constructor(
-		selector: string,
-		readonly matches: readonly SessionInfo[],
-	) {
+	readonly matches: readonly SessionInfo[];
+
+	constructor(selector: string, matches: readonly SessionInfo[]) {
 		super(
 			`Ambiguous saved session "${selector}": matches ${matches
 				.map((session) => `${session.id}${session.name ? ` (${session.name})` : ""}`)
 				.join(", ")}`,
 			selector,
 		);
+		this.matches = matches;
 		this.name = "SessionSelectorAmbiguousError";
 	}
 }

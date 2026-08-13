@@ -4,8 +4,8 @@ import { createReadStream } from "node:fs";
 import { lstat, readlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AssistantMessage, Usage, UserMessage } from "@earendil-works/pi-ai";
-import { waitForChildProcess } from "../utils/child-process.js";
-import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from "../utils/shell.js";
+import { waitForChildProcess } from "../utils/child-process.ts";
+import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from "../utils/shell.ts";
 
 export interface AgentAutonomousConfig {
 	enabled?: boolean;

@@ -3,11 +3,29 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { BashOperations } from "../../src/core/tools/bash.js";
-import { createHarness, getMessageText, type Harness } from "./harness.js";
+import type { BashOperations } from "../../src/core/tools/bash.ts";
+import { createHarness, type Harness } from "./harness.ts";
 
 function getEntryTypes(harness: Harness): string[] {
 	return harness.sessionManager.getEntries().map((entry) => entry.type);
+}
+
+interface ControlledBashInvocation {
+	signal: AbortSignal | undefined;
+	finish: () => void;
+}
+
+function createControlledBashOperations(invocations: ControlledBashInvocation[]): BashOperations {
+	return {
+		exec: async (_command, _cwd, options) => {
+			return await new Promise<{ exitCode: number | null }>((resolve) => {
+				invocations.push({
+					signal: options.signal,
+					finish: () => resolve({ exitCode: 0 }),
+				});
+			});
+		},
+	};
 }
 
 describe("AgentSession bash and persistence characterization", () => {
@@ -85,8 +103,8 @@ describe("AgentSession bash and persistence characterization", () => {
 		releaseToolExecution?.();
 		await firstPrompt;
 
-		expect(harness.session.hasPendingBashMessages).toBe(true);
-		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(false);
+		expect(harness.session.hasPendingBashMessages).toBe(false);
+		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(true);
 
 		await harness.session.prompt("next turn");
 
@@ -129,6 +147,52 @@ describe("AgentSession bash and persistence characterization", () => {
 
 		const result = await bashPromise;
 		expect(result.cancelled).toBe(true);
+		expect(harness.session.isBashRunning).toBe(false);
+	});
+
+	it("keeps newer bash execution tracked when an older execution finishes", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const invocations: ControlledBashInvocation[] = [];
+		const operations = createControlledBashOperations(invocations);
+
+		const firstBash = harness.session.executeBash("first", undefined, { operations });
+		const secondBash = harness.session.executeBash("second", undefined, { operations });
+
+		invocations[0].finish();
+		const firstResult = await firstBash;
+		const runningAfterFirstSettles = harness.session.isBashRunning;
+
+		harness.session.abortBash();
+		const secondWasAborted = invocations[1].signal?.aborted;
+		invocations[1].finish();
+		const secondResult = await secondBash;
+
+		expect(firstResult.cancelled).toBe(false);
+		expect(runningAfterFirstSettles).toBe(true);
+		expect(secondWasAborted).toBe(true);
+		expect(secondResult.cancelled).toBe(true);
+		expect(harness.session.isBashRunning).toBe(false);
+	});
+
+	it("aborts all active bash executions", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const invocations: ControlledBashInvocation[] = [];
+		const operations = createControlledBashOperations(invocations);
+
+		const firstBash = harness.session.executeBash("first", undefined, { operations });
+		const secondBash = harness.session.executeBash("second", undefined, { operations });
+
+		harness.session.abortBash();
+		const abortedSignals = invocations.map((invocation) => invocation.signal?.aborted);
+		for (const invocation of invocations) {
+			invocation.finish();
+		}
+		const results = await Promise.all([firstBash, secondBash]);
+
+		expect(abortedSignals).toEqual([true, true]);
+		expect(results.map((result) => result.cancelled)).toEqual([true, true]);
 		expect(harness.session.isBashRunning).toBe(false);
 	});
 
@@ -240,283 +304,34 @@ describe("AgentSession bash and persistence characterization", () => {
 		expect(harness.session.messages[harness.session.messages.length - 1]?.role).toBe("bashExecution");
 	});
 
-	it("emits bash lifecycle events and records the result for runUserBash", async () => {
+	it("streams bash output to the callback and session events", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
-		const events: Array<{ type: string }> = [];
+		const callbackDeltas: string[] = [];
+		const eventUpdates: Array<{ id: string | undefined; delta: string }> = [];
 		const unsubscribe = harness.session.subscribe((event) => {
-			if (event.type === "bash_start" || event.type === "bash_output" || event.type === "bash_end") {
-				events.push(event);
+			if (event.type === "bash_execution_update") {
+				eventUpdates.push({ id: event.id, delta: event.delta });
 			}
-		});
-
-		await harness.session.runUserBash("echo lifecycle", { excludeFromContext: true });
-		unsubscribe();
-
-		expect(events[0]).toMatchObject({ type: "bash_start", command: "echo lifecycle", excludeFromContext: true });
-		expect(events.some((event) => event.type === "bash_output")).toBe(true);
-		expect(events[events.length - 1]).toMatchObject({ type: "bash_end", exitCode: 0, cancelled: false });
-
-		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
-		expect(lastMessage?.role).toBe("bashExecution");
-		if (lastMessage?.role === "bashExecution") {
-			expect(lastMessage.output).toContain("lifecycle");
-			expect(lastMessage.excludeFromContext).toBe(true);
-		}
-	});
-
-	it("reports runUserBash execution failures through bash_end instead of rejecting", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-		const events: Array<{ type: string; errorMessage?: string }> = [];
-		const unsubscribe = harness.session.subscribe((event) => {
-			if (event.type === "bash_end") {
-				events.push(event);
-			}
-		});
-
-		const executeBashSpy = harness.session.executeBash.bind(harness.session);
-		harness.session.executeBash = async () => {
-			throw new Error("spawn failure");
-		};
-		await harness.session.runUserBash("echo unreachable");
-		harness.session.executeBash = executeBashSpy;
-		unsubscribe();
-
-		expect(events).toHaveLength(1);
-		expect(events[0]?.errorMessage).toBe("spawn failure");
-
-		// The failure is persisted like every other outcome
-		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
-		expect(lastMessage?.role).toBe("bashExecution");
-		if (lastMessage?.role === "bashExecution") {
-			expect(lastMessage.output).toContain("spawn failure");
-		}
-	});
-
-	it("cancels runUserBash when abortBash arrives before execution starts", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-		const events: Array<{ type: string; cancelled?: boolean }> = [];
-		const unsubscribe = harness.session.subscribe((event) => {
-			if (event.type === "bash_output" || event.type === "bash_end") {
-				events.push(event);
-			}
-		});
-
-		// Abort lands during the user_bash extension dispatch, before any process spawns
-		const run = harness.session.runUserBash("echo should-not-run");
-		harness.session.abortBash();
-		await run;
-		unsubscribe();
-
-		expect(events).toEqual([{ type: "bash_end", exitCode: undefined, cancelled: true, truncated: false }]);
-		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
-		expect(lastMessage?.role).toBe("bashExecution");
-		if (lastMessage?.role === "bashExecution") {
-			expect(lastMessage.cancelled).toBe(true);
-			expect(lastMessage.output).toBe("");
-		}
-	});
-
-	it("releases the bash slot before bash_end reaches subscribers", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-		let runningAtBashEnd: boolean | undefined;
-		const unsubscribe = harness.session.subscribe((event) => {
-			if (event.type === "bash_end") {
-				runningAtBashEnd = harness.session.isBashRunning;
-			}
-		});
-
-		await harness.session.runUserBash("echo done");
-		unsubscribe();
-
-		expect(runningAtBashEnd).toBe(false);
-	});
-
-	it("drains queued agent-message prompts after user bash finishes", async () => {
-		let releaseBash: (() => void) | undefined;
-		let bashStarted: (() => void) | undefined;
-		const bashStartedPromise = new Promise<void>((resolve) => {
-			bashStarted = resolve;
 		});
 		const operations: BashOperations = {
 			exec: async (_command, _cwd, options) => {
-				bashStarted?.();
-				options.onData(Buffer.from("bash output"));
-				await new Promise<void>((resolve) => {
-					releaseBash = resolve;
-				});
+				options.onData(Buffer.from("hello "));
+				options.onData(Buffer.from("world"));
 				return { exitCode: 0 };
 			},
 		};
-		const harness = await createHarness({
-			extensionFactories: [
-				(pi) => {
-					pi.on("user_bash", async () => ({ operations }));
-				},
-			],
+
+		await harness.session.executeBash("custom", (delta) => callbackDeltas.push(delta), {
+			id: "bash-1",
+			operations,
 		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("after bash")]);
-		const agentPrompt =
-			"Agent-to-agent message received.\nSource: agent_message\nTo: Target, active target, session session-target\nMessage id: agentmsg_bash\n\nqueued after bash";
-		const delivery = harness.session.waitForAgentMessagePromptDelivery("agentmsg_bash");
+		unsubscribe();
 
-		const bashRun = harness.session.runUserBash("slow bash");
-		await bashStartedPromise;
-		expect(harness.session.isBashRunning).toBe(true);
-		await harness.session.queueAgentMessagePrompt(agentPrompt, "followUp");
-		expect(harness.session.queuedActionCount).toBe(1);
-
-		releaseBash?.();
-		await bashRun;
-		for (let i = 0; i < 10 && harness.session.queuedActionCount > 0; i++) {
-			await Promise.resolve();
-		}
-		await delivery;
-
-		expect(harness.session.queuedActionCount).toBe(0);
-	});
-
-	it("drains steering before follow-up prompts after user bash finishes", async () => {
-		let releaseBash: (() => void) | undefined;
-		let bashStarted: (() => void) | undefined;
-		const bashStartedPromise = new Promise<void>((resolve) => {
-			bashStarted = resolve;
-		});
-		const operations: BashOperations = {
-			exec: async (_command, _cwd, options) => {
-				bashStarted?.();
-				options.onData(Buffer.from("bash output"));
-				await new Promise<void>((resolve) => {
-					releaseBash = resolve;
-				});
-				return { exitCode: 0 };
-			},
-		};
-		const harness = await createHarness({
-			extensionFactories: [
-				(pi) => {
-					pi.on("user_bash", async () => ({ operations }));
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("after steer"), fauxAssistantMessage("after follow-up")]);
-		const steerPrompt =
-			"Agent-to-agent message received.\nSource: agent_message\nTo: Target, active target, session session-target\nMessage id: agentmsg_bash_steer\n\nsteer after bash";
-		const followUpPrompt =
-			"Agent-to-agent message received.\nSource: agent_message\nTo: Target, active target, session session-target\nMessage id: agentmsg_bash_followup\n\nfollow-up after bash";
-		const steerDelivery = harness.session.waitForAgentMessagePromptDelivery("agentmsg_bash_steer");
-		const followUpDelivery = harness.session.waitForAgentMessagePromptDelivery("agentmsg_bash_followup");
-
-		const bashRun = harness.session.runUserBash("slow bash");
-		await bashStartedPromise;
-		await harness.session.queueAgentMessagePrompt(followUpPrompt, "followUp");
-		await harness.session.queueAgentMessagePrompt(steerPrompt, "steer");
-
-		releaseBash?.();
-		await bashRun;
-		await steerDelivery;
-		await followUpDelivery;
-		await harness.session.waitForIdle();
-
-		const userTexts = harness.session.messages.filter((message) => message.role === "user").map(getMessageText);
-		expect(userTexts.findIndex((text) => text.includes("steer after bash"))).toBeLessThan(
-			userTexts.findIndex((text) => text.includes("follow-up after bash")),
-		);
-		expect(harness.session.queuedActionCount).toBe(0);
-	});
-
-	it("flushes pending bash output before draining queued prompts", async () => {
-		let releaseToolExecution: (() => void) | undefined;
-		const toolRelease = new Promise<void>((resolve) => {
-			releaseToolExecution = resolve;
-		});
-		const waitTool: AgentTool = {
-			name: "wait",
-			label: "Wait",
-			description: "Wait for release",
-			parameters: Type.Object({}),
-			execute: async () => {
-				await toolRelease;
-				return { content: [{ type: "text", text: "released" }], details: {} };
-			},
-		};
-		const harness = await createHarness({ tools: [waitTool] });
-		harnesses.push(harness);
-		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
-			fauxAssistantMessage("turn complete"),
-			fauxAssistantMessage("after bash"),
+		expect(callbackDeltas).toEqual(["hello ", "world"]);
+		expect(eventUpdates).toEqual([
+			{ id: "bash-1", delta: "hello " },
+			{ id: "bash-1", delta: "world" },
 		]);
-		const toolStarted = new Promise<void>((resolve) => {
-			const unsubscribe = harness.session.subscribe((event) => {
-				if (event.type === "tool_execution_start" && event.toolName === "wait") {
-					unsubscribe();
-					resolve();
-				}
-			});
-		});
-		const agentPrompt =
-			"Agent-to-agent message received.\nSource: agent_message\nTo: Target, active target, session session-target\nMessage id: agentmsg_flush_bash\n\nqueued after bash";
-		const delivery = harness.session.waitForAgentMessagePromptDelivery("agentmsg_flush_bash");
-
-		const turn = harness.session.prompt("start");
-		await toolStarted;
-		harness.session.recordBashResult("echo flushed", {
-			output: "flushed output",
-			exitCode: 0,
-			cancelled: false,
-			truncated: false,
-		});
-		await harness.session.queueAgentMessagePrompt(agentPrompt, "followUp");
-		releaseToolExecution?.();
-		await turn;
-		await delivery;
-		await harness.session.waitForIdle();
-
-		const bashIndex = harness.session.messages.findIndex((message) => message.role === "bashExecution");
-		const userIndex = harness.session.messages.findIndex(
-			(message) => message.role === "user" && getMessageText(message).includes("queued after bash"),
-		);
-		expect(bashIndex).toBeGreaterThanOrEqual(0);
-		expect(userIndex).toBeGreaterThan(bashIndex);
-		expect(harness.session.hasPendingBashMessages).toBe(false);
-	});
-
-	it("rejects a second runUserBash issued before the first starts executing", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-
-		// Same-tick overlap: the guard must trip before the first command reaches
-		// executeBash, i.e. during the async user_bash extension dispatch.
-		const first = harness.session.runUserBash("echo first");
-		await expect(harness.session.runUserBash("echo second")).rejects.toThrow("already running");
-		await first;
-
-		const bashMessages = harness.session.messages.filter((message) => message.role === "bashExecution");
-		expect(bashMessages).toHaveLength(1);
-	});
-
-	it("rejects runUserBash while another bash command is running", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-		let releaseExec: (() => void) | undefined;
-		const operations: BashOperations = {
-			exec: async () => {
-				await new Promise<void>((resolve) => {
-					releaseExec = resolve;
-				});
-				return { exitCode: 0 };
-			},
-		};
-
-		const first = harness.session.executeBash("blocked", undefined, { operations });
-		await expect(harness.session.runUserBash("echo nope")).rejects.toThrow("already running");
-		releaseExec?.();
-		await first;
 	});
 });

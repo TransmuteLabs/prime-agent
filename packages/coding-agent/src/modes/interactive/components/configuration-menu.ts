@@ -8,13 +8,13 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import type { AuthStorage } from "../../../core/auth-storage.js";
-import type { ModelRegistry } from "../../../core/model-registry.js";
-import { theme } from "../theme/theme.js";
-import { keyText } from "./keybinding-hints.js";
-import { getMenuPanelInnerWidth } from "./menu-panel.js";
-import { ModelSelectorComponent } from "./model-selector.js";
-import { type AuthSelectorProvider, OAuthSelectorComponent } from "./oauth-selector.js";
+import type { AuthStorage } from "../../../core/auth-storage.ts";
+import type { ModelRegistry } from "../../../core/model-registry.ts";
+import { theme } from "../theme/theme.ts";
+import { keyText } from "./keybinding-hints.ts";
+import { getMenuPanelInnerWidth } from "./menu-panel.ts";
+import { ModelSelectorComponent } from "./model-selector.ts";
+import { type AuthSelectorProvider, OAuthSelectorComponent } from "./oauth-selector.ts";
 
 export const CONFIGURATION_MENU_TABS = ["providers", "models", "mcp-connections"] as const;
 
@@ -52,7 +52,11 @@ const TAB_LABELS: Record<ConfigurationMenuTab, string> = {
 };
 
 class ConfigurationMenuTabBar implements Component {
-	constructor(private readonly getActiveTab: () => ConfigurationMenuTab) {}
+	private readonly getActiveTab: () => ConfigurationMenuTab;
+
+	constructor(getActiveTab: () => ConfigurationMenuTab) {
+		this.getActiveTab = getActiveTab;
+	}
 
 	render(width: number): string[] {
 		return this.getLines(width);
@@ -111,9 +115,11 @@ export class ConfigurationMenuComponent extends Container implements Focusable {
 	private activeTab: ConfigurationMenuTab;
 	private _focused = false;
 	private renderWidth = 78;
+	private readonly options: ConfigurationMenuOptions;
 
-	constructor(private readonly options: ConfigurationMenuOptions) {
+	constructor(options: ConfigurationMenuOptions) {
 		super();
+		this.options = options;
 		this.activeTab = options.initialTab;
 		const tabBar = new ConfigurationMenuTabBar(() => this.activeTab);
 		const getHeaderRows = () => tabBar.getRowCount(getMenuPanelInnerWidth(this.renderWidth)) + 1;

@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createHarness, type Harness } from "./harness.js";
+import { createHarness, type Harness } from "./harness.ts";
 
 /** A promise with its resolve/reject functions exposed. */
 export interface Deferred<T = void> {

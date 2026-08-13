@@ -1,4 +1,4 @@
-import { parseIpythonBashCell } from "./ipython-cell-code.js";
+import { parseIpythonBashCell } from "./ipython-cell-code.ts";
 
 const DESCRIPTOR_MAX_WIDTH = 64;
 

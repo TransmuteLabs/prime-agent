@@ -27,15 +27,15 @@ describe("InteractiveMode execution boundary", () => {
 		const source = await readSource("modes/interactive/interactive-mode.ts");
 
 		expectNoImports(source, [
-			"../../core/agent-session.js",
-			"../../core/agent-session-runtime.js",
-			"../../core/session-manager.js",
-			"../agent-connection/daemon-agent-connection.js",
-			"../agent-connection/in-process-agent-connection.js",
-			"../daemon/daemon-client.js",
-			"../daemon/daemon-mode.js",
-			"../daemon/daemon-protocol.js",
-			"../daemon/daemon-socket.js",
+			"../../core/agent-session.ts",
+			"../../core/agent-session-runtime.ts",
+			"../../core/session-manager.ts",
+			"../agent-connection/daemon-agent-connection.ts",
+			"../agent-connection/in-process-agent-connection.ts",
+			"../daemon/daemon-client.ts",
+			"../daemon/daemon-mode.ts",
+			"../daemon/daemon-protocol.ts",
+			"../daemon/daemon-socket.ts",
 		]);
 	});
 
@@ -43,12 +43,12 @@ describe("InteractiveMode execution boundary", () => {
 		const source = await readSource("modes/agent-connection/types.ts");
 
 		expectNoImports(source, [
-			"../../core/agent-session.js",
-			"../../core/agent-session-runtime.js",
-			"../../core/session-manager.js",
-			"../daemon/daemon-client.js",
-			"../daemon/daemon-protocol.js",
-			"../daemon/daemon-socket.js",
+			"../../core/agent-session.ts",
+			"../../core/agent-session-runtime.ts",
+			"../../core/session-manager.ts",
+			"../daemon/daemon-client.ts",
+			"../daemon/daemon-protocol.ts",
+			"../daemon/daemon-socket.ts",
 		]);
 		expect(source).toContain("Transitional note");
 		expect(source).toContain("not the final hosted/gateway wire protocol");

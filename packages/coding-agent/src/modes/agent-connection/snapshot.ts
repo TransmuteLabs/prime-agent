@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { AgentSession } from "../../core/agent-session.js";
-import type { AgentSessionRuntime } from "../../core/agent-session-runtime.js";
+import type { AgentSession } from "../../core/agent-session.ts";
+import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type {
 	AgentConnectionArtifactReference,
 	AgentConnectionArtifactType,
@@ -11,7 +11,7 @@ import type {
 	AgentConnectionSlashCommand,
 	AgentConnectionSnapshot,
 	AgentConnectionState,
-} from "./types.js";
+} from "./types.ts";
 
 function persistedRecap(sessionManager: {
 	getLatestAgentStatus?: () => { summary: string } | undefined;

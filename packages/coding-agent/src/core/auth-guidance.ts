@@ -1,8 +1,7 @@
 import { join } from "node:path";
-import { getDocsPath } from "../config.js";
+import { getDocsPath } from "../config.ts";
 
 const UNKNOWN_PROVIDER = "unknown";
-export const LOGIN_RECOVERY_MESSAGE = "Run /login to update credentials.";
 
 export function getProviderLoginHelp(): string {
 	return [
@@ -16,18 +15,6 @@ export function formatNoModelsAvailableMessage(): string {
 	return `No models available. ${getProviderLoginHelp()}`;
 }
 
-/**
- * Whether a model fallback message is the "no models available" warning.
- *
- * That warning is a claim about current state (no model could be resolved), so
- * consumers must re-check it against the live session before showing it; the
- * other fallback variants ("Could not restore model X. Using Y") are one-time
- * startup notices that stay valid.
- */
-export function isNoModelsAvailableMessage(message: string | undefined): boolean {
-	return message === formatNoModelsAvailableMessage();
-}
-
 export function formatNoModelSelectedMessage(): string {
 	return `No model selected.\n\n${getProviderLoginHelp()}\n\nThen use /model to select a model.`;
 }
@@ -36,6 +23,8 @@ export function formatNoApiKeyFoundMessage(provider: string): string {
 	const providerDisplay = provider === UNKNOWN_PROVIDER ? "the selected model" : provider;
 	return `No API key found for ${providerDisplay}.\n\n${getProviderLoginHelp()}`;
 }
+
+export const LOGIN_RECOVERY_MESSAGE = "Run /login to update credentials.";
 
 export function formatAuthenticationFailedMessage(provider: string): string {
 	return (
@@ -58,4 +47,8 @@ export function addLoginGuidanceToAuthError(message: string): string {
 		return message;
 	}
 	return `${message}\n\n${LOGIN_RECOVERY_MESSAGE}`;
+}
+
+export function isNoModelsAvailableMessage(message: string): boolean {
+	return message.includes("No models") || message.toLowerCase().includes("no models available");
 }

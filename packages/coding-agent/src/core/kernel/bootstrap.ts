@@ -8,8 +8,8 @@ import { stderr, stdin } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { getPackageDir } from "../../config.js";
-import type { PythonSkillRuntimeInfo } from "../skills.js";
+import { getPackageDir } from "../../config.ts";
+import type { PythonSkillRuntimeInfo } from "../skills.ts";
 
 const BOOTSTRAP_SCHEMA = 8;
 const PYTHON_VERSION = "3.11";

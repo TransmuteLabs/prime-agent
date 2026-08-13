@@ -11,7 +11,7 @@ import {
 	loadPrimeCliConfig,
 	loginPrimeAgentTraces,
 	loginPrimeInference,
-} from "../src/core/prime-inference-auth.js";
+} from "../src/core/prime-inference-auth.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {

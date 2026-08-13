@@ -1,5 +1,5 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import type { CustomMessage } from "./messages.js";
+import type { CustomMessage } from "./messages.ts";
 
 export const GOAL_STATE_CUSTOM_TYPE = "thread_goal_state";
 export const GOAL_CONTEXT_CUSTOM_TYPE = "goal_context";

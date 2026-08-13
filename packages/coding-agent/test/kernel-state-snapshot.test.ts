@@ -8,7 +8,7 @@ import {
 	parseRestoreResult,
 	parseSnapshotResult,
 	snapshotPathIn,
-} from "../src/core/kernel/state-snapshot.js";
+} from "../src/core/kernel/state-snapshot.ts";
 
 // Kept in sync with the marker the Python helpers print.
 const MARKER = "__PRIME_AGENT_KERNEL_STATE__";

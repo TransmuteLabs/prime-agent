@@ -1,3 +1,4 @@
+import { getLogger } from "./prime-port-ai-compat.ts";
 /**
  * Background daemon mode.
  *
@@ -23,15 +24,15 @@ import {
 import { readFile } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { type Api, getLogger, type Model } from "@earendil-works/pi-ai";
-import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.js";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.ts";
 import {
 	appendRotatingLog,
 	getCronJobsPath,
 	getDaemonLogPath,
 	getDaemonUpdateRestartManifestPath,
 	VERSION,
-} from "../../config.js";
+} from "../../config.ts";
 import {
 	AGENT_FAMILY_REACH_ERROR,
 	AGENT_MESSAGE_SOURCE,
@@ -64,7 +65,7 @@ import {
 	isAgentSessionMessagePrompt,
 	normalizeAgentSessionMessage,
 	sessionNameReservationKey,
-} from "../../core/agent-messages.js";
+} from "../../core/agent-messages.ts";
 import {
 	type AgentObserveAgentSnapshot,
 	type AgentObserveAgentSummary,
@@ -75,15 +76,15 @@ import {
 	createAgentObserveMessagePreview,
 	normalizeObserveLimit,
 	normalizeObserveMaxChars,
-} from "../../core/agent-observe.js";
-import { type AgentSession, type PromptOptions, rlmChildLabel } from "../../core/agent-session.js";
-import { type AgentSessionRuntimeConfig, mergeAgentSessionRuntimeConfig } from "../../core/agent-session-config.js";
+} from "../../core/agent-observe.ts";
+import { type AgentSession, type PromptOptions, rlmChildLabel } from "../../core/agent-session.ts";
+import { type AgentSessionRuntimeConfig, mergeAgentSessionRuntimeConfig } from "../../core/agent-session-config.ts";
 import {
 	type AgentSessionRuntime,
 	type AgentSessionRuntimeMetadata,
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionRuntime,
-} from "../../core/agent-session-runtime.js";
+} from "../../core/agent-session-runtime.ts";
 import {
 	type AgentCronJob,
 	AgentCronJobStore,
@@ -97,49 +98,49 @@ import {
 	normalizeHeartbeatSchedule,
 	resolveHeartbeatStreamingBehavior,
 	shouldDeferHeartbeatCronJob,
-} from "../../core/cron-jobs.js";
-import { ORPHAN_PROCESS_JOURNAL_ENV } from "../../core/orphan-process-journal.js";
-import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../../core/prompt-admission.js";
-import type { CreateRlmSubagentRuntimeOptions, SubagentRuntimeHost } from "../../core/rlm-runtime.js";
+} from "../../core/cron-jobs.ts";
+import { ORPHAN_PROCESS_JOURNAL_ENV } from "../../core/orphan-process-journal.ts";
+import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../../core/prompt-admission.ts";
+import type { CreateRlmSubagentRuntimeOptions, SubagentRuntimeHost } from "../../core/rlm-runtime.ts";
 import {
 	canPassivateSession,
 	type IdleEvictionMinutes,
 	type SessionPassivationSnapshot,
-} from "../../core/session-action-store.js";
-import { deleteSessionFile } from "../../core/session-file-actions.js";
-import { acquireSessionLease, canonicalSessionPath, type SessionLease } from "../../core/session-lease.js";
+} from "../../core/session-action-store.ts";
+import { deleteSessionFile } from "../../core/session-file-actions.ts";
+import { acquireSessionLease, canonicalSessionPath, type SessionLease } from "../../core/session-lease.ts";
 import {
 	readSessionInfo,
 	resolveSessionRlmDepth,
 	type SessionInfo,
 	SessionManager,
-} from "../../core/session-manager.js";
-import { resolveSessionPath } from "../../core/session-resolver.js";
-import type { SessionStats } from "../../core/session-stats.js";
-import { type SideQuestionRun, startSideQuestion } from "../../core/side-question.js";
-import { killTrackedDetachedChildren } from "../../utils/shell.js";
+} from "../../core/session-manager.ts";
+import { resolveSessionPath } from "../../core/session-resolver.ts";
+import type { SessionStats } from "../../core/session-stats.ts";
+import { type SideQuestionRun, startSideQuestion } from "../../core/side-question.ts";
+import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import {
 	createAgentConnectionCommands,
 	createAgentConnectionResourceSnapshot,
 	createAgentConnectionState,
-} from "../agent-connection/snapshot.js";
-import { createAgentConnectionToolDefinition } from "../agent-connection/tool-definition.js";
-import type { AgentConnectionHeartbeat, AgentConnectionRlmChildAgentSnapshot } from "../agent-connection/types.js";
-import { waitForHeadlessCompletion } from "../headless-completion.js";
-import { attachJsonlLineReader, serializeJsonLine } from "../rpc/jsonl.js";
-import { encodePrivateFrame, PrivateFrameDecoder } from "../session-worker/private-framing.js";
+} from "../agent-connection/snapshot.ts";
+import { createAgentConnectionToolDefinition } from "../agent-connection/tool-definition.ts";
+import type { AgentConnectionHeartbeat, AgentConnectionRlmChildAgentSnapshot } from "../agent-connection/types.ts";
+import { waitForHeadlessCompletion } from "../headless-completion.ts";
+import { attachJsonlLineReader, serializeJsonLine } from "../rpc/jsonl.ts";
+import { encodePrivateFrame, PrivateFrameDecoder } from "../session-worker/private-framing.ts";
 import {
 	type ActiveSessionState,
 	AmbiguousActiveSessionError,
 	createActiveSessionId,
 	type DaemonSocketClient,
 	resolveActiveSessionState,
-} from "./active-session-state.js";
-import { createCompactAssistantDelta } from "./compact-session-stream.js";
-import { DaemonClient } from "./daemon-client.js";
-import { filterClientEnv, withClientEnv } from "./daemon-client-env.js";
-import { deserializeDaemonError, serializeDaemonError } from "./daemon-errors.js";
-import { bindActiveSessionState } from "./daemon-extension-binding.js";
+} from "./active-session-state.ts";
+import { createCompactAssistantDelta } from "./compact-session-stream.ts";
+import { DaemonClient } from "./daemon-client.ts";
+import { filterClientEnv, withClientEnv } from "./daemon-client-env.ts";
+import { deserializeDaemonError, serializeDaemonError } from "./daemon-errors.ts";
+import { bindActiveSessionState } from "./daemon-extension-binding.ts";
 import {
 	createDaemonEventMeta,
 	createDaemonReplayInfo,
@@ -167,8 +168,8 @@ import {
 	salvageDaemonCommandId,
 	success,
 	UPDATE_RESTART_DRAIN_COMMANDS,
-} from "./daemon-protocol.js";
-import { getDaemonRuntimeIdentity } from "./daemon-runtime-identity.js";
+} from "./daemon-protocol.ts";
+import { getDaemonRuntimeIdentity } from "./daemon-runtime-identity.ts";
 import {
 	buildRlmChildSnapshots,
 	buildSessionList,
@@ -177,8 +178,8 @@ import {
 	isActiveSessionBusy,
 	type SessionSummary,
 	summaryForActiveSession,
-} from "./daemon-session-list.js";
-import { DaemonSessionSummarizer } from "./daemon-session-summarizer.js";
+} from "./daemon-session-list.ts";
+import { DaemonSessionSummarizer } from "./daemon-session-summarizer.ts";
 import {
 	cleanupDaemonSocketPath,
 	type DaemonSocketIdentity,
@@ -186,8 +187,8 @@ import {
 	getDaemonSocketIdentity,
 	prepareDaemonSocketPath,
 	restrictDaemonSocketPath,
-} from "./daemon-socket.js";
-import { assertDaemonSupervisorOwnerCurrent, isDaemonShutdownAdmissionActive } from "./daemon-supervisor-ownership.js";
+} from "./daemon-socket.ts";
+import { assertDaemonSupervisorOwnerCurrent, isDaemonShutdownAdmissionActive } from "./daemon-supervisor-ownership.ts";
 import {
 	DAEMON_WORKER_ACTIVE_SESSION_ID_ENV,
 	DAEMON_WORKER_RECOVERY_JOURNAL_ENV,
@@ -199,15 +200,15 @@ import {
 	isDaemonWorkerFrameHeader,
 	SESSION_LEASE_OWNER_ID_ENV,
 	SESSION_LEASES_ENABLED_ENV,
-} from "./daemon-worker-protocol.js";
-import { MutationDrainLatch } from "./mutation-drain-latch.js";
-import { serializeSavedSessionInfo } from "./saved-session-info.js";
+} from "./daemon-worker-protocol.ts";
+import { MutationDrainLatch } from "./mutation-drain-latch.ts";
+import { serializeSavedSessionInfo } from "./saved-session-info.ts";
 import {
 	createSnapshotTranscriptChunks,
 	SNAPSHOT_TARGET_CHUNK_BYTES,
 	type SnapshotTranscriptChunkSource,
-} from "./snapshot-transcript-cache.js";
-import { WorkerRecoveryJournal } from "./worker-recovery-journal.js";
+} from "./snapshot-transcript-cache.ts";
+import { WorkerRecoveryJournal } from "./worker-recovery-journal.ts";
 
 export interface DaemonModeOptions {
 	socketPath?: string;
@@ -223,13 +224,13 @@ export type {
 	DaemonCommand,
 	DaemonOutbound,
 	DaemonResponse,
-} from "./daemon-protocol.js";
+} from "./daemon-protocol.ts";
 export type {
 	SessionActivity,
 	SessionLifecycle,
 	SessionSummary,
-} from "./daemon-session-list.js";
-export { defaultDaemonSocketPath } from "./daemon-socket.js";
+} from "./daemon-session-list.ts";
+export { defaultDaemonSocketPath } from "./daemon-socket.ts";
 
 const structuredLog = getLogger("coding-agent.daemon");
 const WORKER_SNAPSHOT_TERMINAL_DRAIN_TIMEOUT_MS = 1_000;
@@ -522,10 +523,12 @@ export class AgentDaemon {
 	);
 	private readonly recoveryJournal?: WorkerRecoveryJournal;
 
-	constructor(
-		private readonly socketPath: string,
-		private readonly options: DaemonModeOptions,
-	) {
+	private readonly socketPath: string;
+	private readonly options: DaemonModeOptions;
+
+	constructor(socketPath: string, options: DaemonModeOptions) {
+		this.socketPath = socketPath;
+		this.options = options;
 		if (!options.defaultSessionConfig.agentDir) {
 			throw new Error("Daemon config is missing agentDir");
 		}
@@ -1485,25 +1488,37 @@ export class AgentDaemon {
 					sessionLease,
 					sessionOptions: {
 						rlmHeartbeatController: {
-							listRlmHeartbeats: (listOptions) => {
+							listRlmHeartbeats: (listOptions: { includeInactive?: boolean } = {}) => {
 								if (!stateRef) {
 									throw new Error("RLM heartbeat state is not ready for this session yet");
 								}
 								return this.cronStore.listRlmHeartbeats(stateRef.activeSessionId, listOptions);
 							},
-							createRlmHeartbeat: (input) => {
+							createRlmHeartbeat: (input: {
+								instruction: string;
+								interval?: string;
+								label?: string;
+								deliveryMode?: AgentHeartbeatDeliveryMode;
+							}) => {
 								if (!stateRef) {
 									throw new Error("RLM heartbeat state is not ready for this session yet");
 								}
 								return this.createRlmHeartbeatForState(stateRef, input);
 							},
-							updateRlmHeartbeat: (input) => {
+							updateRlmHeartbeat: (input: {
+								id: string;
+								instruction?: string;
+								interval?: string;
+								label?: string;
+								status?: "pause" | "resume";
+								deliveryMode?: AgentHeartbeatDeliveryMode;
+							}) => {
 								if (!stateRef) {
 									throw new Error("RLM heartbeat state is not ready for this session yet");
 								}
 								return this.updateRlmHeartbeatForState(stateRef, input);
 							},
-							deleteRlmHeartbeat: (id) => {
+							deleteRlmHeartbeat: (id: string) => {
 								if (!stateRef) {
 									throw new Error("RLM heartbeat state is not ready for this session yet");
 								}
@@ -2024,7 +2039,7 @@ export class AgentDaemon {
 			return await this.createRuntime({ type: "create", sessionPath: dueJob.sessionFile }, () =>
 				this.isPersistedCronJobRunnable(dueJob.id),
 			);
-		} catch (error) {
+		} catch (error: unknown) {
 			if (error instanceof RuntimeOpenCancelledError) {
 				return undefined;
 			}
@@ -2073,7 +2088,7 @@ export class AgentDaemon {
 			this.rebindCronJobsToState(childState);
 			const reboundJob = this.getRunnableCronJob(job.id);
 			return reboundJob && this.isCronJobRunnableForState(reboundJob, childState, true) ? childState : undefined;
-		} catch (error) {
+		} catch (error: unknown) {
 			if (error instanceof RuntimeOpenCancelledError || error instanceof BoundSessionUnavailableError) {
 				return undefined;
 			}
@@ -2168,7 +2183,7 @@ export class AgentDaemon {
 		let lookupError: unknown;
 		try {
 			return this.getBoundSessionState(id);
-		} catch (error) {
+		} catch (error: unknown) {
 			if (error instanceof BoundSessionUnavailableError) {
 				return this.waitForHydratingChild(this.getSessionState(id), id);
 			}
@@ -2189,7 +2204,7 @@ export class AgentDaemon {
 		}
 		try {
 			return this.getBoundSessionState(id);
-		} catch (error) {
+		} catch (error: unknown) {
 			if (error instanceof BoundSessionUnavailableError) {
 				return this.waitForHydratingChild(this.getSessionState(id), id);
 			}
@@ -2332,25 +2347,37 @@ export class AgentDaemon {
 					agentMessageController: this.createAgentMessageController(() => stateRef),
 					agentObserveController: this.createAgentObserveController(() => stateRef),
 					rlmHeartbeatController: {
-						listRlmHeartbeats: (listOptions) => {
+						listRlmHeartbeats: (listOptions: { includeInactive?: boolean } = {}) => {
 							if (!stateRef) {
 								throw new Error("RLM heartbeat state is not ready for this session yet");
 							}
 							return this.cronStore.listRlmHeartbeats(stateRef.activeSessionId, listOptions);
 						},
-						createRlmHeartbeat: (input) => {
+						createRlmHeartbeat: (input: {
+							instruction: string;
+							interval?: string;
+							label?: string;
+							deliveryMode?: AgentHeartbeatDeliveryMode;
+						}) => {
 							if (!stateRef) {
 								throw new Error("RLM heartbeat state is not ready for this session yet");
 							}
 							return this.createRlmHeartbeatForState(stateRef, input);
 						},
-						updateRlmHeartbeat: (input) => {
+						updateRlmHeartbeat: (input: {
+							id: string;
+							instruction?: string;
+							interval?: string;
+							label?: string;
+							status?: "pause" | "resume";
+							deliveryMode?: AgentHeartbeatDeliveryMode;
+						}) => {
 							if (!stateRef) {
 								throw new Error("RLM heartbeat state is not ready for this session yet");
 							}
 							return this.updateRlmHeartbeatForState(stateRef, input);
 						},
-						deleteRlmHeartbeat: (id) => {
+						deleteRlmHeartbeat: (id: string) => {
 							if (!stateRef) {
 								throw new Error("RLM heartbeat state is not ready for this session yet");
 							}
@@ -2722,25 +2749,37 @@ export class AgentDaemon {
 						agentMessageController: this.createAgentMessageController(() => stateRef),
 						agentObserveController: this.createAgentObserveController(() => stateRef),
 						rlmHeartbeatController: {
-							listRlmHeartbeats: (listOptions) => {
+							listRlmHeartbeats: (listOptions: { includeInactive?: boolean } = {}) => {
 								if (!stateRef) {
 									throw new Error("RLM heartbeat state is not ready for this session yet");
 								}
 								return this.cronStore.listRlmHeartbeats(stateRef.activeSessionId, listOptions);
 							},
-							createRlmHeartbeat: (input) => {
+							createRlmHeartbeat: (input: {
+								instruction: string;
+								interval?: string;
+								label?: string;
+								deliveryMode?: AgentHeartbeatDeliveryMode;
+							}) => {
 								if (!stateRef) {
 									throw new Error("RLM heartbeat state is not ready for this session yet");
 								}
 								return this.createRlmHeartbeatForState(stateRef, input);
 							},
-							updateRlmHeartbeat: (input) => {
+							updateRlmHeartbeat: (input: {
+								id: string;
+								instruction?: string;
+								interval?: string;
+								label?: string;
+								status?: "pause" | "resume";
+								deliveryMode?: AgentHeartbeatDeliveryMode;
+							}) => {
 								if (!stateRef) {
 									throw new Error("RLM heartbeat state is not ready for this session yet");
 								}
 								return this.updateRlmHeartbeatForState(stateRef, input);
 							},
-							deleteRlmHeartbeat: (id) => {
+							deleteRlmHeartbeat: (id: string) => {
 								if (!stateRef) {
 									throw new Error("RLM heartbeat state is not ready for this session yet");
 								}
@@ -2872,7 +2911,7 @@ export class AgentDaemon {
 			if (residentIds.has(passive.info.id)) continue;
 			try {
 				assertAgentFamilyReach(this.agentFamilyEntry(currentState), this.passiveAgentFamilyEntry(passive));
-			} catch (error) {
+			} catch (error: unknown) {
 				if (error instanceof Error && error.message === AGENT_FAMILY_REACH_ERROR) continue;
 				throw error;
 			}
@@ -4277,7 +4316,7 @@ export class AgentDaemon {
 				const state = this.getSessionState(command.activeSessionId);
 				const session = state.runtime.session;
 				const availableModels = await session.modelRegistry.refreshAvailableModels();
-				const model = availableModels.find((candidate) => {
+				const model = availableModels.find((candidate: { provider: string; id: string }) => {
 					return candidate.provider === command.provider && candidate.id === command.modelId;
 				});
 				if (!model) {
@@ -5282,7 +5321,7 @@ export class AgentDaemon {
 	): Promise<ActiveSessionState> {
 		try {
 			return this.getBoundSessionState(target);
-		} catch (error) {
+		} catch (error: unknown) {
 			if (error instanceof BoundSessionUnavailableError) {
 				const targetState = this.getSessionState(target);
 				this.assertAgentFamilyReachable(currentState, targetState);
@@ -5325,7 +5364,7 @@ export class AgentDaemon {
 		try {
 			assertAgentFamilyReach(this.agentFamilyEntry(currentState), this.agentFamilyEntry(targetState));
 			return true;
-		} catch (error) {
+		} catch (error: unknown) {
 			if (error instanceof Error && error.message === AGENT_FAMILY_REACH_ERROR) return false;
 			throw error;
 		}
@@ -5361,7 +5400,7 @@ export class AgentDaemon {
 		let targetState: ActiveSessionState;
 		try {
 			targetState = this.getBoundSessionState(targetSelector);
-		} catch (error) {
+		} catch (error: unknown) {
 			if (error instanceof BoundSessionUnavailableError) {
 				if (options.origin === "agent" && options.fromState) {
 					this.assertAgentFamilyReachable(options.fromState, this.getSessionState(targetSelector));

@@ -11,8 +11,8 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
-import { getProcessStartId } from "../../core/session-lease.js";
-import { defaultDaemonSocketDir } from "./daemon-socket.js";
+import { getProcessStartId } from "../../core/session-lease.ts";
+import { defaultDaemonSocketDir } from "./daemon-socket.ts";
 
 const DAEMON_SUPERVISOR_REGISTRY_DIR_ENV = "PRIME_AGENT_INTERNAL_DAEMON_SUPERVISOR_REGISTRY_DIR";
 
@@ -94,8 +94,11 @@ interface AcquireDaemonSupervisorOwnershipOptions {
 class DaemonSupervisorAlreadyRunningError extends Error {
 	readonly code = "daemon_supervisor_already_running" as const;
 
-	constructor(readonly owner: DaemonSupervisorOwnerRecord) {
+	readonly owner: DaemonSupervisorOwnerRecord;
+
+	constructor(owner: DaemonSupervisorOwnerRecord) {
 		super(`Daemon supervisor ${owner.generation} already owns ${owner.socketPath}`);
+		this.owner = owner;
 		this.name = "DaemonSupervisorAlreadyRunningError";
 	}
 }
@@ -121,11 +124,15 @@ class DaemonShutdownAdmissionError extends Error {
 class DaemonSupervisorOwnership {
 	private released = false;
 
-	constructor(
-		readonly record: DaemonSupervisorOwnerRecord,
-		private readonly registryDir: string,
-		private readonly ownerDirectory: string,
-	) {}
+	readonly record: DaemonSupervisorOwnerRecord;
+	private readonly registryDir: string;
+	private readonly ownerDirectory: string;
+
+	constructor(record: DaemonSupervisorOwnerRecord, registryDir: string, ownerDirectory: string) {
+		this.record = record;
+		this.registryDir = registryDir;
+		this.ownerDirectory = ownerDirectory;
+	}
 
 	async assertCurrent(): Promise<void> {
 		if (this.released) {
@@ -185,10 +192,12 @@ class DaemonShutdownAdmission {
 	private refreshPromise?: Promise<void>;
 	private readonly refreshTimer: ReturnType<typeof setInterval>;
 
-	constructor(
-		private readonly record: DaemonShutdownAdmissionRecord,
-		private readonly registryDir: string,
-	) {
+	private readonly record: DaemonShutdownAdmissionRecord;
+	private readonly registryDir: string;
+
+	constructor(record: DaemonShutdownAdmissionRecord, registryDir: string) {
+		this.record = record;
+		this.registryDir = registryDir;
 		this.refreshTimer = setInterval(() => {
 			this.refreshPromise ??= this.assertOrRenew()
 				.catch(() => undefined)

@@ -1,4 +1,4 @@
-import type { AppKeybinding } from "../../core/keybindings.js";
+import type { AppKeybinding } from "../../core/keybindings.ts";
 
 export interface FeatureHintContext {
 	getKeybinding(action: AppKeybinding): string | undefined;
@@ -104,8 +104,11 @@ export const FEATURE_HINTS: readonly FeatureHintDefinition[] = [
 export class FeatureHintDeck {
 	private remaining: FeatureHint[] = [];
 	private previousId: string | undefined;
+	private readonly random: () => number;
 
-	constructor(private readonly random: () => number = Math.random) {}
+	constructor(random: () => number = Math.random) {
+		this.random = random;
+	}
 
 	next(context: FeatureHintContext): FeatureHint | undefined {
 		if (this.remaining.length === 0) {

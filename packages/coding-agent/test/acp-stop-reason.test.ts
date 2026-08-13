@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AgentAutonomousStatus } from "../src/core/autonomous.js";
-import { acpStopReason } from "../src/modes/acp/acp-stop-reason.js";
+import type { AgentAutonomousStatus } from "../src/core/autonomous.ts";
+import { acpStopReason } from "../src/modes/acp/acp-stop-reason.ts";
 
 function status(overrides: Partial<AgentAutonomousStatus> = {}): AgentAutonomousStatus {
 	return {

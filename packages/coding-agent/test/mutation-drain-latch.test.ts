@@ -1,6 +1,6 @@
 import { getEventListeners } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { MutationDrainLatch } from "../src/modes/daemon/mutation-drain-latch.js";
+import { MutationDrainLatch } from "../src/modes/daemon/mutation-drain-latch.ts";
 
 describe("MutationDrainLatch", () => {
 	it("rejects an already-aborted wait even when no mutations are active", async () => {

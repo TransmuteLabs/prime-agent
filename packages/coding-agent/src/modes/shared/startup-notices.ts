@@ -8,10 +8,10 @@
  */
 
 import { spawn } from "node:child_process";
-import { DefaultPackageManager } from "../../core/package-manager.js";
-import type { SettingsManager } from "../../core/settings-manager.js";
-import { checkForNewPiVersion } from "../../utils/version-check.js";
-import { theme } from "../interactive/theme/theme.js";
+import { DefaultPackageManager } from "../../core/package-manager.ts";
+import type { SettingsManager } from "../../core/settings-manager.ts";
+import { checkForNewPiVersion } from "../../utils/version-check.ts";
+import { theme } from "../interactive/theme/theme.ts";
 
 export interface StartupNotices {
 	/** Newer Prime Agent version available, if any. */
@@ -36,7 +36,7 @@ export async function gatherStartupNotices(options: StartupNoticeCheckOptions): 
 		checkForPackageUpdates(options),
 		checkTmuxKeyboardSetup(),
 	]);
-	return { newVersion, packageUpdates, tmuxWarning };
+	return { newVersion: newVersion?.version, packageUpdates, tmuxWarning };
 }
 
 export async function checkForPackageUpdates(options: {

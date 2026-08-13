@@ -25,7 +25,7 @@ import {
 	type AgentMessage,
 	type AgentState,
 	type AgentTool,
-	type GetContinuationMessagesContext,
+	type PrepareNextTurnContext,
 	type ShouldStopAfterTurnContext,
 	type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
@@ -34,11 +34,11 @@ import type {
 	AssistantMessage,
 	ImageContent,
 	Model,
-	ServiceTier,
+	ProviderHeaders,
 	TextContent,
 	Usage,
 	UserMessage,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
@@ -46,11 +46,27 @@ import {
 	isContextOverflow,
 	modelsAreEqual,
 	resetApiProviders,
-	supportsFastMode,
-} from "@earendil-works/pi-ai";
-import { theme } from "../modes/interactive/theme/theme.js";
-import { stripFrontmatter } from "../utils/frontmatter.js";
-import { sleep } from "../utils/sleep.js";
+} from "@earendil-works/pi-ai/compat";
+
+/** Local ServiceTier until pi-ai re-exports it. */
+export type ServiceTier = "auto" | "default" | "flex" | "scale" | "priority" | null;
+
+function supportsFastMode(_model: Model<any>): boolean {
+	return false;
+}
+
+function withoutDeletedHeaders(headers: ProviderHeaders | undefined): Record<string, string> | undefined {
+	return headers
+		? Object.fromEntries(Object.entries(headers).filter((entry): entry is [string, string] => entry[1] !== null))
+		: undefined;
+}
+
+/** Context formerly passed to getContinuationMessages; reuse ShouldStopAfterTurnContext. */
+type GetContinuationMessagesContext = ShouldStopAfterTurnContext;
+
+import { theme } from "../modes/interactive/theme/theme.ts";
+import { stripFrontmatter } from "../utils/frontmatter.ts";
+import { sleep } from "../utils/sleep.ts";
 import {
 	AGENT_MESSAGE_CUSTOM_TYPE,
 	AGENT_MESSAGE_RECEIVED_PREVIEW_LABEL,
@@ -69,7 +85,7 @@ import {
 	isAgentSessionMessage,
 	normalizeAgentSessionMessage,
 	parseAgentSessionMessagePromptId,
-} from "./agent-messages.js";
+} from "./agent-messages.ts";
 import {
 	AGENT_OBSERVE_SKILL_NAME,
 	type AgentObserveAgentSnapshot,
@@ -80,16 +96,16 @@ import {
 	normalizeObserveLimit,
 	normalizeObserveMaxChars,
 	ORCHESTRATION_HEARTBEAT_SKILL_NAME,
-} from "./agent-observe.js";
-import { flushAgentTraceUpload } from "./agent-traces.js";
+} from "./agent-observe.ts";
+import { flushAgentTraceUpload } from "./agent-traces.ts";
 import {
 	addLoginGuidanceToAuthError,
 	formatAuthenticationFailedMessage,
 	formatNoApiKeyFoundMessage,
 	formatNoModelSelectedMessage,
 	isLikelyAuthenticationError,
-} from "./auth-guidance.js";
-import type { AuthSourceToken } from "./auth-storage.js";
+} from "./auth-guidance.ts";
+import type { AuthSourceToken } from "./auth-storage.ts";
 import {
 	type AgentAutonomousConfig,
 	type AgentAutonomousStatus,
@@ -101,8 +117,8 @@ import {
 	nextAutonomousContinuation,
 	refreshAutonomousQualityGates,
 	setAutonomousEnabled,
-} from "./autonomous.js";
-import { type BashResult, executeBashWithOperations } from "./bash-executor.js";
+} from "./autonomous.ts";
+import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
 	COMPACT_SKILL_NAME,
 	type CompactionResult,
@@ -113,19 +129,19 @@ import {
 	generateBranchSummary,
 	prepareCompaction,
 	shouldCompact,
-} from "./compaction/index.js";
+} from "./compaction/index.ts";
 import {
 	type ContextTreeNode,
 	type ContextWindowResolver,
 	computeOwnAndTotalUsage,
 	loadContextTreeChildFromDisk,
 	loadContextTreeChildrenFromDisk,
-} from "./context-tree.js";
-import type { AgentCronJob, AgentRlmHeartbeatController, AgentRlmHeartbeatStatusUpdate } from "./cron-jobs.js";
-import { normalizeHeartbeatDeliveryMode } from "./cron-jobs.js";
-import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
-import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
-import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
+} from "./context-tree.ts";
+import type { AgentCronJob, AgentRlmHeartbeatController, AgentRlmHeartbeatStatusUpdate } from "./cron-jobs.ts";
+import { normalizeHeartbeatDeliveryMode } from "./cron-jobs.ts";
+import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
+import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
@@ -150,8 +166,8 @@ import {
 	type TurnEndEvent,
 	type TurnStartEvent,
 	wrapRegisteredTools,
-} from "./extensions/index.js";
-import { emitSessionShutdownEvent } from "./extensions/runner.js";
+} from "./extensions/index.ts";
+import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import {
 	createGoalContextMessage,
 	emptyGoalState,
@@ -168,10 +184,11 @@ import {
 	normalizeGoalState,
 	validateGoalBudget,
 	validateGoalObjective,
-} from "./goals.js";
-import type { HostRequestHandlers, KernelSentAgentMessage } from "./kernel/index.js";
-import { type RestoreResult, snapshotPathIn } from "./kernel/state-snapshot.js";
-import type { McpManager } from "./mcp/mcp-manager.js";
+} from "./goals.ts";
+import type { HostRequestHandlers, KernelSentAgentMessage } from "./kernel/index.ts";
+import { type RestoreResult, snapshotPathIn } from "./kernel/state-snapshot.ts";
+import type { McpManager } from "./mcp/mcp-manager.ts";
+
 import {
 	type BashExecutionMessage,
 	type CompactionOutcome,
@@ -187,10 +204,11 @@ import {
 	HEARTBEAT_PROMPT_PREVIEW_LABEL,
 	IPYTHON_STATE_RESTORED_CUSTOM_TYPE,
 	isSessionSlashCommandMessage,
-} from "./messages.js";
-import type { ModelRegistry } from "./model-registry.js";
-import { throwIfPromptAdmissionCancelled } from "./prompt-admission.js";
-import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
+} from "./messages.ts";
+import { ModelRegistry } from "./model-registry.ts";
+import type { ModelRuntime } from "./model-runtime.ts";
+import { throwIfPromptAdmissionCancelled } from "./prompt-admission.ts";
+import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import {
 	type AutoRefineReason,
 	type AutoRefineReview,
@@ -211,9 +229,9 @@ import {
 	type RefinementResult,
 	reviewAutoRefine,
 	saveHarnessState,
-} from "./refinement/index.js";
-import { resolveConfigValue } from "./resolve-config-value.js";
-import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
+} from "./refinement/index.ts";
+import { resolveConfigValue } from "./resolve-config-value.ts";
+import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import {
 	type CreateRlmSubagentRuntimeOptions,
 	createDefaultRlmSubagentSessionName,
@@ -231,7 +249,7 @@ import {
 	type RlmSubagentRegistryEntry,
 	type RlmSubagentRuntime,
 	type SubagentRuntimeHost,
-} from "./rlm-runtime.js";
+} from "./rlm-runtime.ts";
 import {
 	ActionStore,
 	type ActionTicket,
@@ -249,36 +267,42 @@ import {
 	type SessionTurnPayload,
 	transitionSessionAction,
 	type WakePolicy,
-} from "./session-action-store.js";
-import type { BranchSummaryEntry, CompactionEntry, SessionContext, SessionMessageEntry } from "./session-manager.js";
+} from "./session-action-store.ts";
+import type {
+	BranchSummaryEntry,
+	CompactionEntry,
+	SessionContext,
+	SessionEntry,
+	SessionMessageEntry,
+} from "./session-manager.ts";
 import {
 	CURRENT_SESSION_VERSION,
 	getLatestCompactionEntry,
 	type SessionHeader,
 	SessionManager,
-} from "./session-manager.js";
-import type { SessionStats } from "./session-stats.js";
-import type { SettingsManager } from "./settings-manager.js";
-import { getPythonSkillRuntimeInfo, type Skill } from "./skills.js";
+} from "./session-manager.ts";
+import type { SessionStats } from "./session-stats.ts";
+import type { SettingsManager } from "./settings-manager.ts";
+import { getPythonSkillRuntimeInfo, type Skill } from "./skills.ts";
 import {
 	parseRefineCommandOptions,
 	parseSessionSlashCommand,
 	parseSlashCommand,
 	type SessionSlashCommand,
 	type SlashCommandInfo,
-} from "./slash-commands.js";
-import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
-import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.js";
-import { type BashOperations, createLocalBashOperations } from "./tools/bash.js";
-import { createAllToolDefinitions } from "./tools/index.js";
-import { IpythonKernelProvisioner } from "./tools/ipython.js";
-import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.js";
-import { addAssistantUsage, emptyUsage } from "./usage.js";
-import { SERPER_CREDENTIAL_ID, SERPER_ENV_VAR, WEBSEARCH_SKILL_NAME } from "./websearch-credential.js";
+} from "./slash-commands.ts";
+import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
+import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
+import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { createAllToolDefinitions } from "./tools/index.ts";
+import { IpythonKernelProvisioner } from "./tools/ipython.ts";
+import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+import { addAssistantUsage, emptyUsage } from "./usage.ts";
+import { SERPER_CREDENTIAL_ID, SERPER_ENV_VAR, WEBSEARCH_SKILL_NAME } from "./websearch-credential.ts";
 
-export type { GoalState, GoalStatus } from "./goals.js";
-export type { SessionStats } from "./session-stats.js";
-export { type ParsedSkillBlock, parseSkillBlock } from "./skill-blocks.js";
+export type { GoalState, GoalStatus } from "./goals.ts";
+export type { SessionStats } from "./session-stats.ts";
+export { type ParsedSkillBlock, parseSkillBlock } from "./skill-blocks.ts";
 
 export type RlmChildAgentStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
@@ -317,7 +341,18 @@ export type CompactionReason = "manual" | "threshold" | "overflow" | "requested"
 
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
-	| AgentEvent
+	| Exclude<AgentEvent, { type: "agent_end" }>
+	| {
+			type: "agent_end";
+			messages: AgentMessage[];
+			willRetry: boolean;
+	  }
+	| { type: "agent_settled" }
+	| {
+			type: "queue_update";
+			steering: readonly string[];
+			followUp: readonly string[];
+	  }
 	| {
 			type: "ipython_sent_agent_message";
 			toolCallId: string;
@@ -329,6 +364,7 @@ export type AgentSessionEvent =
 			reason: CompactionReason;
 			customInstructions?: string;
 	  }
+	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| { type: "service_tier_changed"; serviceTier: ServiceTier }
@@ -356,6 +392,20 @@ export type AgentSessionEvent =
 			attempt: number;
 			finalError?: string;
 	  }
+	| {
+			type: "summarization_retry_scheduled";
+			attempt: number;
+			maxAttempts: number;
+			delayMs: number;
+			errorMessage: string;
+	  }
+	| { type: "summarization_retry_attempt_start"; source: "branchSummary" }
+	| {
+			type: "summarization_retry_attempt_start";
+			source: "compaction";
+			reason: CompactionReason;
+	  }
+	| { type: "summarization_retry_finished" }
 	| {
 			type: "auth_stale";
 			provider: string;
@@ -385,6 +435,7 @@ export type AgentSessionEvent =
 			/** Echo of the caller-supplied run id, so clients correlate runs by identity. */
 			runId?: string;
 	  }
+	| { type: "bash_execution_update"; id?: string; delta: string }
 	| { type: "refine_complete"; result: RefinementResult }
 	| { type: "refine_failed"; error: string };
 
@@ -422,7 +473,11 @@ export interface AgentSessionConfig {
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
 	/** Model registry for API key resolution and model discovery */
-	modelRegistry: ModelRegistry;
+	modelRegistry?: ModelRegistry;
+	/** Canonical model/auth runtime used by coding-agent internals (upstream pi). */
+	modelRuntime?: ModelRuntime;
+	/** Optional denylist of tool names. When provided, these tool names are not exposed. */
+	excludedToolNames?: string[];
 	/** Initial active built-in tool names. Default: [ipython] */
 	initialActiveToolNames?: string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
@@ -502,6 +557,10 @@ export interface AgentSessionConfig {
 
 export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
+	/** Extension UI mode (tui / rpc / print). Accepted for API compatibility. */
+	mode?: "tui" | "rpc" | "print" | string;
+	/** Optional abort handler used by interactive mode bindings. */
+	abortHandler?: () => void;
 	commandContextActions?: ExtensionCommandContextActions;
 	shutdownHandler?: ShutdownHandler;
 	onError?: ExtensionErrorListener;
@@ -920,9 +979,9 @@ type GoalSlashCommand =
 
 type AutonomousSlashCommand = { kind: "status" } | { kind: "on" } | { kind: "off" };
 
-import type { RlmMaxDepthSource, RlmMaxDepthStatus, SetRlmMaxDepthResult } from "./rlm-max-depth.js";
+import type { RlmMaxDepthSource, RlmMaxDepthStatus, SetRlmMaxDepthResult } from "./rlm-max-depth.ts";
 
-export type { RlmMaxDepthSource, RlmMaxDepthStatus, SetRlmMaxDepthResult } from "./rlm-max-depth.js";
+export type { RlmMaxDepthSource, RlmMaxDepthStatus, SetRlmMaxDepthResult } from "./rlm-max-depth.ts";
 
 interface PersistedRlmMaxDepthState {
 	maxDepth: number;
@@ -1239,6 +1298,7 @@ export class AgentSession {
 
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
+	private _modelRuntime?: ModelRuntime;
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -1248,6 +1308,7 @@ export class AgentSession {
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
+	private _systemPromptOverride?: string;
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 	private _assistantTurnsSinceAutoRefine = 0;
 	private _lastAutoRefineReviewAt = 0;
@@ -1290,25 +1351,34 @@ export class AgentSession {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
-		this._serviceTierPreference = config.serviceTierPreference ?? config.agent.state.serviceTier;
+		this._serviceTierPreference = config.serviceTierPreference ?? null;
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._agentDir = config.agentDir;
-		this._modelRegistry = config.modelRegistry;
+		const modelRuntime = config.modelRuntime;
+		if (config.modelRegistry) {
+			this._modelRegistry = config.modelRegistry;
+		} else if (modelRuntime) {
+			this._modelRegistry = new ModelRegistry(modelRuntime);
+		} else {
+			throw new Error("AgentSession requires modelRegistry or modelRuntime");
+		}
+		this._modelRuntime = modelRuntime;
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._includeGoals = config.includeGoals ?? true;
-		this._includeCompactSkill = config.includeCompactSkill ?? this.settingsManager.getCompactionAgentCallable();
+		this._includeCompactSkill = config.includeCompactSkill ?? this._settingsGetCompactionAgentCallable();
 		this._rlmHeartbeatController = config.rlmHeartbeatController;
 		this._agentMessageController = config.agentMessageController;
 		this._agentObserveController = config.agentObserveController;
 		this._mcpManager = config.mcpManager;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
-		const headerRlmDepth = this.sessionManager.getHeader()?.rlmDepth;
+		const header = this.sessionManager.getHeader() as { rlmDepth?: number } | undefined;
+		const headerRlmDepth = header?.rlmDepth;
 		this._rlmDepth =
 			config.rlmDepth ??
 			(isNonNegativeInteger(headerRlmDepth) ? headerRlmDepth : parseDepth(process.env.RLM_DEPTH, 0, "RLM_DEPTH"));
@@ -1357,7 +1427,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentTurnHook();
-		this._installAgentContinuationHook();
+		this._installAgentNextTurnRefresh();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -1388,6 +1458,13 @@ export class AgentSession {
 		return this._modelRegistry;
 	}
 
+	get modelRuntime(): ModelRuntime {
+		if (!this._modelRuntime) {
+			throw new Error("AgentSession.modelRuntime is unavailable");
+		}
+		return this._modelRuntime;
+	}
+
 	setSubagentRuntimeHost(host?: SubagentRuntimeHost): void {
 		this._subagentRuntimeHost = host;
 	}
@@ -1404,7 +1481,7 @@ export class AgentSession {
 			throw new Error(result.error);
 		}
 		if (result.apiKey) {
-			return { apiKey: result.apiKey, headers: result.headers };
+			return { apiKey: result.apiKey, headers: withoutDeletedHeaders(result.headers) };
 		}
 
 		const isOAuth = this._modelRegistry.isUsingOAuth(model);
@@ -1474,13 +1551,53 @@ export class AgentSession {
 		};
 	}
 
-	private _installAgentContinuationHook(): void {
-		this.agent.getContinuationMessages = (context, signal) => this._getContinuationMessages(context, signal);
+	/**
+	 * Upstream 0.84 removed getContinuationMessages / shouldStopBeforeTurn.
+	 * Map prime-agent continuation onto shouldStopAfterTurn + followUp enqueue,
+	 * and keep prepareNextTurnWithContext for system/tools refresh (pi pattern).
+	 */
+	private _installAgentTurnHook(): void {
+		const previousShouldStop = this.agent.shouldStopAfterTurn?.bind(this.agent);
+		this.agent.shouldStopAfterTurn = async (context, signal) => {
+			if (previousShouldStop && (await previousShouldStop(context, signal))) {
+				return true;
+			}
+			const stop = await this._shouldStopAfterTurn(context);
+			if (stop) {
+				return true;
+			}
+			// Push-based continuation: compute messages and enqueue followUps so the
+			// loop continues when the followUp queue is non-empty.
+			if (!this._steeringStopPending) {
+				const messages = await this._getContinuationMessages(context, signal);
+				for (const message of messages) {
+					this.agent.followUp(message);
+				}
+			}
+			return false;
+		};
 	}
 
-	private _installAgentTurnHook(): void {
-		this.agent.shouldStopBeforeTurn = () => this._shouldStopBeforeTurn();
-		this.agent.shouldStopAfterTurn = (context) => this._shouldStopAfterTurn(context);
+	private _installAgentNextTurnRefresh(): void {
+		const previousPrepareNextTurnWithContext =
+			this.agent.prepareNextTurnWithContext ??
+			(this.agent.prepareNextTurn
+				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
+				: undefined);
+		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
+			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
+			const previousContext = previousSnapshot?.context ?? turn.context;
+			return {
+				...previousSnapshot,
+				context: {
+					...previousContext,
+					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
+					tools: this.agent.state.tools.slice(),
+				},
+				model: this.agent.state.model,
+				thinkingLevel: this.agent.state.thinkingLevel,
+			};
+		};
 	}
 
 	// =========================================================================
@@ -1501,9 +1618,31 @@ export class AgentSession {
 
 	private _emitQueueUpdate(): void {
 		const actions = this.getSessionActionSnapshot();
-		if (JSON.stringify(actions) === JSON.stringify(this._lastSessionActionSnapshot)) return;
-		this._lastSessionActionSnapshot = actions;
-		this._emit({ type: "session_action_update", actions });
+		if (JSON.stringify(actions) !== JSON.stringify(this._lastSessionActionSnapshot)) {
+			this._lastSessionActionSnapshot = actions;
+			this._emit({ type: "session_action_update", actions });
+		}
+		// Compatibility surface expected by interactive/rpc/tests (pre-port queue model).
+		this._emit({
+			type: "queue_update",
+			steering: this.getSteeringMessages(),
+			followUp: this.getFollowUpMessages(),
+		});
+	}
+
+	/** Remove queued agent messages matching predicate (shim when Agent lacks removeQueuedMessages). */
+	private _removeQueuedMessages(predicate: (message: AgentMessage) => boolean): AgentMessage[] {
+		const agent = this.agent as Agent & {
+			removeQueuedMessages?: (predicate: (message: AgentMessage) => boolean) => AgentMessage[];
+			clearSteeringQueue?: () => void;
+			clearFollowUpQueue?: () => void;
+		};
+		if (typeof agent.removeQueuedMessages === "function") {
+			return agent.removeQueuedMessages(predicate);
+		}
+		// Best-effort: no selective queue API on upstream Agent.
+		void predicate;
+		return [];
 	}
 
 	private _restoreLateIpythonSentAgentMessages(): void {
@@ -1585,7 +1724,7 @@ export class AgentSession {
 		if (this._configuredRlmMaxDepth !== undefined) {
 			return { maxDepth: this._configuredRlmMaxDepth, source: "inherited" };
 		}
-		const global = this.settingsManager.getRlmMaxDepth();
+		const global = this._settingsGetRlmMaxDepth();
 		if (global !== undefined && isNonNegativeInteger(global)) {
 			return { maxDepth: global, source: "global" };
 		}
@@ -1625,11 +1764,14 @@ export class AgentSession {
 			switch (entry.type) {
 				case "model_change":
 				case "thinking_level_change":
-				case "service_tier_change":
 					continue;
 				case "custom":
 					if (entry.customType === GOAL_STATE_CUSTOM_TYPE) {
 						return false;
+					}
+					// service_tier_change is stored as a custom entry in pi.
+					if (entry.customType === "service_tier_change") {
+						continue;
 					}
 					return false;
 				default:
@@ -1771,7 +1913,7 @@ export class AgentSession {
 		this._pendingNextTurnMessages = this._pendingNextTurnMessages.filter(
 			(message) => message.customType !== GOAL_CONTEXT_CUSTOM_TYPE,
 		);
-		this.agent.removeQueuedMessages(
+		this._removeQueuedMessages(
 			(message) => message.role === "custom" && message.customType === GOAL_CONTEXT_CUSTOM_TYPE,
 		);
 		this._cancelSessionActions(
@@ -2162,10 +2304,6 @@ export class AgentSession {
 		);
 	}
 
-	private _shouldStopBeforeTurn(): boolean {
-		return this._steeringStopPending;
-	}
-
 	private async _shouldStopAfterTurn(context: ShouldStopAfterTurnContext): Promise<boolean> {
 		if (this._stopGoalContinuationForTerminalMessage(context.message)) {
 			return true;
@@ -2339,7 +2477,7 @@ export class AgentSession {
 			this._compactAutoRefinePending = false;
 			return;
 		}
-		const settings = this.settingsManager.getAutoRefineSettings();
+		const settings = this._settingsGetAutoRefineSettings();
 		if (!settings.enabled) {
 			this._compactAutoRefinePending = false;
 			return;
@@ -2511,7 +2649,7 @@ export class AgentSession {
 		if (!this._autoRefineAllowedForSession()) {
 			return;
 		}
-		const settings = this.settingsManager.getAutoRefineSettings();
+		const settings = this._settingsGetAutoRefineSettings();
 		if (!settings.enabled) {
 			return;
 		}
@@ -2774,7 +2912,7 @@ export class AgentSession {
 		this._postCompactionContinuationMessages = this._postCompactionContinuationMessages.filter(
 			(message) => !queuedMessageSet.has(message),
 		);
-		this.agent.removeQueuedMessages((message) => queuedMessageSet.has(message));
+		this._removeQueuedMessages((message) => queuedMessageSet.has(message));
 		this._cancelSessionActions(
 			(action) => action.payload.kind === "turn" && queuedMessageSet.has(primaryDeliveryRecord(action).message),
 			new Error("Queued autonomous continuation was cleared before delivery."),
@@ -3398,6 +3536,27 @@ export class AgentSession {
 		});
 	}
 
+	private _willRetryAfterAgentEnd(event: Extract<AgentEvent, { type: "agent_end" }>): boolean {
+		const settings = this.settingsManager.getRetrySettings();
+		if (!settings.enabled || this._retryAttempt >= settings.maxRetries) {
+			return false;
+		}
+		const lastAssistant = this._findLastAssistantInMessages(event.messages);
+		if (!lastAssistant) {
+			return false;
+		}
+		return this._isRetryableError(lastAssistant) || this._isConcreteProviderAuthFailure(lastAssistant);
+	}
+
+	private async _emitAgentSettled(): Promise<void> {
+		try {
+			await this._extensionRunner.emit({ type: "agent_settled" });
+		} catch {
+			// Extension failures must not block settlement notification.
+		}
+		this._emit({ type: "agent_settled" });
+	}
+
 	private _findLastAssistantInMessages(messages: AgentMessage[]): AssistantMessage | undefined {
 		for (let i = messages.length - 1; i >= 0; i--) {
 			const message = messages[i];
@@ -3479,8 +3638,15 @@ export class AgentSession {
 
 		this._addLoginGuidanceToAuthError(event);
 
-		// Notify all listeners
-		this._emit(event);
+		// Notify all listeners (agent_end gains willRetry for session subscribers/tests)
+		if (event.type === "agent_end") {
+			this._emit({
+				...event,
+				willRetry: this._willRetryAfterAgentEnd(event),
+			});
+		} else {
+			this._emit(event);
+		}
 
 		// Handle session persistence
 		if (event.type === "message_end") {
@@ -3595,6 +3761,7 @@ export class AgentSession {
 						this._scheduleAutoRefineAfterAgentEnd();
 					}
 				}
+				await this._emitAgentSettled();
 			}
 		}
 	}
@@ -3880,7 +4047,7 @@ export class AgentSession {
 		// A serialized compaction can finish without another model turn. Drain its
 		// pending review here so disposal does not silently lose the trigger.
 		if (this._serializedRefine && this._compactAutoRefinePending && this._autoRefineAllowedForSession()) {
-			const compactSettings = this.settingsManager.getAutoRefineSettings();
+			const compactSettings = this._settingsGetAutoRefineSettings();
 			if (!compactSettings.enabled || !compactSettings.compact) {
 				this._compactAutoRefinePending = false;
 			} else {
@@ -3906,7 +4073,7 @@ export class AgentSession {
 		if (this._disposed || !this._autoRefineAllowedForSession()) {
 			return;
 		}
-		const settings = this.settingsManager.getAutoRefineSettings();
+		const settings = this._settingsGetAutoRefineSettings();
 		if (!settings.enabled) {
 			return;
 		}
@@ -4058,12 +4225,22 @@ export class AgentSession {
 	}
 
 	get serviceTier(): ServiceTier {
-		return this.agent.state.serviceTier;
+		return this._serviceTierPreference;
 	}
 
 	/** Whether agent is currently streaming a response */
 	get isStreaming(): boolean {
 		return this.agent.state.isStreaming;
+	}
+
+	/** Whether the session has no active agent run, retry, auto-compaction, or queued continuation. */
+	get isIdle(): boolean {
+		return !this.isStreaming && !this.isCompacting && !this.isRetrying && this.queuedActionCount === 0;
+	}
+
+	/** Number of pending messages (includes both steering and follow-up). */
+	get pendingMessageCount(): number {
+		return this.queuedActionCount;
 	}
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
@@ -4142,13 +4319,13 @@ export class AgentSession {
 		return this.agent.state.messages;
 	}
 
-	buildSessionContext(): SessionContext {
+	buildSessionContext(): SessionContext & { serviceTier: ServiceTier } {
 		const context = this.sessionManager.buildSessionContext();
 		for (const message of context.messages) {
 			this._applyLateIpythonSentAgentMessages(message);
 		}
 		this._mergeUnpersistedCompactionOutcomes(context.messages);
-		return context;
+		return { ...context, serviceTier: this.serviceTier };
 	}
 
 	/**
@@ -5977,7 +6154,7 @@ export class AgentSession {
 	 */
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): Promise<void> {
 		// Normalize content to text string + optional images
 		let text: string;
@@ -5999,9 +6176,8 @@ export class AgentSession {
 			if (images.length === 0) images = undefined;
 		}
 
-		// Use prompt() with expandPromptTemplates: false to skip command handling and template expansion
 		await this._prompt(text, {
-			expandPromptTemplates: false,
+			expandPromptTemplates: options?.expandPromptTemplates ?? false,
 			streamingBehavior: options?.deliverAs,
 			images,
 			source: "extension",
@@ -6692,7 +6868,7 @@ export class AgentSession {
 		if (!this._modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
-		if (!(await this._modelRegistry.canUseModel(model))) {
+		if (!(await this._modelCanUse(model))) {
 			throw new Error(`Model "${model.provider}/${model.id}" is not available for the current Prime team.`);
 		}
 
@@ -6757,7 +6933,7 @@ export class AgentSession {
 		direction: "forward" | "backward",
 		options: ModelSelectOptions,
 	): Promise<ModelCycleResult | undefined> {
-		const availableModels = await this._modelRegistry.refreshAvailableModels();
+		const availableModels = await this._modelRefreshAvailable();
 		const scopedModels = this._scopedModels.filter((scoped) =>
 			availableModels.some((model) => modelsAreEqual(model, scoped.model)),
 		);
@@ -6804,7 +6980,7 @@ export class AgentSession {
 		direction: "forward" | "backward",
 		options: ModelSelectOptions,
 	): Promise<ModelCycleResult | undefined> {
-		const availableModels = await this._modelRegistry.refreshAvailableModels();
+		const availableModels = await this._modelRefreshAvailable();
 		if (availableModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
@@ -6876,24 +7052,21 @@ export class AgentSession {
 	setServiceTier(serviceTier: ServiceTier): void {
 		const effectiveServiceTier = this._getEffectiveServiceTier(serviceTier);
 		const preferenceChanged = effectiveServiceTier !== this._serviceTierPreference;
-		const effectiveTierChanged = effectiveServiceTier !== this.agent.state.serviceTier;
-		if (!preferenceChanged && !effectiveTierChanged) {
+		if (!preferenceChanged) {
 			return;
 		}
 		this._serviceTierPreference = effectiveServiceTier;
-		if (preferenceChanged) {
-			this.sessionManager.appendServiceTierChange(effectiveServiceTier);
-			if (this.model && supportsFastMode(this.model)) {
-				this.settingsManager.setDefaultServiceTier(effectiveServiceTier);
-			}
+		this.sessionManager.appendServiceTierChange(effectiveServiceTier);
+		if (this.model && supportsFastMode(this.model)) {
+			this.settingsManager.setDefaultServiceTier(effectiveServiceTier);
 		}
-		if (effectiveTierChanged) {
-			this.agent.state.serviceTier = effectiveServiceTier;
-			this._emit({
-				type: "service_tier_changed",
-				serviceTier: effectiveServiceTier,
-			});
-		}
+		// pi-ai 0.84's AgentState has no serviceTier field, so the preference is
+		// session-local (emitted via service_tier_changed) rather than mirrored
+		// onto agent.state the way prime-agent does.
+		this._emit({
+			type: "service_tier_changed",
+			serviceTier: effectiveServiceTier,
+		});
 	}
 
 	private _getEffectiveServiceTier(serviceTier: ServiceTier): ServiceTier {
@@ -6906,10 +7079,10 @@ export class AgentSession {
 
 	private _clampServiceTierForModel(serviceTier: ServiceTier = this.serviceTier): void {
 		const effectiveServiceTier = this._getEffectiveServiceTier(serviceTier);
-		if (effectiveServiceTier === this.agent.state.serviceTier) {
+		if (effectiveServiceTier === this._serviceTierPreference) {
 			return;
 		}
-		this.agent.state.serviceTier = effectiveServiceTier;
+		this._serviceTierPreference = effectiveServiceTier;
 		this._emit({
 			type: "service_tier_changed",
 			serviceTier: effectiveServiceTier,
@@ -7196,6 +7369,8 @@ export class AgentSession {
 				preparation,
 				branchEntries: pathEntries,
 				customInstructions,
+				reason: "manual",
+				willRetry: false,
 				signal,
 			})) as SessionBeforeCompactResult | undefined;
 
@@ -7223,6 +7398,7 @@ export class AgentSession {
 			tokensBefore,
 			details,
 			fromExtension,
+			undefined,
 			customInstructions,
 		);
 		const newEntries = this.sessionManager.getEntries();
@@ -7239,6 +7415,8 @@ export class AgentSession {
 				type: "session_compact",
 				compactionEntry: savedCompactionEntry,
 				fromExtension,
+				reason: "manual",
+				willRetry: false,
 			});
 		}
 		await this._notifyKernelStateAfterCompaction();
@@ -7444,7 +7622,7 @@ export class AgentSession {
 			return;
 		}
 		const continuationMessageSet = new Set(continuationMessages);
-		const stillQueued = new Set(this.agent.removeQueuedMessages((message) => continuationMessageSet.has(message)));
+		const stillQueued = new Set(this._removeQueuedMessages((message) => continuationMessageSet.has(message)));
 		for (const message of stillQueued) {
 			this.agent.followUp(message);
 		}
@@ -7495,7 +7673,7 @@ export class AgentSession {
 			return;
 		}
 
-		const settings = this.settingsManager.getAutoRefineSettings();
+		const settings = this._settingsGetAutoRefineSettings();
 		if (!settings.enabled) {
 			this._discardPendingAutoRefine();
 			return;
@@ -8215,7 +8393,7 @@ export class AgentSession {
 			const result = await this._performCompaction({
 				model: this.model,
 				apiKey: authResult.apiKey,
-				headers: authResult.headers,
+				headers: withoutDeletedHeaders(authResult.headers),
 				customInstructions,
 				signal: this._autoCompactionAbortController.signal,
 			});
@@ -8490,7 +8668,7 @@ export class AgentSession {
 				refreshTools: () => this._refreshToolRegistry(),
 				getCommands,
 				setModel: async (model) => {
-					if (!this.modelRegistry.hasConfiguredAuth(model)) return false;
+					if (!this._modelRegistry.hasConfiguredAuth(model)) return false;
 					await this.setModel(model);
 					return true;
 				},
@@ -8499,10 +8677,14 @@ export class AgentSession {
 			},
 			{
 				getModel: () => this.model,
-				isIdle: () => !this.isStreaming,
+				getScopedModels: () => this.scopedModels,
+				isIdle: () => this.isIdle,
+				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this.agent.signal,
-				abort: () => this.abort(),
-				hasPendingMessages: () => this.queuedActionCount > 0,
+				abort: () => {
+					void this.abort();
+				},
+				hasPendingMessages: () => this.pendingMessageCount > 0,
 				shutdown: () => {
 					this._extensionShutdownHandler?.();
 				},
@@ -8596,7 +8778,7 @@ export class AgentSession {
 					definition,
 					sourceInfo: createSyntheticSourceInfo(`<builtin:${definition.name}>`, { source: "builtin" }),
 				})),
-			() => this._extensionRunner,
+			this._extensionRunner,
 		);
 
 		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));
@@ -8862,7 +9044,7 @@ export class AgentSession {
 		return handlers;
 	}
 
-	async reload(): Promise<void> {
+	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
 		const previousFlagValues = this._extensionRunner.getFlagValues();
 		await emitSessionShutdownEvent(this._extensionRunner, {
 			type: "session_shutdown",
@@ -8871,10 +9053,10 @@ export class AgentSession {
 		await this.settingsManager.reload();
 		// Re-read auth.json: a login saved by the client process (daemon mode) must be
 		// visible here so MCP skill gating sees the new credentials.
-		this._modelRegistry.authStorage.reload();
+		this._modelAuthStorage().reload();
 		resetApiProviders();
 		// Re-read mcpServers and re-register user MCP providers from the reloaded settings.
-		this._mcpManager?.refresh();
+		await this._mcpManager?.refresh?.();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
@@ -8888,6 +9070,7 @@ export class AgentSession {
 			this._extensionShutdownHandler ||
 			this._extensionErrorListener;
 		if (hasBindings) {
+			await options?.beforeSessionStart?.();
 			await this._extensionRunner.emit({
 				type: "session_start",
 				reason: "reload",
@@ -8929,11 +9112,14 @@ export class AgentSession {
 		if (!this._resourceLoader.getSkills().skills.some((skill) => skill.name === WEBSEARCH_SKILL_NAME)) {
 			return;
 		}
-		const cred = this._modelRegistry.authStorage.get(SERPER_CREDENTIAL_ID);
+		const cred = this._modelAuthStorage().get(SERPER_CREDENTIAL_ID) as
+			| { type?: string; value?: string; key?: string }
+			| undefined;
 		if (cred?.type !== "api_key") {
 			return;
 		}
-		const resolved = resolveConfigValue(cred.key)?.trim();
+		const key = cred.key ?? cred.value;
+		const resolved = key ? resolveConfigValue(key)?.trim() : undefined;
 		if (resolved) {
 			env[SERPER_ENV_VAR] = resolved;
 		}
@@ -9047,9 +9233,10 @@ export class AgentSession {
 
 	private _createInlineRlmSubagentRuntime(options: CreateRlmSubagentRuntimeOptions): RlmSubagentRuntime {
 		const childSessionManager = SessionManager.create(this._cwd, options.sessionDir);
-		if (options.parentSession.sessionFile) {
+		const parentSessionFile = options.parentSession.sessionManager.getSessionFile();
+		if (parentSessionFile) {
 			childSessionManager.newSession({
-				parentSession: options.parentSession.sessionFile,
+				parentSession: parentSessionFile,
 				rlmDepth: options.rlmDepth,
 			});
 		}
@@ -9062,12 +9249,11 @@ export class AgentSession {
 				systemPrompt: "",
 				model: options.model,
 				thinkingLevel: options.thinkingLevel,
-				serviceTier: options.serviceTier,
 				tools: [],
 			},
 			convertToLlm: this.agent.convertToLlm,
 			transformContext: this.agent.transformContext,
-			streamFn: this.agent.streamFn,
+			streamFn: this.agent.streamFunction,
 			getApiKey: this.agent.getApiKey,
 			onPayload: this.agent.onPayload,
 			onResponse: this.agent.onResponse,
@@ -9642,9 +9828,9 @@ export class AgentSession {
 	}
 
 	private async _authenticatedRlmModels(): Promise<Model<Api>[]> {
-		return (await this._modelRegistry.getExecutableModels()).filter((model) => {
+		return (await this._modelGetExecutable()).filter((model) => {
 			const status = this._modelRegistry.getProviderAuthStatus(model.provider);
-			return status.source !== "stale" && status.label !== "expired";
+			return status.label !== "expired";
 		});
 	}
 
@@ -10142,7 +10328,7 @@ export class AgentSession {
 	}
 
 	private _captureRetryAuthFailureSource(message: AssistantMessage): AuthSourceToken | undefined {
-		const token = this._modelRegistry.getCurrentProviderAuthSourceToken(message.provider);
+		const token = this._modelGetAuthSourceToken(message.provider);
 		if (!token) {
 			return undefined;
 		}
@@ -10164,7 +10350,7 @@ export class AgentSession {
 		if (authSourceTokens && authSourceTokens.length > 0) {
 			let marked = false;
 			for (const token of authSourceTokens) {
-				marked = this._modelRegistry.markProviderAuthSourceStale(token) || marked;
+				marked = this._modelMarkAuthSourceStale(token) || marked;
 			}
 			if (marked) {
 				this._emit({
@@ -10175,7 +10361,7 @@ export class AgentSession {
 			}
 			return marked;
 		}
-		const marked = this._modelRegistry.markProviderAuthStale(message.provider);
+		const marked = this._modelMarkAuthStale(message.provider);
 		if (marked) {
 			this._emit({ type: "auth_stale", provider: message.provider });
 		}
@@ -10392,6 +10578,8 @@ export class AgentSession {
 			excludeFromContext?: boolean;
 			operations?: BashOperations;
 			transient?: boolean;
+			/** Caller-supplied id for correlating bash_execution_update events. */
+			id?: string;
 		},
 	): Promise<BashResult> {
 		this._bashAbortController = new AbortController();
@@ -10407,7 +10595,10 @@ export class AgentSession {
 				this.sessionManager.getCwd(),
 				options?.operations ?? createLocalBashOperations({ shellPath }),
 				{
-					onChunk,
+					onChunk: (chunk) => {
+						this._emit({ type: "bash_execution_update", id: options?.id, delta: chunk });
+						onChunk?.(chunk);
+					},
 					signal: this._bashAbortController.signal,
 				},
 			);
@@ -10652,13 +10843,13 @@ export class AgentSession {
 		let globalError: string | undefined;
 		if (options.global) {
 			await this.settingsManager.flush();
-			const staleErrors = this.settingsManager.drainErrors("global");
+			const staleErrors = this.settingsManager.drainErrors();
 			for (const { error } of staleErrors) {
 				console.warn(`Warning: Earlier global settings write failed: ${error.message}`);
 			}
-			this.settingsManager.setRlmMaxDepth(maxDepth);
+			this._settingsSetRlmMaxDepth(maxDepth);
 			await this.settingsManager.flush();
-			const errors = this.settingsManager.drainErrors("global");
+			const errors = this.settingsManager.drainErrors();
 			globalError = errors.map(({ error }) => error.message).join("; ") || undefined;
 		}
 
@@ -10858,7 +11049,7 @@ export class AgentSession {
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 				const model = this.model!;
 				const { apiKey, headers } = await this._getRequiredRequestAuth(model);
-				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
+				const branchSummarySettings = this._settingsGetBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
 					model,
 					apiKey,
@@ -11263,6 +11454,126 @@ export class AgentSession {
 	 */
 	get extensionRunner(): ExtensionRunner {
 		return this._extensionRunner;
+	}
+
+	// =========================================================================
+	// Compatibility shims for settings/model APIs that pi 0.84 shapes
+	// differently than prime-agent (optional getters, runtime-level auth
+	// staleness). Session-manager APIs reconciled with prime-agent are called
+	// directly above.
+	// =========================================================================
+
+	private _settingsGetCompactionAgentCallable(): boolean {
+		const s = this.settingsManager as SettingsManager & {
+			getCompactionAgentCallable?: () => boolean;
+		};
+		return s.getCompactionAgentCallable?.() ?? false;
+	}
+
+	private _settingsGetAutoRefineSettings(): {
+		enabled: boolean;
+		turnInterval: number;
+		compact: boolean;
+		cooldownMs: number;
+	} {
+		const s = this.settingsManager as SettingsManager & {
+			getAutoRefineSettings?: () => {
+				enabled: boolean;
+				turnInterval: number;
+				compact: boolean;
+				cooldownMs: number;
+			};
+		};
+		return (
+			s.getAutoRefineSettings?.() ?? {
+				enabled: false,
+				turnInterval: 10,
+				compact: false,
+				cooldownMs: 60_000,
+			}
+		);
+	}
+
+	private _settingsGetRlmMaxDepth(): number | undefined {
+		const s = this.settingsManager as SettingsManager & {
+			getRlmMaxDepth?: () => number | undefined;
+		};
+		return s.getRlmMaxDepth?.();
+	}
+
+	private _settingsSetRlmMaxDepth(maxDepth: number): void {
+		const s = this.settingsManager as SettingsManager & {
+			setRlmMaxDepth?: (n: number) => void;
+		};
+		s.setRlmMaxDepth?.(maxDepth);
+	}
+
+	private _settingsGetBranchSummarySettings(): { enabled: boolean; reserveTokens: number } {
+		const b = this.settingsManager.getBranchSummarySettings() as {
+			enabled?: boolean;
+			reserveTokens: number;
+			skipPrompt?: boolean;
+		};
+		return { enabled: b.enabled ?? true, reserveTokens: b.reserveTokens };
+	}
+
+	private async _modelRefreshAvailable(): Promise<Model<any>[]> {
+		return this._modelRegistry.refreshAvailableModels();
+	}
+
+	private async _modelGetExecutable(): Promise<Model<any>[]> {
+		const mr = this._modelRegistry as ModelRegistry & {
+			getExecutableModels?: () => Promise<Model<any>[]>;
+			getAvailable?: () => Model<any>[];
+		};
+		if (typeof mr.getExecutableModels === "function") {
+			return mr.getExecutableModels();
+		}
+		return mr.getAvailable?.() ?? [];
+	}
+
+	private async _modelCanUse(model: Model<any>): Promise<boolean> {
+		const mr = this._modelRegistry as ModelRegistry & {
+			canUseModel?: (m: Model<any>) => Promise<boolean>;
+			hasConfiguredAuth?: (m: Model<any>) => boolean;
+		};
+		if (typeof mr.canUseModel === "function") {
+			return mr.canUseModel(model);
+		}
+		return mr.hasConfiguredAuth?.(model) ?? true;
+	}
+
+	private _modelGetAuthSourceToken(_provider: string): AuthSourceToken | undefined {
+		return undefined;
+	}
+
+	private _modelMarkAuthSourceStale(_token: AuthSourceToken): boolean {
+		return false;
+	}
+
+	private _modelMarkAuthStale(_provider: string): boolean {
+		return false;
+	}
+
+	private _modelAuthStorage(): {
+		reload: () => void;
+		get: (id: string) => { type?: string; value?: string } | undefined;
+	} {
+		const mr = this._modelRegistry as ModelRegistry & {
+			authStorage?: {
+				reload: () => void;
+				get: (id: string) => { type?: string; value?: string } | undefined;
+			};
+		};
+		if (mr.authStorage) {
+			return mr.authStorage;
+		}
+		return {
+			reload: () => {
+				/* no-op */
+			},
+			get: () => undefined,
+		};
 	}
 }
 

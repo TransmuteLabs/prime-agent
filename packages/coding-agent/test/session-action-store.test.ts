@@ -10,7 +10,7 @@ import {
 	type RuntimeActivity,
 	type SessionAction,
 	transitionSessionAction,
-} from "../src/core/session-action-store.js";
+} from "../src/core/session-action-store.ts";
 
 let nextId = 0;
 

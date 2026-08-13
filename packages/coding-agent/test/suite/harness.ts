@@ -1,32 +1,33 @@
+import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } from "../model-runtime-test-utils.ts";
 /**
  * Local test harness for the new coding-agent test suite.
  */
 
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { FauxModelDefinition, FauxProviderRegistration, FauxResponseStep, Model } from "@earendil-works/pi-ai";
-import { registerFauxProvider } from "@earendil-works/pi-ai";
-import type { AgentSessionMessageController } from "../../src/core/agent-messages.js";
-import type { AgentObserveController } from "../../src/core/agent-observe.js";
-import { AgentSession, type AgentSessionEvent, type AutoRefineReviewer } from "../../src/core/agent-session.js";
-import { AuthStorage } from "../../src/core/auth-storage.js";
-import type { AgentAutonomousConfig } from "../../src/core/autonomous.js";
-import type { ExtensionRunner } from "../../src/core/extensions/index.js";
-import { convertToLlm } from "../../src/core/messages.js";
-import { ModelRegistry } from "../../src/core/model-registry.js";
-import type { SubagentRuntimeHost } from "../../src/core/rlm-runtime.js";
-import { SessionManager } from "../../src/core/session-manager.js";
-import type { Settings } from "../../src/core/settings-manager.js";
-import { SettingsManager } from "../../src/core/settings-manager.js";
-import type { ExtensionFactory, ResourceLoader } from "../../src/index.js";
+import type {
+	FauxModelDefinition,
+	FauxProviderRegistration,
+	FauxResponseStep,
+	Model,
+} from "@earendil-works/pi-ai/compat";
+import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
+import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
+import { AuthStorage } from "../../src/core/auth-storage.ts";
+import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
+import { convertToLlm } from "../../src/core/messages.ts";
+import { SessionManager } from "../../src/core/session-manager.ts";
+import type { Settings } from "../../src/core/settings-manager.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
+import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
 import {
 	type CreateTestExtensionsResultInput,
 	createTestExtensionsResult,
 	createTestResourceLoader,
-} from "../utilities.js";
+} from "../utilities.ts";
 
 type MessageTextPart = { type: "text"; text: string };
 
@@ -60,25 +61,17 @@ export function getAssistantTexts(harness: Harness): string[] {
 }
 
 export interface HarnessOptions {
-	api?: string;
-	provider?: string;
 	models?: FauxModelDefinition[];
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
+	initialActiveToolNames?: string[];
+	allowedToolNames?: string[];
+	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
-	extensionFactories?: Array<ExtensionFactory | CreateTestExtensionsResultInput>;
+	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
-	agentObserveController?: AgentObserveController;
-	agentMessageController?: AgentSessionMessageController;
-	subagentRuntimeHost?: SubagentRuntimeHost;
-	persistSession?: boolean;
-	rlmDepth?: number;
-	rlmMaxDepth?: number;
-	autonomous?: AgentAutonomousConfig;
-	autoRefineReviewer?: AutoRefineReviewer;
-	serializedRefine?: boolean;
-	initialGoal?: { objective: string; tokenBudget?: number };
+	modelsJson?: Record<string, unknown>;
 }
 
 export interface Harness {
@@ -108,8 +101,6 @@ function createTempDir(): string {
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
-		api: options.api,
-		provider: options.provider,
 		models: options.models,
 	});
 	fauxProvider.setResponses([]);
@@ -118,16 +109,18 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	const sessionManager = options.persistSession
-		? SessionManager.create(tempDir, join(tempDir, "sessions"))
-		: SessionManager.inMemory();
+	const sessionManager = SessionManager.inMemory();
 	const settingsManager = SettingsManager.inMemory(options.settings);
 
 	const authStorage = AuthStorage.inMemory();
 	if (withConfiguredAuth) {
-		authStorage.setRuntimeApiKey(model.provider, "faux-key");
+		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
 	}
-	const modelRegistry = ModelRegistry.inMemory(authStorage);
+	const modelsPath = options.modelsJson === undefined ? undefined : join(tempDir, "models.json");
+	if (modelsPath) writeFileSync(modelsPath, JSON.stringify(options.modelsJson));
+	const modelRegistry = modelsPath
+		? await createModelRegistry(authStorage, modelsPath)
+		: await createInMemoryModelRegistry(authStorage);
 	if (withConfiguredAuth) {
 		modelRegistry.registerProvider(model.provider, {
 			baseUrl: model.baseUrl,
@@ -149,6 +142,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
 	const agent = new Agent({
 		getApiKey: () => (withConfiguredAuth ? "faux-key" : undefined),
+		streamFn: streamSimple,
 		initialState: {
 			model,
 			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
@@ -190,19 +184,13 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRegistry,
+		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
-		agentObserveController: options.agentObserveController,
-		agentMessageController: options.agentMessageController,
-		subagentRuntimeHost: options.subagentRuntimeHost,
 		baseToolsOverride: toolMap,
+		initialActiveToolNames: options.initialActiveToolNames,
+		allowedToolNames: options.allowedToolNames,
+		excludedToolNames: options.excludedToolNames,
 		extensionRunnerRef,
-		rlmDepth: options.rlmDepth,
-		rlmMaxDepth: options.rlmMaxDepth,
-		autonomous: options.autonomous,
-		autoRefineReviewer: options.autoRefineReviewer,
-		serializedRefine: options.serializedRefine,
-		initialGoal: options.initialGoal,
 	});
 
 	const events: AgentSessionEvent[] = [];
@@ -230,9 +218,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			session.dispose();
 			fauxProvider.unregister();
 			if (existsSync(tempDir)) {
-				// Spawned fixture processes may still be flushing their final registry
-				// writes; retry briefly instead of failing the suite on ENOTEMPTY.
-				rmSync(tempDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 50 });
+				rmSync(tempDir, { recursive: true });
 			}
 		},
 	};

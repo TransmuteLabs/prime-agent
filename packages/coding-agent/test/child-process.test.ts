@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
-import { isProcessAlive, isZombieProcess, waitForChildProcess } from "../src/utils/child-process.js";
+import { isProcessAlive, isZombieProcess, waitForChildProcess } from "../src/utils/child-process.ts";
 
 describe("waitForChildProcess", () => {
 	it("reports signaled already-exited children as failures", async () => {

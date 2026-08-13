@@ -1,6 +1,6 @@
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import xterm from "@xterm/headless";
-import type { Terminal, TerminalStopOptions } from "../src/terminal.js";
+import type { Terminal } from "../src/terminal.ts";
 
 // Extract Terminal class from the module
 const XtermTerminal = xterm.Terminal;
@@ -14,8 +14,6 @@ export class VirtualTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _columns: number;
 	private _rows: number;
-	private _altScreenActive = false;
-	private _mouseTrackingActive = false;
 
 	constructor(columns = 80, rows = 24) {
 		this._columns = columns;
@@ -42,7 +40,7 @@ export class VirtualTerminal implements Terminal {
 		// No-op for virtual terminal - no stdin to drain
 	}
 
-	stop(_options?: TerminalStopOptions): void {
+	stop(): void {
 		// Disable bracketed paste mode
 		this.xterm.write("\x1b[?2004l");
 		this.inputHandler = undefined;
@@ -85,6 +83,10 @@ export class VirtualTerminal implements Terminal {
 		this.xterm.write("\x1b[?25h");
 	}
 
+	leaveAltScreen(): void {
+		this.xterm.write("\x1b[?1049l");
+	}
+
 	clearLine(): void {
 		this.xterm.write("\x1b[K");
 	}
@@ -95,28 +97,6 @@ export class VirtualTerminal implements Terminal {
 
 	clearScreen(): void {
 		this.xterm.write("\x1b[2J\x1b[H"); // Clear screen and move to home (1,1)
-	}
-
-	enterAltScreen(): void {
-		this._altScreenActive = true;
-		this.write("\x1b[?1049h");
-	}
-
-	leaveAltScreen(): void {
-		this._altScreenActive = false;
-		this.write("\x1b[?1049l");
-	}
-
-	get altScreenActive(): boolean {
-		return this._altScreenActive;
-	}
-
-	setMouseTracking(enabled: boolean): void {
-		this._mouseTrackingActive = enabled;
-	}
-
-	get mouseTrackingActive(): boolean {
-		return this._mouseTrackingActive;
 	}
 
 	setTitle(title: string): void {
@@ -231,11 +211,6 @@ export class VirtualTerminal implements Terminal {
 			x: buffer.cursorX,
 			y: buffer.cursorY,
 		};
-	}
-
-	/** Which xterm buffer is active: "normal" or "alternate". */
-	getActiveBufferType(): "normal" | "alternate" {
-		return this.xterm.buffer.active.type;
 	}
 
 	/** Wait for TUI's throttled render pipeline to settle. */

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentTraceUploadAllResult, AgentTraceUploadResult } from "../src/core/agent-traces.js";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { PRIME_AGENT_TRACES_PROVIDER_ID } from "../src/core/prime-inference-auth.js";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
+import type { AgentTraceUploadAllResult, AgentTraceUploadResult } from "../src/core/agent-traces.ts";
+import { AuthStorage } from "../src/core/auth-storage.ts";
+import { PRIME_AGENT_TRACES_PROVIDER_ID } from "../src/core/prime-inference-auth.ts";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 interface TracesCommandContext {
 	traceUploadAllAbortController?: AbortController;

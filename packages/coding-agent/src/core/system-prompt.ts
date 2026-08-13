@@ -2,9 +2,9 @@
  * System prompt construction and project context loading
  */
 
-import { buildChildAgentDoctrine, buildRlmPrompt, buildSubagentGuidance } from "./prompts/index.js";
-import { formatHarnessStateForPrompt, type HarnessState, REFINE_SKILL_NAME } from "./refinement/index.js";
-import { formatSkillsForPrompt, getPythonSkillRuntimeInfo, type Skill } from "./skills.js";
+import { buildChildAgentDoctrine, buildRlmPrompt, buildSubagentGuidance } from "./prompts/index.ts";
+import { formatHarnessStateForPrompt, type HarnessState, REFINE_SKILL_NAME } from "./refinement/index.ts";
+import { formatSkillsForPrompt, getPythonSkillRuntimeInfo, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
@@ -65,6 +65,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const tools = selectedTools ?? ["ipython"];
 	const hasIpython = tools.includes("ipython");
 	const hasBash = tools.includes("bash");
+	const hasRead = tools.includes("read");
 	const visibleSkills = skills.filter((skill) => !skill.disableModelInvocation);
 	const visiblePythonSkillImportNames = getPythonSkillRuntimeInfo(visibleSkills).map((skill) => skill.importName);
 	const hasRefineSkill = visibleSkills.some((skill) => skill.name === REFINE_SKILL_NAME);
@@ -72,23 +73,27 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	if (customPrompt) {
 		let prompt = customPrompt;
 
-		// Append project context files
+		// Append project context files (pi XML-style project_context)
 		if (contextFiles.length > 0) {
-			prompt += "\n\n# Project Context\n\n";
+			prompt += "\n\n<project_context>\n\n";
 			prompt += "Project-specific instructions and guidelines:\n\n";
 			for (const { path: filePath, content } of contextFiles) {
-				prompt += `## ${filePath}\n\n${content}\n\n`;
+				prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`;
 			}
+			prompt += "</project_context>\n";
 		}
 
-		// Append skills section only when the model has a way to inspect skill files.
+		// Append skills when the model can inspect skill files (read, ipython, or bash).
 		const customPromptHasFileAccess =
-			!selectedTools || selectedTools.includes("ipython") || selectedTools.includes("bash");
+			!selectedTools ||
+			selectedTools.includes("read") ||
+			selectedTools.includes("ipython") ||
+			selectedTools.includes("bash");
 		if (customPromptHasFileAccess && skills.length > 0) {
 			prompt += formatSkillsForPrompt(skills);
 		}
 
-		// Add date and working directory last
+		// Add date and working directory
 		prompt += `\nCurrent date: ${date}`;
 		prompt += `\nCurrent working directory: ${promptCwd}`;
 
@@ -113,6 +118,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		return prompt;
 	}
 
+	// RLM doctrine is the trained base prompt (prime-agent signature).
 	let prompt = buildRlmPrompt({
 		cwd: promptCwd,
 		messagesPath: promptMessagesPath,
@@ -127,9 +133,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	// menu, so the model reads when/why to delegate and then sees the concrete subagent
 	// specs it can match against — the same ordering as Claude Code's Agent tool.
 	if ((allowRecursion ?? true) && hasIpython) {
-		const visiblePythonSkillNames = new Set(
-			getPythonSkillRuntimeInfo(visibleSkills).map((skill) => skill.importName),
-		);
+		const visiblePythonSkillNames = new Set(visiblePythonSkillImportNames);
 		prompt += `\n\n${buildSubagentGuidance({
 			includeRefineExamples: hasRefineSkill,
 			hasAgentMessage: visiblePythonSkillNames.has("agent_message"),
@@ -146,17 +150,18 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		prompt += `\n\n# Additional Guidance\n\n${guidelines}`;
 	}
 
-	// Append project context files
+	// Append project context files (pi XML-style project_context)
 	if (contextFiles.length > 0) {
-		prompt += "\n\n# Project Context\n\n";
+		prompt += "\n\n<project_context>\n\n";
 		prompt += "Project-specific instructions and guidelines:\n\n";
 		for (const { path: filePath, content } of contextFiles) {
-			prompt += `## ${filePath}\n\n${content}\n\n`;
+			prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`;
 		}
+		prompt += "</project_context>\n";
 	}
 
-	// Append skills section only when the model has a way to inspect skill files.
-	const hasFileAccess = tools.includes("ipython") || tools.includes("bash");
+	// Append skills when the model can inspect skill files.
+	const hasFileAccess = hasRead || hasIpython || hasBash;
 	if (hasFileAccess && skills.length > 0) {
 		prompt += formatSkillsForPrompt(skills);
 	}

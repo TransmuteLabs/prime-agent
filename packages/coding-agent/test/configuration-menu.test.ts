@@ -1,13 +1,13 @@
 import { setKeybindings, type TUI, visibleWidth } from "@earendil-works/pi-tui";
-import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { KeybindingsManager } from "../src/core/keybindings.js";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
 import {
 	ConfigurationMenuComponent,
 	type ConfigurationMenuTab,
-} from "../src/modes/interactive/components/configuration-menu.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
-import { createHarness, type Harness } from "./suite/harness.js";
+} from "../src/modes/interactive/components/configuration-menu.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
+import { createHarness, type Harness } from "./suite/harness.ts";
 
 function createFakeTui(): TUI {
 	return {

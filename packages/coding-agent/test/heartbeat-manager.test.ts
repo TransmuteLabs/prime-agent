@@ -1,10 +1,10 @@
 import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { AgentCronJob, AgentHeartbeatManagementAction } from "../src/core/cron-jobs.js";
-import { KEYBINDINGS, KeybindingsManager } from "../src/core/keybindings.js";
-import type { AgentConnectionHeartbeat } from "../src/modes/agent-connection/types.js";
-import { HeartbeatManagerComponent } from "../src/modes/interactive/components/heartbeat-manager.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import type { AgentCronJob, AgentHeartbeatManagementAction } from "../src/core/cron-jobs.ts";
+import { KEYBINDINGS, KeybindingsManager } from "../src/core/keybindings.ts";
+import type { AgentConnectionHeartbeat } from "../src/modes/agent-connection/types.ts";
+import { HeartbeatManagerComponent } from "../src/modes/interactive/components/heartbeat-manager.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 function heartbeat(
 	id: string,

@@ -1,57 +1,48 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, ServiceTier, TextContent, Usage } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	type ImageContent,
+	type Message,
+	type TextContent,
+	type Usage,
+	uuidv7,
+} from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
 	chmodSync,
 	chownSync,
+	closeSync,
+	createReadStream,
 	existsSync,
 	mkdirSync,
+	openSync,
 	readdirSync,
-	readFileSync,
+	readSync,
 	realpathSync,
 	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir, readFile, stat } from "fs/promises";
+import { readdir, stat } from "fs/promises";
 import { basename, dirname, join, resolve } from "path";
-import { v7 as uuidv7 } from "uuid";
-import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
-import { readFirstLineSync, readLinesAsBuffers } from "../utils/file-lines.js";
-import { captureGitContext, type GitContext, gitContextsEqual } from "../utils/git.js";
+import { createInterface } from "readline";
+import { StringDecoder } from "string_decoder";
+import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
+import type { ServiceTier } from "../modes/daemon/prime-port-ai-compat.ts";
+import { captureGitContext, type GitContext, gitContextsEqual } from "../utils/git.ts";
+import { normalizePath, resolvePath } from "../utils/paths.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
 	createCustomMessage,
-} from "./messages.js";
-import { cloneUsage } from "./usage.js";
+} from "./messages.ts";
+import { cloneUsage } from "./usage.ts";
 
 export const CURRENT_SESSION_VERSION = 3;
-const SESSION_LIST_SEARCH_TEXT_MAX_CHARS = 64 * 1024;
-const SESSION_LIST_PARSE_MAX_LINE_CHARS = 1024 * 1024;
-const SESSION_LIST_LARGE_MESSAGE_PREVIEW_MAX_CHARS = 256;
-const SESSION_STREAMING_LOAD_THRESHOLD_BYTES = 128 * 1024 * 1024;
-const SESSION_ASYNC_PARSE_YIELD_BYTES = 4 * 1024 * 1024;
-
-// Entry types that can represent user intent (vs. daemon bookkeeping like
-// session_state/agent_status/git_state/child_usage_attributed). Used by
-// hasUserContent to decide whether a message-less draft is safe to discard.
-const CONTENT_ENTRY_TYPES = new Set([
-	"message",
-	"custom_message",
-	"custom",
-	"model_change",
-	"thinking_level_change",
-	"service_tier_change",
-	"session_info",
-	"label",
-	"compaction",
-	"branch_summary",
-]);
 
 function realpathIfPresent(path: string): string {
 	try {
@@ -79,19 +70,18 @@ export interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
-	/** RLM spawn depth. Optional for backward compatibility. Forks preserve the source depth. */
-	rlmDepth?: number;
+	/** Git snapshot captured at session creation (prime-agent). */
 	git?: GitContext;
 }
+
+export type SessionPersistListener = (sessionFile: string) => void;
 
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
-	/** Explicit RLM spawn depth. An explicitly undefined value suppresses parent derivation. */
+	/** Recursive agent depth for child sessions (prime-agent). */
 	rlmDepth?: number;
 }
-
-export type SessionPersistListener = (sessionFile: string) => void;
 
 export interface SessionEntryBase {
 	type: string;
@@ -105,8 +95,6 @@ export interface SessionMessageEntry extends SessionEntryBase {
 	message: AgentMessage;
 }
 
-type AssistantSessionMessageEntry = SessionMessageEntry & { message: AssistantMessage };
-
 export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	type: "thinking_level_change";
 	thinkingLevel: string;
@@ -115,6 +103,27 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 export interface ServiceTierChangeEntry extends SessionEntryBase {
 	type: "service_tier_change";
 	serviceTier: ServiceTier;
+}
+
+type AssistantSessionMessageEntry = SessionMessageEntry & { message: AssistantMessage };
+
+/**
+ * Records usage folded into a parent assistant message after an RLM child run.
+ * The child usage is kept separately so audit/UI code can explain why the
+ * parent turn's aggregate usage exceeds the parent model response itself.
+ */
+export interface ChildUsageAttributionEntry extends SessionEntryBase {
+	type: "child_usage_attributed";
+	targetId: string;
+	childUsage: Usage;
+	aggregateUsage: Usage;
+	origin?: "spawn_task" | "agent_message" | "direct_user";
+}
+
+/** Append-only repo-state entry; ignored by buildSessionContext and other readers. */
+export interface GitStateEntry extends SessionEntryBase {
+	type: "git_state";
+	git: GitContext;
 }
 
 export interface ModelChangeEntry extends SessionEntryBase {
@@ -130,10 +139,10 @@ export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	tokensBefore: number;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
+	/** Usage from the LLM call(s) that generated this summary, if available */
+	usage?: Usage;
 	/** True if generated by an extension, undefined/false if pi-generated (backward compatible) */
 	fromHook?: boolean;
-	/** User instructions that guided the summary (from `/compact <instructions>`) */
-	customInstructions?: string;
 }
 
 export interface BranchSummaryEntry<T = unknown> extends SessionEntryBase {
@@ -142,6 +151,8 @@ export interface BranchSummaryEntry<T = unknown> extends SessionEntryBase {
 	summary: string;
 	/** Extension-specific data (not sent to LLM) */
 	details?: T;
+	/** Usage from the LLM call that generated this summary, if available */
+	usage?: Usage;
 	/** True if generated by an extension, false if pi-generated */
 	fromHook?: boolean;
 }
@@ -162,19 +173,6 @@ export interface CustomEntry<T = unknown> extends SessionEntryBase {
 	data?: T;
 }
 
-/**
- * Records usage folded into a parent assistant message after an RLM child run.
- * The child usage is kept separately so audit/UI code can explain why the
- * parent turn's aggregate usage exceeds the parent model response itself.
- */
-export interface ChildUsageAttributionEntry extends SessionEntryBase {
-	type: "child_usage_attributed";
-	targetId: string;
-	childUsage: Usage;
-	aggregateUsage: Usage;
-	origin?: "spawn_task" | "agent_message" | "direct_user";
-}
-
 /** Label entry for user-defined bookmarks/markers on entries. */
 export interface LabelEntry extends SessionEntryBase {
 	type: "label";
@@ -186,43 +184,6 @@ export interface LabelEntry extends SessionEntryBase {
 export interface SessionInfoEntry extends SessionEntryBase {
 	type: "session_info";
 	name?: string;
-}
-
-// On-disk lifecycle. "archived" replaces legacy "sleep" (normalized on read).
-// "crash" is read-only back-compat; no longer written.
-export type SessionStateStatus = "active" | "archived" | "crash";
-
-export interface SessionState {
-	status: SessionStateStatus;
-}
-
-/** Session lifecycle state entry (e.g., inactive status for daemon-managed sessions). */
-export interface SessionStateEntry extends SessionEntryBase {
-	type: "session_state";
-	state: SessionState;
-}
-
-/** Whether an idle agent's turn left the task complete or awaiting more input. */
-export type AgentTaskState = "needs_input" | "completed";
-
-/** Latest short status for an agent, shown in the agents view. */
-export interface AgentStatus {
-	summary: string;
-	taskState?: AgentTaskState;
-	/** Message count this status was derived from, used to skip redundant work. */
-	basedOnMessageCount: number;
-}
-
-/** Append-only status entry; ignored by buildSessionContext and other readers. */
-export interface AgentStatusEntry extends SessionEntryBase {
-	type: "agent_status";
-	status: AgentStatus;
-}
-
-/** Append-only repo-state entry; ignored by buildSessionContext and other readers. */
-export interface GitStateEntry extends SessionEntryBase {
-	type: "git_state";
-	git: GitContext;
 }
 
 /**
@@ -254,35 +215,44 @@ export type SessionEntry =
 	| CompactionEntry
 	| BranchSummaryEntry
 	| CustomEntry
-	| ChildUsageAttributionEntry
 	| CustomMessageEntry
 	| LabelEntry
+	| ChildUsageAttributionEntry
 	| SessionInfoEntry
-	| SessionStateEntry
-	| AgentStatusEntry
 	| GitStateEntry;
 
 /** Raw file entry (includes header) */
 export type FileEntry = SessionHeader | SessionEntry;
 
 /** Tree node for getTree() - defensive copy of session structure */
-export interface SessionTreeFlatNode {
+export interface SessionTreeNode {
 	entry: SessionEntry;
+	children: SessionTreeNode[];
 	/** Resolved label for this entry, if any */
 	label?: string;
 	/** Timestamp of the latest label change for this entry, if any */
 	labelTimestamp?: string;
 }
 
-export interface SessionTreeNode extends SessionTreeFlatNode {
-	children: SessionTreeNode[];
-}
-
 export interface SessionContext {
 	messages: AgentMessage[];
 	thinkingLevel: string;
-	serviceTier: ServiceTier;
 	model: { provider: string; modelId: string } | null;
+}
+
+export type AgentTaskState = "needs_input" | "completed";
+
+export interface AgentStatus {
+	summary: string;
+	taskState?: AgentTaskState;
+	/** Message count this status was derived from, used to skip redundant work. */
+	basedOnMessageCount: number;
+}
+
+export type SessionStateStatus = "active" | "archived" | "crash";
+
+export interface SessionState {
+	status: SessionStateStatus;
 }
 
 export interface SessionInfo {
@@ -292,19 +262,19 @@ export interface SessionInfo {
 	cwd: string;
 	/** User-defined display name from session_info entries. */
 	name?: string;
-	/** Latest persisted lifecycle state from session_state entries. */
-	state?: SessionState;
 	/** Path to the parent session (if this session was forked). */
 	parentSessionPath?: string;
-	/** Resolved RLM spawn depth. */
-	rlmDepth: number;
 	created: Date;
 	modified: Date;
 	messageCount: number;
 	firstMessage: string;
 	allMessagesText: string;
-	/** Latest persisted recap/verdict, so off-daemon sessions keep their status. */
+	/** Nested RLM depth when known (prime-port). */
+	rlmDepth?: number;
+	/** Latest agent status recap (prime-port). */
 	agentStatus?: AgentStatus;
+	/** Coarse session state (prime-port). */
+	state?: SessionState;
 }
 
 export type ReadonlySessionManager = Pick<
@@ -318,6 +288,7 @@ export type ReadonlySessionManager = Pick<
 	| "getEntry"
 	| "getLabel"
 	| "getBranch"
+	| "buildContextEntries"
 	| "getHeader"
 	| "getEntries"
 	| "getTree"
@@ -328,23 +299,12 @@ function createSessionId(): string {
 	return uuidv7();
 }
 
-function getSessionFilePath(sessionDir: string, sessionId: string): string {
-	return join(sessionDir, `${sessionId}.jsonl`);
-}
-
-function createUniqueSessionFileTarget(sessionDir: string): { sessionId: string; sessionFile: string } {
-	for (let i = 0; i < 100; i++) {
-		const sessionId = createSessionId();
-		const sessionFile = getSessionFilePath(sessionDir, sessionId);
-		if (!existsSync(sessionFile)) {
-			return { sessionId, sessionFile };
-		}
+export function assertValidSessionId(id: string): void {
+	if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(id)) {
+		throw new Error(
+			"Session id must be non-empty, contain only alphanumeric characters, '-', '_', and '.', and start and end with an alphanumeric character",
+		);
 	}
-	throw new Error("Unable to create a unique session file");
-}
-
-function getSessionArtifactPath(sessionDir: string, sessionId: string): string {
-	return join(dirname(sessionDir), "session-artifacts", sessionId);
 }
 
 /** Generate a unique short ID (8 hex chars, collision-checked) */
@@ -469,6 +429,137 @@ export function getLatestCompactionEntry(entries: SessionEntry[]): CompactionEnt
 	return null;
 }
 
+function buildEntryIndex(entries: SessionEntry[], byId?: Map<string, SessionEntry>): Map<string, SessionEntry> {
+	if (byId) return byId;
+	const index = new Map<string, SessionEntry>();
+	for (const entry of entries) {
+		index.set(entry.id, entry);
+	}
+	return index;
+}
+
+function buildSessionPath(
+	entries: SessionEntry[],
+	leafId?: string | null,
+	byId?: Map<string, SessionEntry>,
+): SessionEntry[] {
+	const index = buildEntryIndex(entries, byId);
+	let leaf: SessionEntry | undefined;
+	if (leafId === null) {
+		return [];
+	}
+	if (leafId) {
+		leaf = index.get(leafId);
+	}
+	leaf ??= entries[entries.length - 1];
+	if (!leaf) {
+		return [];
+	}
+
+	const path: SessionEntry[] = [];
+	let current: SessionEntry | undefined = leaf;
+	while (current) {
+		path.push(current);
+		current = current.parentId ? index.get(current.parentId) : undefined;
+	}
+	path.reverse();
+	return path;
+}
+
+function getSessionContextSettings(path: SessionEntry[]): Pick<SessionContext, "thinkingLevel" | "model"> {
+	let thinkingLevel = "off";
+	let model: { provider: string; modelId: string } | null = null;
+
+	for (const entry of path) {
+		if (entry.type === "thinking_level_change") {
+			thinkingLevel = entry.thinkingLevel;
+		} else if (entry.type === "model_change") {
+			model = { provider: entry.provider, modelId: entry.modelId };
+		} else if (entry.type === "message" && entry.message.role === "assistant") {
+			model = { provider: entry.message.provider, modelId: entry.message.model };
+		}
+	}
+
+	return { thinkingLevel, model };
+}
+
+/**
+ * Project one selected session entry into LLM/runtime messages.
+ * Plain custom entries are display/state entries and do not participate in context.
+ */
+export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage[] {
+	if (entry.type === "message") {
+		const message = entry.message;
+		// Session files are parsed without validation; old versions, forks, or
+		// hand-edited files can contain messages with null/missing content.
+		if (
+			(message.role === "user" || message.role === "assistant" || message.role === "toolResult") &&
+			message.content == null
+		) {
+			return [{ ...message, content: [] }];
+		}
+		return [message];
+	}
+	if (entry.type === "custom_message") {
+		return [
+			createCustomMessage(entry.customType, entry.content ?? [], entry.display, entry.details, entry.timestamp),
+		];
+	}
+	if (entry.type === "branch_summary" && entry.summary) {
+		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
+	}
+	if (entry.type === "compaction") {
+		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)];
+	}
+	return [];
+}
+
+/**
+ * Build the active, compaction-aware session entry list.
+ *
+ * This follows the current leaf path. If the path contains compaction entries,
+ * the latest compaction is represented by the compaction entry itself, followed
+ * by the kept entries starting at firstKeptEntryId and all entries after the
+ * compaction entry. Older summarized entries are omitted.
+ */
+export function buildContextEntries(
+	entries: SessionEntry[],
+	leafId?: string | null,
+	byId?: Map<string, SessionEntry>,
+): SessionEntry[] {
+	const path = buildSessionPath(entries, leafId, byId);
+	let compaction: CompactionEntry | null = null;
+
+	for (const entry of path) {
+		if (entry.type === "compaction") {
+			compaction = entry;
+		}
+	}
+
+	if (!compaction) {
+		return path;
+	}
+
+	const compactionIdx = path.findIndex((entry) => entry.id === compaction.id);
+	if (compactionIdx < 0) {
+		return path;
+	}
+
+	const contextEntries: SessionEntry[] = [compaction];
+	let foundFirstKept = false;
+	for (let i = 0; i < compactionIdx; i++) {
+		const entry = path[i];
+		if (entry.id === compaction.firstKeptEntryId) {
+			foundFirstKept = true;
+		}
+		if (foundFirstKept) {
+			contextEntries.push(entry);
+		}
+	}
+	contextEntries.push(...path.slice(compactionIdx + 1));
+	return contextEntries;
+}
+
 /**
  * Build the session context from entries using tree traversal.
  * If leafId is provided, walks from that entry to root.
@@ -479,366 +570,195 @@ export function buildSessionContext(
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionContext {
-	// Build uuid index if not available
-	if (!byId) {
-		byId = new Map<string, SessionEntry>();
-		for (const entry of entries) {
-			byId.set(entry.id, entry);
-		}
-	}
-
-	// Find leaf
-	let leaf: SessionEntry | undefined;
-	if (leafId === null) {
-		// Explicitly null - return no messages (navigated to before first entry)
-		return { messages: [], thinkingLevel: "off", serviceTier: "default", model: null };
-	}
-	if (leafId) {
-		leaf = byId.get(leafId);
-	}
-	if (!leaf) {
-		// Fallback to last entry (when leafId is undefined)
-		leaf = entries[entries.length - 1];
-	}
-
-	if (!leaf) {
-		return { messages: [], thinkingLevel: "off", serviceTier: "default", model: null };
-	}
-
-	// push+reverse, not unshift-per-entry: unshift is O(n), making this O(n^2) on long sessions.
-	const path: SessionEntry[] = [];
-	let current: SessionEntry | undefined = leaf;
-	while (current) {
-		path.push(current);
-		current = current.parentId ? byId.get(current.parentId) : undefined;
-	}
-	path.reverse();
-
-	// Extract settings and find compaction
-	let thinkingLevel = "off";
-	let serviceTier: ServiceTier = "default";
-	let model: { provider: string; modelId: string } | null = null;
-	let compaction: CompactionEntry | null = null;
-
-	for (const entry of path) {
-		if (entry.type === "thinking_level_change") {
-			thinkingLevel = entry.thinkingLevel;
-		} else if (entry.type === "service_tier_change") {
-			serviceTier = entry.serviceTier;
-		} else if (entry.type === "model_change") {
-			model = { provider: entry.provider, modelId: entry.modelId };
-		} else if (entry.type === "message" && entry.message.role === "assistant") {
-			model = { provider: entry.message.provider, modelId: entry.message.model };
-		} else if (entry.type === "compaction") {
-			compaction = entry;
-		}
-	}
-
-	// Build messages and collect corresponding entries
-	// When there's a compaction, model context remains summary-first while the
-	// summary records where clients should present it among retained messages.
-	const messages: AgentMessage[] = [];
-
-	const appendMessage = (entry: SessionEntry, target = messages) => {
-		if (entry.type === "message") {
-			target.push(entry.message);
-		} else if (entry.type === "custom_message") {
-			target.push(
-				createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp),
-			);
-		} else if (entry.type === "branch_summary" && entry.summary) {
-			target.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
-		}
-	};
-
-	if (compaction) {
-		// Find compaction index in path
-		const compactionIdx = path.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
-
-		// Collect kept messages (before compaction, starting from firstKeptEntryId).
-		// The context remains summary-first for the model; retainedMessageCount records
-		// the exact chronological presentation boundary for clients.
-		const retainedMessages: AgentMessage[] = [];
-		let foundFirstKept = false;
-		for (let i = 0; i < compactionIdx; i++) {
-			const entry = path[i];
-			if (entry.id === compaction.firstKeptEntryId) {
-				foundFirstKept = true;
-			}
-			if (foundFirstKept) {
-				appendMessage(entry, retainedMessages);
-			}
-		}
-
-		messages.push(
-			createCompactionSummaryMessage(
-				compaction.summary,
-				compaction.tokensBefore,
-				compaction.timestamp,
-				compaction.customInstructions,
-				retainedMessages.length,
-			),
-			...retainedMessages,
-		);
-
-		// Emit messages after compaction
-		for (let i = compactionIdx + 1; i < path.length; i++) {
-			const entry = path[i];
-			appendMessage(entry);
-		}
-	} else {
-		// No compaction - emit all messages, handle branch summaries and custom messages
-		for (const entry of path) {
-			appendMessage(entry);
-		}
-	}
-
-	return { messages, thinkingLevel, serviceTier, model };
+	const path = buildSessionPath(entries, leafId, byId);
+	const { thinkingLevel, model } = getSessionContextSettings(path);
+	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
+	return { messages, thinkingLevel, model };
 }
 
 /**
  * Compute the default session directory for a cwd.
- * Returns the configured session root.
+ * Encodes cwd into a safe directory name under ~/.pi/agent/sessions/.
  */
-export function getDefaultSessionDir(_cwd: string, agentDir: string = getDefaultAgentDir()): string {
-	const sessionDir = getSessionsDir(agentDir);
+function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgentDir()): string {
+	const resolvedCwd = resolvePath(cwd);
+	const resolvedAgentDir = resolvePath(agentDir);
+	const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+	return join(resolvedAgentDir, "sessions", safePath);
+}
+
+export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultAgentDir()): string {
+	const sessionDir = getDefaultSessionDirPath(cwd, agentDir);
 	if (!existsSync(sessionDir)) {
 		mkdirSync(sessionDir, { recursive: true });
 	}
 	return sessionDir;
 }
 
-// Decode per line off a Buffer: toString("utf8") on a whole large file is far slower
-// (one giant UTF-16 string). Splitting on 0x0a is UTF-8-safe.
-function appendEntryFromBuffer(entries: FileEntry[], buffer: Buffer, start = 0, end = buffer.length): void {
-	if (end <= start) return;
+const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
+const SESSION_HEADER_READ_BUFFER_SIZE = 4096;
+/** Bound synchronous header discovery while allowing large cwd and custom metadata fields. */
+const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
+
+class SessionHeaderScanLimitError extends Error {
+	constructor(filePath: string) {
+		super(`Session header exceeds ${MAX_SESSION_HEADER_SCAN_BYTES}-byte scan limit: ${filePath}`);
+		this.name = "SessionHeaderScanLimitError";
+	}
+}
+
+function parseSessionEntryLine(line: string): FileEntry | null {
+	if (!line.trim()) return null;
 	try {
-		entries.push(JSON.parse(buffer.toString("utf8", start, end)) as FileEntry);
+		return JSON.parse(line) as FileEntry;
 	} catch {
-		// Skip malformed or blank lines.
-	}
-}
-
-function parseEntriesFromBuffer(buffer: Buffer): FileEntry[] {
-	const entries: FileEntry[] = [];
-	let start = 0;
-	while (start < buffer.length) {
-		let end = buffer.indexOf(0x0a, start);
-		if (end === -1) end = buffer.length;
-		appendEntryFromBuffer(entries, buffer, start, end);
-		start = end + 1;
-	}
-	return entries;
-}
-
-async function parseEntriesFromBufferAsync(buffer: Buffer): Promise<FileEntry[]> {
-	const entries: FileEntry[] = [];
-	let start = 0;
-	let bytesSinceYield = 0;
-	while (start < buffer.length) {
-		let end = buffer.indexOf(0x0a, start);
-		if (end === -1) end = buffer.length;
-		appendEntryFromBuffer(entries, buffer, start, end);
-		bytesSinceYield += end - start + 1;
-		start = end + 1;
-		if (bytesSinceYield >= SESSION_ASYNC_PARSE_YIELD_BYTES) {
-			bytesSinceYield = 0;
-			await new Promise<void>((resolve) => setImmediate(resolve));
-		}
-	}
-	return entries;
-}
-
-function finalizeLoadedEntries(entries: FileEntry[]): FileEntry[] {
-	if (entries.length === 0) return entries;
-	const header = entries[0];
-	if (header.type !== "session" || typeof (header as any).id !== "string") {
-		return [];
-	}
-	applyChildUsageAttributions(entries);
-	return entries;
-}
-
-/** Exported for testing */
-export function loadEntriesFromFile(filePath: string): FileEntry[] {
-	if (!existsSync(filePath)) return [];
-	return finalizeLoadedEntries(parseEntriesFromBuffer(readFileSync(filePath)));
-}
-
-// Async loader for the daemon: reads off the event loop and yields while parsing so a
-// large load doesn't freeze other sessions. Large files stream to avoid retaining both
-// the full input Buffer and the parsed entry graph at the same time.
-export async function loadEntriesFromFileAsync(
-	filePath: string,
-	options: { streamThresholdBytes?: number } = {},
-): Promise<FileEntry[]> {
-	if (!existsSync(filePath)) return [];
-	const streamThresholdBytes = options.streamThresholdBytes ?? SESSION_STREAMING_LOAD_THRESHOLD_BYTES;
-	if ((await stat(filePath)).size < streamThresholdBytes) {
-		return finalizeLoadedEntries(await parseEntriesFromBufferAsync(await readFile(filePath)));
-	}
-
-	const entries: FileEntry[] = [];
-	let bytesSinceYield = 0;
-	for await (const line of readLinesAsBuffers(filePath)) {
-		appendEntryFromBuffer(entries, line);
-		bytesSinceYield += line.length + 1;
-		if (bytesSinceYield >= SESSION_ASYNC_PARSE_YIELD_BYTES) {
-			bytesSinceYield = 0;
-			await new Promise<void>((resolve) => setImmediate(resolve));
-		}
-	}
-	return finalizeLoadedEntries(entries);
-}
-
-function readSessionHeader(filePath: string): Partial<SessionHeader> | undefined {
-	const firstLine = readFirstLineSync(filePath);
-	if (!firstLine) {
-		return undefined;
-	}
-	return JSON.parse(firstLine) as Partial<SessionHeader>;
-}
-
-function isValidRlmDepth(value: unknown): value is number {
-	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-export function resolveSessionRlmDepth(
-	header: { rlmDepth?: number; parentSession?: string },
-	sessionPath: string,
-): number {
-	return resolveLegacySessionRlmDepth(header, sessionPath, new Set()) ?? legacyChildDepthFromPath(sessionPath);
-}
-
-function resolveLegacySessionRlmDepth(
-	header: { rlmDepth?: number; parentSession?: string },
-	sessionPath: string,
-	visitedPaths: Set<string>,
-): number | undefined {
-	if (isValidRlmDepth(header.rlmDepth)) {
-		return header.rlmDepth;
-	}
-	if (!header.parentSession) {
-		return 0;
-	}
-
-	const resolvedSessionPath = resolve(sessionPath);
-	if (visitedPaths.has(resolvedSessionPath)) {
-		return undefined;
-	}
-	visitedPaths.add(resolvedSessionPath);
-
-	const pathDepth = legacyChildDepthFromPath(sessionPath);
-	const parentSessionPath = resolve(dirname(sessionPath), header.parentSession);
-	try {
-		const parentHeader = readSessionHeader(parentSessionPath);
-		if (parentHeader) {
-			const parentDepth = resolveLegacySessionRlmDepth(parentHeader, parentSessionPath, visitedPaths);
-			if (parentDepth !== undefined) {
-				return pathDepth > 0 ? parentDepth + 1 : parentDepth;
-			}
-		}
-	} catch {
-		// Fall back to artifact ancestry for unavailable or invalid legacy parents.
-	} finally {
-		visitedPaths.delete(resolvedSessionPath);
-	}
-	return pathDepth;
-}
-
-function legacyChildDepthFromPath(sessionPath: string): number {
-	let depth = 0;
-	for (const segment of dirname(sessionPath)
-		.split(/[\\/]+/)
-		.reverse()) {
-		if (!/^sub-[0-9a-f]{8}$/.test(segment)) {
-			break;
-		}
-		depth += 1;
-	}
-	return depth;
-}
-
-function deriveChildRlmDepth(parentHeader: Partial<SessionHeader> | undefined): number | undefined {
-	const depth = parentHeader?.rlmDepth;
-	return isValidRlmDepth(depth) && depth < Number.MAX_SAFE_INTEGER ? depth + 1 : undefined;
-}
-
-function rootRlmDepthFromEnv(): number {
-	const value = process.env.RLM_DEPTH;
-	if (value === undefined || value === "") {
-		return 0;
-	}
-	const parsed = Number(value);
-	if (!/^\d+$/.test(value) || !isValidRlmDepth(parsed)) {
-		throw new Error("RLM_DEPTH must be a non-negative integer");
-	}
-	return parsed;
-}
-
-function isValidSessionFile(filePath: string): boolean {
-	try {
-		const header = readSessionHeader(filePath);
-		return header?.type === "session" && typeof header.id === "string";
-	} catch {
-		return false;
-	}
-}
-
-/** Exported for testing */
-export function findMostRecentSession(sessionDir: string): string | null {
-	try {
-		const files = readdirSync(sessionDir)
-			.filter((f) => f.endsWith(".jsonl"))
-			.map((f) => join(sessionDir, f))
-			.filter(isValidSessionFile)
-			.map((path) => ({ path, mtime: statSync(path).mtime }))
-			.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-
-		return files[0]?.path || null;
-	} catch {
+		// Skip malformed lines
 		return null;
 	}
 }
 
-function normalizeCwd(cwd: string): string {
-	return resolve(cwd);
-}
+/** Exported for testing */
+export function loadEntriesFromFile(filePath: string): FileEntry[] {
+	const resolvedFilePath = normalizePath(filePath);
+	if (!existsSync(resolvedFilePath)) return [];
 
-function sessionInfoMatchesCwd(session: SessionInfo, cwd: string): boolean {
-	return !!session.cwd && normalizeCwd(session.cwd) === normalizeCwd(cwd);
-}
-
-function sessionHeaderMatchesCwd(header: Partial<SessionHeader> | undefined, cwd: string): boolean {
-	return (
-		header?.type === "session" &&
-		typeof header.id === "string" &&
-		typeof header.cwd === "string" &&
-		normalizeCwd(header.cwd) === normalizeCwd(cwd)
-	);
-}
-
-export function findMostRecentSessionForCwd(sessionDir: string, cwd: string): string | null {
+	const entries: FileEntry[] = [];
+	const fd = openSync(resolvedFilePath, "r");
 	try {
-		const files = readdirSync(sessionDir)
+		const decoder = new StringDecoder("utf8");
+		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
+		let pending = "";
+
+		while (true) {
+			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+			if (bytesRead === 0) break;
+
+			pending += decoder.write(buffer.subarray(0, bytesRead));
+			let lineStart = 0;
+			let newlineIndex = pending.indexOf("\n", lineStart);
+			while (newlineIndex !== -1) {
+				const entry = parseSessionEntryLine(pending.slice(lineStart, newlineIndex));
+				if (entry) entries.push(entry);
+				lineStart = newlineIndex + 1;
+				newlineIndex = pending.indexOf("\n", lineStart);
+			}
+			pending = pending.slice(lineStart);
+		}
+
+		pending += decoder.end();
+		const finalEntry = parseSessionEntryLine(pending);
+		if (finalEntry) entries.push(finalEntry);
+	} finally {
+		closeSync(fd);
+	}
+
+	// Validate session header
+	if (entries.length === 0) return entries;
+	const header = entries[0];
+	if (header.type !== "session" || typeof (header as { id?: unknown }).id !== "string") {
+		return [];
+	}
+
+	applyChildUsageAttributions(entries);
+	return entries;
+}
+
+/**
+ * Inspect a physical line while searching for the first parsed session entry.
+ * Blank and malformed lines are skipped to match loadEntriesFromFile().
+ * Returns undefined to keep scanning, null for a parsed non-header entry, or the header.
+ */
+function parseSessionHeaderCandidate(line: string): SessionHeader | null | undefined {
+	if (!line.trim()) return undefined;
+	const entry = parseSessionEntryLine(line);
+	if (!entry) return undefined;
+	if (entry.type !== "session" || typeof (entry as { id?: unknown }).id !== "string") return null;
+	return entry;
+}
+
+function readSessionHeader(filePath: string): SessionHeader | null {
+	const fd = openSync(filePath, "r");
+	try {
+		const decoder = new StringDecoder("utf8");
+		const buffer = Buffer.allocUnsafe(SESSION_HEADER_READ_BUFFER_SIZE);
+		const lineChunks: string[] = [];
+		let scannedBytes = 0;
+
+		while (scannedBytes < MAX_SESSION_HEADER_SCAN_BYTES) {
+			const readLength = Math.min(buffer.length, MAX_SESSION_HEADER_SCAN_BYTES - scannedBytes);
+			const bytesRead = readSync(fd, buffer, 0, readLength, null);
+			if (bytesRead === 0) {
+				lineChunks.push(decoder.end());
+				return parseSessionHeaderCandidate(lineChunks.join("")) ?? null;
+			}
+			scannedBytes += bytesRead;
+
+			const chunk = decoder.write(buffer.subarray(0, bytesRead));
+			let lineStart = 0;
+			let newlineIndex = chunk.indexOf("\n", lineStart);
+			while (newlineIndex !== -1) {
+				lineChunks.push(chunk.slice(lineStart, newlineIndex));
+				const header = parseSessionHeaderCandidate(lineChunks.join(""));
+				if (header !== undefined) return header;
+				lineChunks.length = 0;
+				lineStart = newlineIndex + 1;
+				newlineIndex = chunk.indexOf("\n", lineStart);
+			}
+			lineChunks.push(chunk.slice(lineStart));
+		}
+
+		// Probe for EOF so a final header without a newline is allowed when it ends
+		// exactly at the scan limit. Any additional byte exceeds the bounded scan.
+		const probe = Buffer.allocUnsafe(1);
+		if (readSync(fd, probe, 0, probe.length, null) === 0) {
+			lineChunks.push(decoder.end());
+			return parseSessionHeaderCandidate(lineChunks.join("")) ?? null;
+		}
+		throw new SessionHeaderScanLimitError(filePath);
+	} finally {
+		closeSync(fd);
+	}
+}
+
+function readSessionHeaderForDiscovery(filePath: string): SessionHeader | null {
+	try {
+		return readSessionHeader(filePath);
+	} catch {
+		// Discovery is best-effort: unreadable or oversized files are not sessions,
+		// and one corrupt file must not prevent other sessions from being found.
+		return null;
+	}
+}
+
+function getSessionHeaderCwd(header: SessionHeader): string | undefined {
+	const cwd = (header as { cwd?: unknown }).cwd;
+	return typeof cwd === "string" ? cwd : undefined;
+}
+
+function sessionCwdMatches(cwd: string | undefined, resolvedCwd: string): boolean {
+	return cwd !== undefined && cwd !== "" && resolvePath(cwd) === resolvedCwd;
+}
+
+/** Exported for testing */
+export function findMostRecentSession(sessionDir: string, cwd?: string): string | null {
+	const resolvedSessionDir = normalizePath(sessionDir);
+	const resolvedCwd = cwd ? resolvePath(cwd) : undefined;
+	try {
+		const files = readdirSync(resolvedSessionDir)
 			.filter((f) => f.endsWith(".jsonl"))
-			.map((f) => join(sessionDir, f))
-			.map((path) => {
-				try {
-					const header = readSessionHeader(path);
-					if (!sessionHeaderMatchesCwd(header, cwd)) {
-						return undefined;
-					}
-					return { path, mtime: statSync(path).mtime };
-				} catch {
-					return undefined;
-				}
-			})
-			.filter((entry): entry is { path: string; mtime: Date } => entry !== undefined)
+			.map((f) => join(resolvedSessionDir, f))
+			.map((path) => ({ path, header: readSessionHeaderForDiscovery(path) }))
+			.filter(
+				(file): file is { path: string; header: SessionHeader } =>
+					file.header !== null &&
+					(!resolvedCwd || sessionCwdMatches(getSessionHeaderCwd(file.header), resolvedCwd)),
+			)
+			.map(({ path }) => ({ path, mtime: statSync(path).mtime }))
 			.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 
 		return files[0]?.path || null;
 	} catch {
+		// Directory access and stat races make recent-session discovery unavailable.
 		return null;
 	}
 }
@@ -858,270 +778,94 @@ function extractTextContent(message: Message): string {
 		.join(" ");
 }
 
-// Legacy "hidden" and "sleep" statuses (written by older versions) both map to
-// the current "archived".
-function normalizeSessionStateStatus(value: unknown): SessionStateStatus | undefined {
-	if (value === "active" || value === "archived" || value === "crash") {
-		return value;
-	}
-	if (value === "hidden" || value === "sleep") {
-		return "archived";
-	}
-	return undefined;
-}
-
-function updateLastActivityTime(lastActivityTime: number | undefined, entry: FileEntry): number | undefined {
-	if (entry.type !== "message") {
-		return lastActivityTime;
-	}
-
-	const message = (entry as SessionMessageEntry).message;
-	if (!isMessageWithContent(message)) {
-		return lastActivityTime;
-	}
-	if (message.role !== "user" && message.role !== "assistant") {
-		return lastActivityTime;
-	}
+function getMessageActivityTime(entry: SessionMessageEntry): number | undefined {
+	const message = entry.message;
+	if (!isMessageWithContent(message)) return undefined;
+	if (message.role !== "user" && message.role !== "assistant") return undefined;
 
 	const msgTimestamp = (message as { timestamp?: number }).timestamp;
 	if (typeof msgTimestamp === "number") {
-		return Math.max(lastActivityTime ?? 0, msgTimestamp);
+		return msgTimestamp;
 	}
 
-	const entryTimestamp = (entry as SessionEntryBase).timestamp;
-	if (typeof entryTimestamp === "string") {
-		const t = new Date(entryTimestamp).getTime();
-		if (!Number.isNaN(t)) {
-			return Math.max(lastActivityTime ?? 0, t);
-		}
-	}
-
-	return lastActivityTime;
+	const t = new Date(entry.timestamp).getTime();
+	return Number.isNaN(t) ? undefined : t;
 }
 
-function getSessionModifiedDateFromLastActivity(
-	lastActivityTime: number | undefined,
-	header: SessionHeader,
-	statsMtime: Date,
-): Date {
-	if (typeof lastActivityTime === "number" && lastActivityTime > 0) {
-		return new Date(lastActivityTime);
-	}
-
-	const headerTime = typeof header.timestamp === "string" ? new Date(header.timestamp).getTime() : NaN;
-	return !Number.isNaN(headerTime) ? new Date(headerTime) : statsMtime;
-}
-
-function appendCappedSearchText(current: string, text: string): string {
-	if (!text || current.length >= SESSION_LIST_SEARCH_TEXT_MAX_CHARS) {
-		return current;
-	}
-	const next = current ? ` ${text}` : text;
-	return current + next.slice(0, SESSION_LIST_SEARCH_TEXT_MAX_CHARS - current.length);
-}
-
-function looksLikeMessageEntry(line: string): boolean {
-	return line.includes('"type":"message"') || line.includes('"type": "message"');
-}
-
-function extractJsonStringPropertyPrefix(
-	text: string,
-	propertyName: string,
-	maxChars: number,
-	startIndex = 0,
-): string | undefined {
-	const propertyIndex = text.indexOf(`"${propertyName}"`, startIndex);
-	if (propertyIndex < 0) {
-		return undefined;
-	}
-	let index = propertyIndex + propertyName.length + 2;
-	while (index < text.length && /\s/.test(text[index] ?? "")) index++;
-	if (text[index] !== ":") {
-		return undefined;
-	}
-	index++;
-	while (index < text.length && /\s/.test(text[index] ?? "")) index++;
-	if (text[index] !== '"') {
-		return undefined;
-	}
-	index++;
-
-	let result = "";
-	let escaped = false;
-	for (; index < text.length && result.length < maxChars; index++) {
-		const char = text[index];
-		if (escaped) {
-			result += char;
-			escaped = false;
-			continue;
-		}
-		if (char === "\\") {
-			escaped = true;
-			continue;
-		}
-		if (char === '"') {
-			break;
-		}
-		result += char;
-	}
-	return result;
-}
-
-function extractOversizedMessageSummary(line: string): {
-	role?: string;
-	timestamp?: number;
-	textPreview?: string;
-} {
-	const timestampText = extractJsonStringPropertyPrefix(line, "timestamp", 64);
-	const timestamp = timestampText ? new Date(timestampText).getTime() : NaN;
-	const messageIndex = line.indexOf('"message"');
-	const role =
-		messageIndex >= 0
-			? extractJsonStringPropertyPrefix(line, "role", 64, messageIndex)
-			: extractJsonStringPropertyPrefix(line, "role", 64);
-	let textPreview: string | undefined;
-	if (messageIndex >= 0) {
-		textPreview =
-			extractJsonStringPropertyPrefix(line, "content", SESSION_LIST_LARGE_MESSAGE_PREVIEW_MAX_CHARS, messageIndex) ??
-			extractJsonStringPropertyPrefix(line, "text", SESSION_LIST_LARGE_MESSAGE_PREVIEW_MAX_CHARS, messageIndex);
-	}
-	return {
-		role,
-		...(Number.isNaN(timestamp) ? {} : { timestamp }),
-		...(textPreview ? { textPreview } : {}),
-	};
-}
-
-interface SessionInfoCacheEntry {
-	size: number;
-	mtimeMs: number;
-	info: SessionInfo | null;
-}
-
-// Session files are append-only, so an unchanged (size, mtimeMs) means identical
-// content: cache list metadata and rescan only files that changed.
-const sessionInfoCache = new Map<string, SessionInfoCacheEntry>();
-
-export async function readSessionInfo(filePath: string): Promise<SessionInfo | null> {
-	let stats: Awaited<ReturnType<typeof stat>>;
+async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 	try {
-		stats = await stat(filePath);
-	} catch {
-		return null;
-	}
-	const cached = sessionInfoCache.get(filePath);
-	if (cached && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs) {
-		return cached.info;
-	}
-	const info = await scanSessionInfo(filePath, stats);
-	sessionInfoCache.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs, info });
-	return info;
-}
-
-async function scanSessionInfo(filePath: string, stats: Awaited<ReturnType<typeof stat>>): Promise<SessionInfo | null> {
-	try {
-		let header: SessionHeader | undefined;
+		const stats = await stat(filePath);
+		let header: SessionHeader | null = null;
 		let messageCount = 0;
 		let firstMessage = "";
-		let allMessagesText = "";
+		const allMessages: string[] = [];
 		let name: string | undefined;
-		let state: SessionState | undefined;
-		let agentStatus: AgentStatus | undefined;
 		let lastActivityTime: number | undefined;
 
-		for await (const lineBuffer of readLinesAsBuffers(filePath)) {
-			const line = lineBuffer.toString("utf8");
-			if (!line.trim()) continue;
+		const rl = createInterface({
+			input: createReadStream(filePath, { encoding: "utf8" }),
+			crlfDelay: Infinity,
+		});
 
-			// Large tool-result entries can be many MB. They do not carry the
-			// session-list metadata we need, and parsing them during every refresh
-			// can exhaust the daemon heap.
-			if (line.length > SESSION_LIST_PARSE_MAX_LINE_CHARS) {
-				if (looksLikeMessageEntry(line)) {
-					messageCount++;
-					const summary = extractOversizedMessageSummary(line);
-					if (typeof summary.timestamp === "number" && (summary.role === "user" || summary.role === "assistant")) {
-						lastActivityTime = Math.max(lastActivityTime ?? 0, summary.timestamp);
-					}
-					if (summary.role === "user" && !firstMessage) {
-						firstMessage = summary.textPreview || "(large message)";
-					}
-				}
-				continue;
-			}
+		for await (const line of rl) {
+			const entry = parseSessionEntryLine(line);
+			if (!entry) continue;
 
-			const trimmed = line.trim();
-			let entry: FileEntry;
-			try {
-				entry = JSON.parse(trimmed) as FileEntry;
-			} catch {
-				// Skip malformed lines
+			if (!header) {
+				if (entry.type !== "session") return null;
+				header = entry;
 				continue;
 			}
 
 			// Extract session name (use latest, including explicit clears)
 			if (entry.type === "session_info") {
-				const infoEntry = entry as SessionInfoEntry;
-				name = infoEntry.name?.trim() || undefined;
+				name = entry.name?.trim() || undefined;
 			}
-			if (entry.type === "session_state") {
-				const stateEntry = entry as SessionStateEntry;
-				const status = normalizeSessionStateStatus(stateEntry.state?.status);
-				if (status) {
-					state = { status };
-				}
-			}
-			// Keep the latest recap/verdict so off-daemon sessions don't all show as
-			// unjudged in the agents view. Append-only, so last seen wins.
-			if (entry.type === "agent_status") {
-				agentStatus = (entry as AgentStatusEntry).status;
-			}
-
-			if (!header) {
-				if (entry.type !== "session") {
-					return null;
-				}
-				header = entry as SessionHeader;
-			}
-
-			lastActivityTime = updateLastActivityTime(lastActivityTime, entry);
 
 			if (entry.type !== "message") continue;
 			messageCount++;
 
-			const message = (entry as SessionMessageEntry).message;
+			const activityTime = getMessageActivityTime(entry);
+			if (typeof activityTime === "number") {
+				lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
+			}
+
+			const message = entry.message;
 			if (!isMessageWithContent(message)) continue;
 			if (message.role !== "user" && message.role !== "assistant") continue;
 
 			const textContent = extractTextContent(message);
 			if (!textContent) continue;
 
-			allMessagesText = appendCappedSearchText(allMessagesText, textContent);
+			allMessages.push(textContent);
 			if (!firstMessage && message.role === "user") {
 				firstMessage = textContent;
 			}
 		}
 
 		if (!header) return null;
+
 		const cwd = typeof header.cwd === "string" ? header.cwd : "";
 		const parentSessionPath = header.parentSession;
-		const rlmDepth = resolveSessionRlmDepth(header, filePath);
-		const modified = getSessionModifiedDateFromLastActivity(lastActivityTime, header, stats.mtime);
+		const headerTime = typeof header.timestamp === "string" ? new Date(header.timestamp).getTime() : NaN;
+		const modified =
+			typeof lastActivityTime === "number" && lastActivityTime > 0
+				? new Date(lastActivityTime)
+				: !Number.isNaN(headerTime)
+					? new Date(headerTime)
+					: stats.mtime;
 
 		return {
 			path: filePath,
 			id: header.id,
 			cwd,
 			name,
-			state,
 			parentSessionPath,
-			rlmDepth,
 			created: new Date(header.timestamp),
 			modified,
 			messageCount,
 			firstMessage: firstMessage || "(no messages)",
-			allMessagesText,
-			agentStatus,
+			allMessagesText: allMessages.join(" "),
 		};
 	} catch {
 		return null;
@@ -1130,15 +874,56 @@ async function scanSessionInfo(filePath: string, stats: Awaited<ReturnType<typeo
 
 export type SessionListProgress = (loaded: number, total: number) => void;
 export type SessionListItem = (session: SessionInfo) => void;
-
 export interface SessionListCallbacks {
 	onProgress?: SessionListProgress;
 	onSession?: SessionListItem;
 }
 
+const MAX_CONCURRENT_SESSION_INFO_LOADS = 10;
+
+async function buildSessionInfosWithConcurrency(
+	files: string[],
+	onLoaded: () => void,
+): Promise<(SessionInfo | null)[]> {
+	const results: (SessionInfo | null)[] = new Array(files.length).fill(null);
+	const inFlight = new Set<Promise<void>>();
+	let nextIndex = 0;
+
+	const startNext = (): void => {
+		const index = nextIndex++;
+		const file = files[index];
+		if (!file) return;
+
+		let task: Promise<void>;
+		task = buildSessionInfo(file)
+			.then((info) => {
+				results[index] = info;
+			})
+			.catch(() => {
+				results[index] = null;
+			})
+			.finally(() => {
+				inFlight.delete(task);
+				onLoaded();
+			});
+		inFlight.add(task);
+	};
+
+	while (nextIndex < files.length || inFlight.size > 0) {
+		while (nextIndex < files.length && inFlight.size < MAX_CONCURRENT_SESSION_INFO_LOADS) {
+			startNext();
+		}
+		if (inFlight.size > 0) {
+			await Promise.race(inFlight);
+		}
+	}
+
+	return results;
+}
+
 async function listSessionsFromDir(
 	dir: string,
-	callbacks?: SessionListCallbacks,
+	onProgress?: SessionListProgress,
 	progressOffset = 0,
 	progressTotal?: number,
 ): Promise<SessionInfo[]> {
@@ -1152,22 +937,14 @@ async function listSessionsFromDir(
 		const files = dirEntries.filter((f) => f.endsWith(".jsonl")).map((f) => join(dir, f));
 		const total = progressTotal ?? files.length;
 
-		// drop cache entries for deleted files so it stays bounded
-		const present = new Set(files);
-		for (const key of sessionInfoCache.keys()) {
-			if (dirname(key) === dir && !present.has(key)) {
-				sessionInfoCache.delete(key);
-			}
-		}
-
 		let loaded = 0;
-		for (const file of files) {
-			const info = await readSessionInfo(file);
+		const results = await buildSessionInfosWithConcurrency(files, () => {
 			loaded++;
-			callbacks?.onProgress?.(progressOffset + loaded, total);
+			onProgress?.(progressOffset + loaded, total);
+		});
+		for (const info of results) {
 			if (info) {
 				sessions.push(info);
-				callbacks?.onSession?.(info);
 			}
 		}
 	} catch {
@@ -1207,36 +984,40 @@ export class SessionManager {
 		sessionDir: string,
 		sessionFile: string | undefined,
 		persist: boolean,
-		preloadedEntries?: FileEntry[],
+		newSessionOptions?: NewSessionOptions,
+		preloadedFileEntries?: FileEntry[],
 	) {
-		this.cwd = cwd;
-		this.sessionDir = sessionDir;
+		this.cwd = resolvePath(cwd);
+		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
-		if (persist && sessionDir && !existsSync(sessionDir)) {
-			mkdirSync(sessionDir, { recursive: true });
+		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
+			mkdirSync(this.sessionDir, { recursive: true });
 		}
 
 		if (sessionFile) {
-			this.setSessionFile(sessionFile, preloadedEntries);
+			this._setSessionFile(sessionFile, preloadedFileEntries);
 		} else {
-			this.newSession();
+			this.newSession(newSessionOptions);
 		}
 	}
 
-	/**
-	 * Switch to a different session file (used for resume and branching).
-	 * preloadedEntries must be loadEntriesFromFile(sessionFile) for the same path; it
-	 * lets the async daemon path skip the synchronous re-read.
-	 */
-	setSessionFile(sessionFile: string, preloadedEntries?: FileEntry[]): void {
-		this.sessionFile = resolve(sessionFile);
-		if (existsSync(this.sessionFile)) {
-			this.fileEntries = preloadedEntries ?? loadEntriesFromFile(this.sessionFile);
+	/** Switch to a different session file (used for resume and branching) */
+	setSessionFile(sessionFile: string): void {
+		this._setSessionFile(sessionFile);
+	}
 
-			// If file was empty or corrupted (no valid header), truncate and start fresh
-			// to avoid appending messages without a session header (which breaks the session)
+	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
+		this.sessionFile = resolvePath(sessionFile);
+		if (existsSync(this.sessionFile)) {
+			this.fileEntries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
+
+			// If file was empty, initialize it with a valid session header. If it was
+			// non-empty but did not parse as a pi session, fail without modifying it.
 			if (this.fileEntries.length === 0) {
 				const explicitPath = this.sessionFile;
+				if (statSync(explicitPath).size > 0) {
+					throw new Error(`Session file is not a valid pi session: ${explicitPath}`);
+				}
 				this.newSession();
 				this.sessionFile = explicitPath;
 				this._rewriteFile();
@@ -1247,12 +1028,7 @@ export class SessionManager {
 			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 			this.sessionId = header?.id ?? createSessionId();
 
-			let shouldRewrite = migrateToCurrentVersion(this.fileEntries);
-			if (header?.parentSession && !isValidRlmDepth(header.rlmDepth)) {
-				header.rlmDepth = resolveSessionRlmDepth(header, this.sessionFile);
-				shouldRewrite = true;
-			}
-			if (shouldRewrite) {
+			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
 			}
 
@@ -1261,43 +1037,17 @@ export class SessionManager {
 		} else {
 			const explicitPath = this.sessionFile;
 			this.newSession();
-			this.sessionFile = explicitPath; // preserve explicit path from --resume selector
+			this.sessionFile = explicitPath; // preserve explicit path from --session flag
 		}
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
-		let sessionId = options?.id ?? createSessionId();
-		let sessionFile: string | undefined;
-		const hasExplicitRlmDepth = options !== undefined && Object.hasOwn(options, "rlmDepth");
-		let parentHeader: Partial<SessionHeader> | undefined;
-		if (options?.parentSession && !hasExplicitRlmDepth) {
-			try {
-				parentHeader = readSessionHeader(options.parentSession);
-			} catch {
-				// Legacy-invalid or unavailable parents leave the child depth unknown.
-			}
+		if (options?.id !== undefined) {
+			assertValidSessionId(options.id);
 		}
-		if (this.persist) {
-			if (options?.id) {
-				sessionFile = getSessionFilePath(this.getSessionDir(), sessionId);
-				if (existsSync(sessionFile)) {
-					throw new Error(`Session file already exists for id "${sessionId}": ${sessionFile}`);
-				}
-			} else {
-				const target = createUniqueSessionFileTarget(this.getSessionDir());
-				sessionId = target.sessionId;
-				sessionFile = target.sessionFile;
-			}
-		}
-
-		this.sessionId = sessionId;
+		this.sessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const git = this.persist ? (captureGitContext(this.cwd) ?? undefined) : undefined;
-		const rlmDepth = hasExplicitRlmDepth
-			? options?.rlmDepth
-			: options?.parentSession
-				? deriveChildRlmDepth(parentHeader)
-				: rootRlmDepthFromEnv();
 		const header: SessionHeader = {
 			type: "session",
 			version: CURRENT_SESSION_VERSION,
@@ -1305,7 +1055,6 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: options?.parentSession,
-			rlmDepth,
 			git,
 		};
 		this.fileEntries = [header];
@@ -1316,7 +1065,8 @@ export class SessionManager {
 		this.flushed = false;
 
 		if (this.persist) {
-			this.sessionFile = sessionFile;
+			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
+			this.sessionFile = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
 		}
 		return this.sessionFile;
 	}
@@ -1395,6 +1145,10 @@ export class SessionManager {
 		return this.sessionDir;
 	}
 
+	usesDefaultSessionDir(): boolean {
+		return this.sessionDir === getDefaultSessionDirPath(this.cwd);
+	}
+
 	getSessionId(): string {
 		return this.sessionId;
 	}
@@ -1403,61 +1157,12 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
-	materializeSessionFile(sessionDir?: string): string {
-		if (this.sessionFile) {
-			return this.sessionFile;
-		}
-		const dir = sessionDir ?? (this.sessionDir || getDefaultSessionDir(this.cwd));
-		if (!existsSync(dir)) {
-			mkdirSync(dir, { recursive: true });
-		}
-		const previousHeader = this.getHeader();
-		const target = createUniqueSessionFileTarget(dir);
-		this.sessionDir = dir;
-		this.sessionId = target.sessionId;
-		this.sessionFile = target.sessionFile;
-		this.persist = true;
-		const timestamp = new Date().toISOString();
-		const git = captureGitContext(this.cwd) ?? undefined;
-		const header: SessionHeader = {
-			type: "session",
-			version: CURRENT_SESSION_VERSION,
-			id: this.sessionId,
-			timestamp,
-			cwd: this.cwd,
-			parentSession: previousHeader?.parentSession,
-			rlmDepth: resolveSessionRlmDepth(previousHeader ?? {}, target.sessionFile),
-			git,
-		};
-		this.fileEntries = [header, ...this.getEntries()];
-		this._rewriteFile();
-		this.flushed = true;
-		return this.sessionFile;
-	}
-
-	getSessionArtifactDir(): string | undefined {
-		return this.persist ? getSessionArtifactPath(this.sessionDir, this.sessionId) : undefined;
-	}
-
-	/**
-	 * Force-write all in-memory entries to the session file immediately.
-	 * This bypasses the no-assistant guard in {@link _persist} so that
-	 * pre-model entries (session header, goal state, settings changes)
-	 * are durable on disk before the first assistant response.
-	 * No-op for in-memory (non-persisted) sessions.
-	 */
-	flushNow(): void {
-		if (!this.persist || !this.sessionFile) return;
-		if (this.flushed && existsSync(this.sessionFile)) return;
-		this._rewriteFile();
-		this.flushed = true;
-	}
-
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		const shouldPersistWithoutAssistant = entry.type === "session_state" || entry.type === "session_info";
+		// session_state is a deferred daemon entry type; only session_info is in the union today.
+		const shouldPersistWithoutAssistant = entry.type === "session_info";
 		if (!hasAssistant && !shouldPersistWithoutAssistant) {
 			// Mark as not flushed so when assistant arrives, all entries get written
 			this.flushed = false;
@@ -1512,19 +1217,6 @@ export class SessionManager {
 		return entry.id;
 	}
 
-	/** Append a service tier change as child of current leaf, then advance leaf. Returns entry id. */
-	appendServiceTierChange(serviceTier: ServiceTier): string {
-		const entry: ServiceTierChangeEntry = {
-			type: "service_tier_change",
-			id: generateId(this.byId),
-			parentId: this.leafId,
-			timestamp: new Date().toISOString(),
-			serviceTier,
-		};
-		this._appendEntry(entry);
-		return entry.id;
-	}
-
 	/** Append a model change as child of current leaf, then advance leaf. Returns entry id. */
 	appendModelChange(provider: string, modelId: string): string {
 		const entry: ModelChangeEntry = {
@@ -1546,8 +1238,15 @@ export class SessionManager {
 		tokensBefore: number,
 		details?: T,
 		fromHook?: boolean,
+		usageOrCustomInstructions?: Usage | string,
 		customInstructions?: string,
 	): string {
+		const usage =
+			usageOrCustomInstructions && typeof usageOrCustomInstructions === "object"
+				? usageOrCustomInstructions
+				: undefined;
+		// Prime-agent passes customInstructions as the 6th arg; pi historically used Usage.
+		void (typeof usageOrCustomInstructions === "string" ? usageOrCustomInstructions : customInstructions);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
 			id: generateId(this.byId),
@@ -1557,11 +1256,64 @@ export class SessionManager {
 			firstKeptEntryId,
 			tokensBefore,
 			details,
+			usage,
 			fromHook,
-			customInstructions,
 		};
 		this._appendEntry(entry);
 		return entry.id;
+	}
+
+	/** Append a service tier change as child of current leaf, then advance leaf. Returns entry id. */
+	appendServiceTierChange(serviceTier: ServiceTier): string {
+		const entry: ServiceTierChangeEntry = {
+			type: "service_tier_change",
+			id: generateId(this.byId),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			serviceTier,
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
+	/**
+	 * Force-write all in-memory entries to the session file immediately.
+	 * This bypasses the no-assistant guard in {@link _persist} so that
+	 * pre-model entries (session header, goal state, settings changes)
+	 * are durable on disk before the first assistant response.
+	 * No-op for in-memory (non-persisted) sessions.
+	 */
+	flushNow(): void {
+		if (!this.persist || !this.sessionFile) return;
+		if (this.flushed && existsSync(this.sessionFile)) return;
+		this._rewriteFile();
+		this.flushed = true;
+	}
+
+	private _appendEntryWithRollback(append: () => string): string {
+		const previousLeafId = this.leafId;
+		try {
+			const entryId = append();
+			this.flushNow();
+			return entryId;
+		} catch (error) {
+			// The append indexes the entry before persisting it; undo exactly that.
+			if (this.leafId !== null && this.leafId !== previousLeafId) {
+				this.byId.delete(this.leafId);
+				this.fileEntries.pop();
+				this.leafId = previousLeafId;
+				// The failed append may have left a torn line on disk. Restore the file
+				// from the rolled-back entries now; if that also fails (e.g. the disk is
+				// still full), fall back to forcing the next persist to rewrite.
+				this.flushed = false;
+				try {
+					this.flushNow();
+				} catch {
+					this.flushed = false;
+				}
+			}
+			throw error;
+		}
 	}
 
 	/** Append a custom entry (for extensions) as child of current leaf, then advance leaf. Returns entry id. */
@@ -1612,25 +1364,13 @@ export class SessionManager {
 
 	/** Append a session info entry (e.g., display name). Returns entry id. */
 	appendSessionInfo(name: string): string {
+		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
 		const entry: SessionInfoEntry = {
 			type: "session_info",
 			id: generateId(this.byId),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
-			name: name.trim(),
-		};
-		this._appendEntry(entry);
-		return entry.id;
-	}
-
-	/** Append a session lifecycle state entry. Returns entry id. */
-	appendSessionState(state: SessionState): string {
-		const entry: SessionStateEntry = {
-			type: "session_state",
-			id: generateId(this.byId),
-			parentId: this.leafId,
-			timestamp: new Date().toISOString(),
-			state: { status: state.status },
+			name: sanitizedName,
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1649,110 +1389,38 @@ export class SessionManager {
 		}
 		return undefined;
 	}
-
-	/** Get the current session lifecycle state from the latest session_state entry, if any. */
+	// --- prime-port daemon hooks (persisted entries deferred) ---
+	appendSessionState(_state: SessionState): void {}
 	getSessionState(): SessionState | undefined {
-		const entries = this.getEntries();
-		for (let i = entries.length - 1; i >= 0; i--) {
-			const entry = entries[i];
-			if (entry.type === "session_state") {
-				const status = normalizeSessionStateStatus(entry.state.status);
-				if (status) {
-					return { status };
-				}
-			}
-		}
 		return undefined;
 	}
-
-	/**
-	 * True when the session holds user-meaningful persisted content, as opposed to
-	 * only daemon-written bookkeeping (session_state, agent_status, git_state) or
-	 * the default model/thinking entries every new session is created with. Used by
-	 * the daemon discard guard to decide whether a message-less draft is safe to
-	 * delete (that guard always also requires zero messages).
-	 *
-	 * createAgentSession opens a new session with an optional leading `model_change`
-	 * followed by `thinking_level_change` and `service_tier_change`. That creation
-	 * prefix is skipped; anything beyond it is user content.
-	 */
+	getSessionArtifactDir(): string | undefined {
+		return this.persist ? join(dirname(this.getSessionDir()), "session-artifacts", this.sessionId) : undefined;
+	}
+	getFlatTree(): ReturnType<SessionManager["getTree"]> {
+		return this.getTree();
+	}
 	hasUserContent(): boolean {
-		const contentEntries = this.getEntries().filter((entry) => CONTENT_ENTRY_TYPES.has(entry.type));
-		let start = 0;
-		if (contentEntries[start]?.type === "model_change") {
-			start++;
+		try {
+			return this.getEntries().some(
+				(e) =>
+					e.type === "message" &&
+					"message" in e &&
+					(e as { message?: { role?: string } }).message?.role === "user",
+			);
+		} catch {
+			return false;
 		}
-		if (contentEntries[start]?.type === "thinking_level_change") {
-			start++;
-		}
-		if (contentEntries[start]?.type === "service_tier_change") {
-			start++;
-		}
-		return contentEntries.length > start;
 	}
-
-	/** Append the latest agent status (summary + completion judgment). Returns entry id. */
-	appendAgentStatus(status: AgentStatus): string {
-		const entry: AgentStatusEntry = {
-			type: "agent_status",
-			id: generateId(this.byId),
-			parentId: this.leafId,
-			timestamp: new Date().toISOString(),
-			status: {
-				summary: status.summary,
-				taskState: status.taskState,
-				basedOnMessageCount: status.basedOnMessageCount,
-			},
-		};
-		this._appendEntry(entry);
-		return entry.id;
+	materializeSessionFile(_sessionDir?: string): string | undefined {
+		return this.getSessionFile() ?? undefined;
 	}
-
-	/** Append a git state entry as child of current leaf, then advance leaf. Returns entry id. */
-	appendGitState(git: GitContext): string {
-		const entry: GitStateEntry = {
-			type: "git_state",
-			id: generateId(this.byId),
-			parentId: this.leafId,
-			timestamp: new Date().toISOString(),
-			git,
-		};
-		this._appendEntry(entry);
-		return entry.id;
-	}
-
-	recordGitStateIfChanged(): string | undefined {
-		if (!this.persist) return undefined;
-		const git = captureGitContext(this.cwd);
-		if (!git) return undefined;
-		const last = this.getActiveGitContext();
-		if (last && gitContextsEqual(last, git)) return undefined;
-		return this.appendGitState(git);
-	}
-
-	/** Active-branch git: nearest git_state from leaf to root, else the header snapshot. */
-	private getActiveGitContext(): GitContext | undefined {
-		let current = this.leafId ? this.byId.get(this.leafId) : undefined;
-		while (current) {
-			if (current.type === "git_state") return current.git;
-			current = current.parentId ? this.byId.get(current.parentId) : undefined;
-		}
-		const header = this.fileEntries[0];
-		return header?.type === "session" ? header.git : undefined;
-	}
-
-	/** Get the latest agent status from the most recent agent_status entry, if any. */
 	getLatestAgentStatus(): AgentStatus | undefined {
-		// Walk the current leaf to root so we only read status on the active branch,
-		// not a sibling branch's status that happens to sit later in the file.
-		let current = this.leafId ? this.byId.get(this.leafId) : undefined;
-		while (current) {
-			if (current.type === "agent_status") {
-				return { ...current.status };
-			}
-			current = current.parentId ? this.byId.get(current.parentId) : undefined;
-		}
 		return undefined;
+	}
+	appendAgentStatus(_status: AgentStatus): void {}
+	static async openAsync(path: string, sessionDir?: string, cwdOverride?: string): Promise<SessionManager> {
+		return SessionManager.open(path, sessionDir, cwdOverride);
 	}
 
 	/**
@@ -1796,30 +1464,37 @@ export class SessionManager {
 		return this._appendEntryWithRollback(() => this.appendCustomMessageEntry(customType, content, display, details));
 	}
 
-	private _appendEntryWithRollback(append: () => string): string {
-		const previousLeafId = this.leafId;
-		try {
-			const entryId = append();
-			this.flushNow();
-			return entryId;
-		} catch (error) {
-			// The append indexes the entry before persisting it; undo exactly that.
-			if (this.leafId !== null && this.leafId !== previousLeafId) {
-				this.byId.delete(this.leafId);
-				this.fileEntries.pop();
-				this.leafId = previousLeafId;
-				// The failed append may have left a torn line on disk. Restore the file
-				// from the rolled-back entries now; if that also fails (e.g. the disk is
-				// still full), fall back to forcing the next persist to rewrite.
-				this.flushed = false;
-				try {
-					this.flushNow();
-				} catch {
-					this.flushed = false;
-				}
-			}
-			throw error;
+	/** Append a git state entry as child of current leaf, then advance leaf. Returns entry id. */
+	appendGitState(git: GitContext): string {
+		const entry: GitStateEntry = {
+			type: "git_state",
+			id: generateId(this.byId),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			git,
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
+	recordGitStateIfChanged(): string | undefined {
+		if (!this.persist) return undefined;
+		const git = captureGitContext(this.cwd);
+		if (!git) return undefined;
+		const last = this.getActiveGitContext();
+		if (last && gitContextsEqual(last, git)) return undefined;
+		return this.appendGitState(git);
+	}
+
+	/** Active-branch git: nearest git_state from leaf to root, else the header snapshot. */
+	private getActiveGitContext(): GitContext | undefined {
+		let current = this.leafId ? this.byId.get(this.leafId) : undefined;
+		while (current) {
+			if (current.type === "git_state") return current.git;
+			current = current.parentId ? this.byId.get(current.parentId) : undefined;
 		}
+		const header = this.fileEntries[0];
+		return header?.type === "session" ? header.git : undefined;
 	}
 
 	// =========================================================================
@@ -1892,7 +1567,6 @@ export class SessionManager {
 	 * Use buildSessionContext() to get the resolved messages for the LLM.
 	 */
 	getBranch(fromId?: string): SessionEntry[] {
-		// push+reverse, not unshift-per-entry: unshift is O(n), which makes this O(n^2) on long sessions.
 		const path: SessionEntry[] = [];
 		const startId = fromId ?? this.leafId;
 		let current = startId ? this.byId.get(startId) : undefined;
@@ -1905,16 +1579,19 @@ export class SessionManager {
 	}
 
 	/**
+	 * Build the active, compaction-aware entry list for context/rendering.
+	 * Uses tree traversal from current leaf.
+	 */
+	buildContextEntries(): SessionEntry[] {
+		return buildContextEntries(this.getEntries(), this.leafId, this.byId);
+	}
+
+	/**
 	 * Build the session context (what gets sent to the LLM).
 	 * Uses tree traversal from current leaf.
 	 */
 	buildSessionContext(): SessionContext {
-		// Pass fileEntries directly rather than getEntries(): the resolved context
-		// is computed from the leaf-to-root walk over byId (which already excludes
-		// the header), so the entries argument is only a fallback for an undefined
-		// leaf — never hit here since leafId is always set or null. Avoids an O(n)
-		// array copy on every call (attach, get_session_context, agent init, ...).
-		return buildSessionContext(this.fileEntries as SessionEntry[], this.leafId, this.byId);
+		return buildSessionContext(this.getEntries(), this.leafId, this.byId);
 	}
 
 	/**
@@ -1939,27 +1616,20 @@ export class SessionManager {
 	 * A well-formed session has exactly one root (first entry with parentId === null).
 	 * Orphaned entries (broken parent chain) are also returned as roots.
 	 */
-	getFlatTree(): SessionTreeFlatNode[] {
-		return this.getEntries().map((entry) => ({
-			entry,
-			label: this.labelsById.get(entry.id),
-			labelTimestamp: this.labelTimestampsById.get(entry.id),
-		}));
-	}
-
 	getTree(): SessionTreeNode[] {
-		const entries = this.getFlatTree();
+		const entries = this.getEntries();
 		const nodeMap = new Map<string, SessionTreeNode>();
 		const roots: SessionTreeNode[] = [];
 
 		// Create nodes with resolved labels
-		for (const flatNode of entries) {
-			nodeMap.set(flatNode.entry.id, { ...flatNode, children: [] });
+		for (const entry of entries) {
+			const label = this.labelsById.get(entry.id);
+			const labelTimestamp = this.labelTimestampsById.get(entry.id);
+			nodeMap.set(entry.id, { entry, children: [], label, labelTimestamp });
 		}
 
 		// Build tree
-		for (const flatNode of entries) {
-			const entry = flatNode.entry;
+		for (const entry of entries) {
 			const node = nodeMap.get(entry.id)!;
 			if (entry.parentId === null || entry.parentId === entry.id) {
 				roots.push(node);
@@ -2017,7 +1687,13 @@ export class SessionManager {
 	 * Same as branch(), but also appends a branch_summary entry that captures
 	 * context from the abandoned conversation path.
 	 */
-	branchWithSummary(branchFromId: string | null, summary: string, details?: unknown, fromHook?: boolean): string {
+	branchWithSummary(
+		branchFromId: string | null,
+		summary: string,
+		details?: unknown,
+		fromHook?: boolean,
+		usage?: Usage,
+	): string {
 		if (branchFromId !== null && !this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -2030,6 +1706,7 @@ export class SessionManager {
 			fromId: branchFromId ?? "root",
 			summary,
 			details,
+			usage,
 			fromHook,
 		};
 		this._appendEntry(entry);
@@ -2048,15 +1725,21 @@ export class SessionManager {
 			throw new Error(`Entry ${leafId} not found`);
 		}
 
-		// Filter out LabelEntry from path - we'll recreate them from the resolved map
-		const pathWithoutLabels = path.filter((e) => e.type !== "label");
+		// Filter out LabelEntry from path - we'll recreate them from the resolved map.
+		// Because labels are real tree entries, later entries can be children of labels;
+		// removing labels requires re-chaining the retained path to avoid orphaned subtrees.
+		const pathWithoutLabels: SessionEntry[] = [];
+		let pathParentId: string | null = null;
+		for (const entry of path) {
+			if (entry.type === "label") continue;
+			pathWithoutLabels.push({ ...entry, parentId: pathParentId });
+			pathParentId = entry.id;
+		}
 
-		const target = this.persist
-			? createUniqueSessionFileTarget(this.getSessionDir())
-			: { sessionId: createSessionId(), sessionFile: undefined };
-		const newSessionId = target.sessionId;
+		const newSessionId = createSessionId();
 		const timestamp = new Date().toISOString();
-		const newSessionFile = target.sessionFile;
+		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
+		const newSessionFile = join(this.getSessionDir(), `${fileTimestamp}_${newSessionId}.jsonl`);
 
 		const header: SessionHeader = {
 			type: "session",
@@ -2065,7 +1748,6 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: this.persist ? previousSessionFile : undefined,
-			rlmDepth: resolveSessionRlmDepth(this.getHeader() ?? {}, previousSessionFile ?? newSessionFile ?? ""),
 			git: this.persist ? (captureGitContext(this.cwd) ?? undefined) : undefined,
 		};
 
@@ -2142,11 +1824,11 @@ export class SessionManager {
 	/**
 	 * Create a new session.
 	 * @param cwd Working directory (stored in session header)
-	 * @param sessionDir Optional session directory. If omitted, uses the configured session root.
+	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
 	 */
-	static create(cwd: string, sessionDir?: string): SessionManager {
-		const dir = sessionDir ?? getDefaultSessionDir(cwd);
-		return new SessionManager(cwd, dir, undefined, true);
+	static create(cwd: string, sessionDir?: string, options?: NewSessionOptions): SessionManager {
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
+		return new SessionManager(cwd, dir, undefined, true, options);
 	}
 
 	/**
@@ -2156,60 +1838,36 @@ export class SessionManager {
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
 	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
-		// Only the header's cwd is needed to construct the manager; the constructor
-		// (setSessionFile) performs the full parse. Read just the first line here
-		// instead of parsing the entire file a second time — that double parse is a
-		// needless O(n) cost on open and is noticeable for long sessions.
-		let cwd = cwdOverride;
-		if (cwd === undefined) {
-			let header: Partial<SessionHeader> | undefined;
+		const resolvedPath = resolvePath(path);
+		let header: SessionHeader | null = null;
+		let preloadedFileEntries: FileEntry[] | undefined;
+		if (cwdOverride === undefined && existsSync(resolvedPath)) {
 			try {
-				header = readSessionHeader(path);
-			} catch {
-				header = undefined;
+				header = readSessionHeader(resolvedPath);
+			} catch (error) {
+				if (!(error instanceof SessionHeaderScanLimitError)) throw error;
+				// The bounded scan is only a discovery optimization. A full load remains
+				// authoritative for legacy files with very large headers or prefixes.
+				preloadedFileEntries = loadEntriesFromFile(resolvedPath);
+				const firstEntry = preloadedFileEntries[0];
+				header = firstEntry?.type === "session" ? firstEntry : null;
 			}
-			// readSessionHeader only inspects the first physical line. If that isn't a
-			// valid session header (e.g. a leading blank/whitespace or malformed line),
-			// fall back to the full loader, which trims and skips such lines exactly
-			// like setSessionFile does — so this.cwd stays consistent with the header
-			// the session is actually loaded with. This slow path is rare.
-			if (header?.type !== "session" || typeof header.id !== "string") {
-				header = loadEntriesFromFile(path).find((e) => e.type === "session") as SessionHeader | undefined;
-			}
-			cwd = header?.cwd;
 		}
+		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
-		const dir = sessionDir ?? resolve(path, "..");
-		return new SessionManager(cwd ?? process.cwd(), dir, path, true);
-	}
-
-	/**
-	 * Non-blocking open() for the daemon: parses off the event loop so a large load
-	 * doesn't freeze other sessions. Falls back to open() for any non-happy path so
-	 * behavior is identical to it.
-	 */
-	static async openAsync(path: string, sessionDir?: string, cwdOverride?: string): Promise<SessionManager> {
-		if (!existsSync(path)) {
-			return SessionManager.open(path, sessionDir, cwdOverride);
-		}
-		const entries = await loadEntriesFromFileAsync(path);
-		// empty/corrupt: defer to open() (finalizeLoadedEntries guarantees entries[0] is a valid header otherwise)
-		if (entries.length === 0) {
-			return SessionManager.open(path, sessionDir, cwdOverride);
-		}
-		const cwd = cwdOverride ?? (entries[0] as SessionHeader).cwd;
-		const dir = sessionDir ?? resolve(path, "..");
-		return new SessionManager(cwd ?? process.cwd(), dir, path, true, entries);
+		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
+		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
 	}
 
 	/**
 	 * Continue the most recent session, or create new if none.
 	 * @param cwd Working directory
-	 * @param sessionDir Optional session directory. If omitted, uses the configured session root.
+	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
 	 */
 	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
-		const dir = sessionDir ?? getDefaultSessionDir(cwd);
-		const mostRecent = findMostRecentSessionForCwd(dir, cwd);
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
+		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		const mostRecent = findMostRecentSession(dir, filterCwd ? cwd : undefined);
 		if (mostRecent) {
 			return new SessionManager(cwd, dir, mostRecent, true);
 		}
@@ -2217,8 +1875,8 @@ export class SessionManager {
 	}
 
 	/** Create an in-memory session (no file persistence) */
-	static inMemory(cwd: string = process.cwd(), sessionDir = ""): SessionManager {
-		return new SessionManager(cwd, sessionDir, undefined, false);
+	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, options);
 	}
 
 	/**
@@ -2228,28 +1886,37 @@ export class SessionManager {
 	 * @param targetCwd Target working directory (where the new session will be stored)
 	 * @param sessionDir Optional session directory. If omitted, uses default for targetCwd.
 	 */
-	static forkFrom(sourcePath: string, targetCwd: string, sessionDir?: string): SessionManager {
-		const sourceEntries = loadEntriesFromFile(sourcePath);
+	static forkFrom(
+		sourcePath: string,
+		targetCwd: string,
+		sessionDir?: string,
+		options?: NewSessionOptions,
+	): SessionManager {
+		const resolvedSourcePath = resolvePath(sourcePath);
+		const resolvedTargetCwd = resolvePath(targetCwd);
+		const sourceEntries = loadEntriesFromFile(resolvedSourcePath);
 		if (sourceEntries.length === 0) {
-			throw new Error(`Cannot fork: source session file is empty or invalid: ${sourcePath}`);
+			throw new Error(`Cannot fork: source session file is empty or invalid: ${resolvedSourcePath}`);
 		}
 
 		const sourceHeader = sourceEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 		if (!sourceHeader) {
-			throw new Error(`Cannot fork: source session has no header: ${sourcePath}`);
+			throw new Error(`Cannot fork: source session has no header: ${resolvedSourcePath}`);
 		}
-		migrateToCurrentVersion(sourceEntries);
 
-		const dir = sessionDir ?? getDefaultSessionDir(targetCwd);
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(resolvedTargetCwd);
 		if (!existsSync(dir)) {
 			mkdirSync(dir, { recursive: true });
 		}
 
 		// Create new session file with new ID but forked content
-		const target = createUniqueSessionFileTarget(dir);
-		const newSessionId = target.sessionId;
+		if (options?.id !== undefined) {
+			assertValidSessionId(options.id);
+		}
+		const newSessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
-		const newSessionFile = target.sessionFile;
+		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
+		const newSessionFile = join(dir, `${fileTimestamp}_${newSessionId}.jsonl`);
 
 		// Write new header pointing to source as parent, with updated cwd
 		const newHeader: SessionHeader = {
@@ -2257,12 +1924,11 @@ export class SessionManager {
 			version: CURRENT_SESSION_VERSION,
 			id: newSessionId,
 			timestamp,
-			cwd: targetCwd,
-			parentSession: sourcePath,
-			rlmDepth: resolveSessionRlmDepth(sourceHeader, sourcePath),
-			git: captureGitContext(targetCwd) ?? undefined,
+			cwd: resolvedTargetCwd,
+			parentSession: resolvedSourcePath,
+			git: captureGitContext(resolvedTargetCwd) ?? undefined,
 		};
-		appendFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`);
+		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
 
 		// Drop the source's git_state entries (re-linking children): they describe the source repo,
 		// so the fork would otherwise report the source's git instead of its own target context.
@@ -2282,43 +1948,207 @@ export class SessionManager {
 			appendFileSync(newSessionFile, `${JSON.stringify(out)}\n`);
 		}
 
-		return new SessionManager(targetCwd, dir, newSessionFile, true);
+		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
 	}
 
 	/**
 	 * List all sessions for a directory.
 	 * @param cwd Working directory (used to compute default session directory)
-	 * @param sessionDir Optional session directory. If omitted, uses the configured session root.
-	 * @param callbacks Optional callbacks for progress and discovered sessions
+	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
+	 * @param onProgress Optional callback for progress updates (loaded, total)
 	 */
-	static async list(cwd: string, sessionDir?: string, callbacks?: SessionListCallbacks): Promise<SessionInfo[]> {
-		const dir = sessionDir ?? getDefaultSessionDir(cwd);
-		const matchesCwd = (session: SessionInfo) => sessionInfoMatchesCwd(session, cwd);
-		const sessions = (
-			await listSessionsFromDir(dir, {
-				onProgress: callbacks?.onProgress,
-				onSession: callbacks?.onSession
-					? (session) => {
-							if (matchesCwd(session)) {
-								callbacks.onSession?.(session);
-							}
-						}
-					: undefined,
-			})
-		).filter(matchesCwd);
+	static async list(cwd: string, sessionDir?: string, onProgress?: SessionListProgress): Promise<SessionInfo[]>;
+	static async list(cwd: string, sessionDir?: string, callbacks?: SessionListCallbacks): Promise<SessionInfo[]>;
+	static async list(cwd: string, callbacks?: SessionListCallbacks): Promise<SessionInfo[]>;
+	static async list(
+		cwd: string,
+		sessionDirOrCallbacks?: string | SessionListCallbacks,
+		onProgressOrCallbacks?: SessionListProgress | SessionListCallbacks,
+	): Promise<SessionInfo[]> {
+		let sessionDir: string | undefined;
+		let onProgress: SessionListProgress | undefined;
+		let onSession: SessionListItem | undefined;
+		if (sessionDirOrCallbacks && typeof sessionDirOrCallbacks === "object") {
+			onProgress = sessionDirOrCallbacks.onProgress;
+			onSession = sessionDirOrCallbacks.onSession;
+		} else {
+			sessionDir = sessionDirOrCallbacks;
+			if (onProgressOrCallbacks && typeof onProgressOrCallbacks === "object") {
+				onProgress = onProgressOrCallbacks.onProgress;
+				onSession = onProgressOrCallbacks.onSession;
+			} else {
+				onProgress = onProgressOrCallbacks as SessionListProgress | undefined;
+			}
+		}
+
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
+		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		const resolvedCwd = resolvePath(cwd);
+		const sessions = (await listSessionsFromDir(dir, onProgress)).filter(
+			(session) => !filterCwd || sessionCwdMatches(session.cwd, resolvedCwd),
+		);
 		sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+		if (onSession) {
+			for (const s of sessions) onSession(s);
+		}
 		return sessions;
 	}
 
 	/**
 	 * List all sessions across all project directories.
-	 * @param callbacks Optional callbacks for progress and discovered sessions
-	 * @param sessionDir Optional session root. If omitted, uses the configured session root.
+	 * @param onProgress Optional callback for progress updates (loaded, total)
 	 */
-	static async listAll(callbacks?: SessionListCallbacks, sessionDir?: string): Promise<SessionInfo[]> {
-		const sessionsDir = sessionDir ?? getSessionsDir();
-		const sessions = await listSessionsFromDir(sessionsDir, callbacks);
-		sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
-		return sessions;
+	static async listAll(onProgress?: SessionListProgress): Promise<SessionInfo[]>;
+	static async listAll(sessionDir?: string, onProgress?: SessionListProgress): Promise<SessionInfo[]>;
+	static async listAll(callbacks?: SessionListCallbacks, sessionDir?: string): Promise<SessionInfo[]>;
+	static async listAll(sessionDir?: string, callbacks?: SessionListCallbacks): Promise<SessionInfo[]>;
+	static async listAll(sessionDir?: undefined, sessionDirOnly?: string): Promise<SessionInfo[]>;
+	static async listAll(
+		sessionDirOrOnProgress?: string | SessionListProgress | SessionListCallbacks | undefined,
+		onProgressOrSessionDir?: SessionListProgress | SessionListCallbacks | string,
+	): Promise<SessionInfo[]> {
+		let customSessionDir: string | undefined;
+		let progress: SessionListProgress | undefined;
+		let onSession: SessionListItem | undefined;
+
+		if (
+			sessionDirOrOnProgress &&
+			typeof sessionDirOrOnProgress === "object" &&
+			!Array.isArray(sessionDirOrOnProgress)
+		) {
+			const cb = sessionDirOrOnProgress as SessionListCallbacks;
+			progress = cb.onProgress;
+			onSession = cb.onSession;
+			if (typeof onProgressOrSessionDir === "string") {
+				customSessionDir = normalizePath(onProgressOrSessionDir);
+			}
+		} else if (typeof sessionDirOrOnProgress === "function") {
+			progress = sessionDirOrOnProgress;
+		} else {
+			if (typeof sessionDirOrOnProgress === "string") {
+				customSessionDir = normalizePath(sessionDirOrOnProgress);
+			} else if (sessionDirOrOnProgress === undefined && typeof onProgressOrSessionDir === "string") {
+				// listAll(undefined, sessionDir) from daemon/session-resolver call sites
+				customSessionDir = normalizePath(onProgressOrSessionDir);
+			}
+			if (onProgressOrSessionDir && typeof onProgressOrSessionDir === "object") {
+				const cb = onProgressOrSessionDir as SessionListCallbacks;
+				progress = cb.onProgress;
+				onSession = cb.onSession;
+			} else if (typeof onProgressOrSessionDir === "function") {
+				progress = onProgressOrSessionDir;
+			}
+		}
+
+		if (customSessionDir) {
+			const sessions = await listSessionsFromDir(customSessionDir, progress);
+			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+			if (onSession) {
+				for (const s of sessions) onSession(s);
+			}
+			return sessions;
+		}
+
+		const sessionsDir = getSessionsDir();
+
+		try {
+			if (!existsSync(sessionsDir)) {
+				return [];
+			}
+			const entries = await readdir(sessionsDir, { withFileTypes: true });
+			const dirs = entries
+				.filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+				.map((entry) => join(sessionsDir, entry.name));
+
+			// Count total files first for accurate progress
+			let totalFiles = 0;
+			const dirFiles: string[][] = [];
+			for (const dir of dirs) {
+				try {
+					const files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl"));
+					dirFiles.push(files.map((f) => join(dir, f)));
+					totalFiles += files.length;
+				} catch {
+					dirFiles.push([]);
+				}
+			}
+
+			// Process all files with progress tracking
+			let loaded = 0;
+			const sessions: SessionInfo[] = [];
+			const allFiles = dirFiles.flat();
+
+			const results = await buildSessionInfosWithConcurrency(allFiles, () => {
+				loaded++;
+				progress?.(loaded, totalFiles);
+			});
+
+			for (const info of results) {
+				if (info) {
+					sessions.push(info);
+				}
+			}
+
+			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+			if (onSession) {
+				for (const s of sessions) onSession(s);
+			}
+			return sessions;
+		} catch {
+			return [];
+		}
 	}
+}
+
+// --- prime-port: daemon session-manager shims ---
+
+export async function readSessionInfo(filePath: string): Promise<SessionInfo | null> {
+	try {
+		if (!existsSync(filePath)) {
+			return null;
+		}
+		const header = readSessionHeader(filePath);
+		if (!header) {
+			return null;
+		}
+		const stats = statSync(filePath);
+		const id = header.id ?? basename(filePath).replace(/\.jsonl$/, "");
+		return {
+			path: filePath,
+			id,
+			cwd: getSessionHeaderCwd(header) ?? "",
+			name: undefined,
+			created: new Date(header.timestamp ?? stats.birthtimeMs),
+			modified: new Date(stats.mtimeMs),
+			messageCount: 0,
+			firstMessage: "",
+			allMessagesText: "",
+			rlmDepth:
+				typeof (header as { rlmDepth?: number }).rlmDepth === "number"
+					? (header as { rlmDepth?: number }).rlmDepth
+					: undefined,
+		};
+	} catch {
+		return null;
+	}
+}
+
+export function resolveSessionRlmDepth(
+	header: { rlmDepth?: number; parentSession?: string },
+	_sessionPath: string,
+): number {
+	if (typeof header.rlmDepth === "number" && Number.isSafeInteger(header.rlmDepth) && header.rlmDepth >= 0) {
+		return header.rlmDepth;
+	}
+	return 0;
+}
+
+const _smStatic = SessionManager as typeof SessionManager & {
+	openAsync?: (path: string, sessionDir?: string, cwdOverride?: string) => Promise<SessionManager>;
+};
+
+if (!_smStatic.openAsync) {
+	_smStatic.openAsync = async function openAsync(path: string, sessionDir?: string, cwdOverride?: string) {
+		return SessionManager.open(path, sessionDir, cwdOverride);
+	};
 }

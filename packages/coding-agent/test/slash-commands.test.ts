@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseNewSessionCommand } from "../src/core/new-session-command.js";
+import { parseNewSessionCommand } from "../src/core/new-session-command.ts";
 import {
 	BUILTIN_SLASH_COMMANDS,
 	builtinSlashCommandTakesArgument,
@@ -11,7 +11,7 @@ import {
 	resolveBuiltinSlashCommandName,
 	resolveSlashCommand,
 	SESSION_SLASH_COMMAND_NAMES,
-} from "../src/core/slash-commands.js";
+} from "../src/core/slash-commands.ts";
 
 describe("built-in slash commands", () => {
 	test("exposes heartbeat without exposing a cron slash command", () => {

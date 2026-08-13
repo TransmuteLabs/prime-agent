@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { activeGitContext } from "../src/core/agent-traces.js";
-import type { SessionHeader } from "../src/core/session-manager.js";
+import { activeGitContext } from "../src/core/agent-traces.ts";
+import type { SessionHeader } from "../src/core/session-manager.ts";
 
 const HEADER: SessionHeader = {
 	type: "session",

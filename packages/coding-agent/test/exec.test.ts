@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { execCommand } from "../src/core/exec.js";
+import { execCommand } from "../src/core/exec.ts";
 
 const SIGKILL_EXIT_CODE = 128 + constants.signals.SIGKILL;
 

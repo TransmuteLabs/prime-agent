@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DefaultResourceLoader } from "../../../src/core/resource-loader.js";
-import { createAgentSession } from "../../../src/core/sdk.js";
-import { SessionManager } from "../../../src/core/session-manager.js";
-import { SettingsManager } from "../../../src/core/settings-manager.js";
+import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
+import { createAgentSession } from "../../../src/core/sdk.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
 
 describe("regression #2835: tool allowlists filter extension tools", () => {
 	let tempDir: string;
@@ -66,17 +66,17 @@ describe("regression #2835: tool allowlists filter extension tools", () => {
 	}
 
 	it("allows only explicitly listed built-in and extension tools", async () => {
-		const session = await createSession(["ipython", "dynamic_tool"]);
+		const session = await createSession(["read", "dynamic_tool"]);
 
 		expect(
 			session
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["dynamic_tool", "ipython"]);
-		expect(session.getActiveToolNames().sort()).toEqual(["dynamic_tool", "ipython"]);
-		expect(session.systemPrompt).not.toContain("- ipython:");
-		expect(session.systemPrompt).not.toContain("- dynamic_tool: Run dynamic test behavior");
+		).toEqual(["dynamic_tool", "read"]);
+		expect(session.getActiveToolNames().sort()).toEqual(["dynamic_tool", "read"]);
+		expect(session.systemPrompt).toContain("You are a general purpose agent that uses code to solve tasks.");
+		// Tool allowlist is enforced via active tools, not an "Available tools" prompt list.
 		expect(session.systemPrompt).not.toContain("- bash:");
 		expect(session.systemPrompt).not.toContain("- edit:");
 		session.dispose();
@@ -87,6 +87,7 @@ describe("regression #2835: tool allowlists filter extension tools", () => {
 
 		expect(session.getAllTools()).toEqual([]);
 		expect(session.getActiveToolNames()).toEqual([]);
+		expect(session.systemPrompt).toContain("You are a general purpose agent that uses code to solve tasks.");
 		expect(session.systemPrompt).not.toContain("Available tools:");
 		expect(session.systemPrompt).not.toContain("dynamic_tool");
 		session.dispose();

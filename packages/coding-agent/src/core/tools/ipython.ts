@@ -3,10 +3,10 @@ import { existsSync } from "node:fs";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
-import { IMAGE_MIME_TYPES } from "../../utils/mime.js";
-import type { ExtensionContext, ToolDefinition } from "../extensions/types.js";
-import { withKernelBootPermit } from "../kernel/boot-gate.js";
-import type { KernelBootstrapProgressHandler } from "../kernel/bootstrap.js";
+import { IMAGE_MIME_TYPES } from "../../utils/mime.ts";
+import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { withKernelBootPermit } from "../kernel/boot-gate.ts";
+import type { KernelBootstrapProgressHandler } from "../kernel/bootstrap.ts";
 import {
 	type ExecuteResult,
 	type HostRequestHandlers,
@@ -15,11 +15,11 @@ import {
 	type KernelDiffDisplay,
 	KernelManager,
 	type KernelSentAgentMessage,
-} from "../kernel/index.js";
-import { manifestPathIn, type RestoreResult, snapshotPathIn } from "../kernel/state-snapshot.js";
-import type { PythonSkillRuntimeInfo } from "../skills.js";
-import { parseIpythonBashCell } from "./ipython-cell-code.js";
-import { wrapToolDefinition } from "./tool-definition-wrapper.js";
+} from "../kernel/index.ts";
+import { manifestPathIn, type RestoreResult, snapshotPathIn } from "../kernel/state-snapshot.ts";
+import type { PythonSkillRuntimeInfo } from "../skills.ts";
+import { parseIpythonBashCell } from "./ipython-cell-code.ts";
+import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const RLM_BOOTSTRAP_BASE_CODE = `
 import asyncio
@@ -333,11 +333,12 @@ export class IpythonKernelProvisioner {
 	private lastStartupMessage?: string;
 	private _lastRestore?: RestoreResult;
 	private readonly disposeController = new AbortController();
+	private readonly cwd: string;
+	private readonly options?: Omit<IpythonToolOptions, "provisioner">;
 
-	constructor(
-		private readonly cwd: string,
-		private readonly options?: Omit<IpythonToolOptions, "provisioner">,
-	) {
+	constructor(cwd: string, options?: Omit<IpythonToolOptions, "provisioner">) {
+		this.cwd = cwd;
+		this.options = options;
 		if (options?.kernelManagerRef) {
 			options.kernelManagerRef.current = undefined;
 		}

@@ -1,17 +1,17 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type Component, Container, Image, Text, type TUI } from "@earendil-works/pi-tui";
-import type { ToolDefinition, ToolRenderContext, ToolRenderResultOptions } from "../../../core/extensions/types.js";
-import type { KernelSentAgentMessage } from "../../../core/kernel/index.js";
-import { createBashToolDefinition } from "../../../core/tools/bash.js";
-import { createEditToolDefinition } from "../../../core/tools/edit.js";
-import { createAllToolDefinitions } from "../../../core/tools/index.js";
-import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.js";
-import type { AgentConnectionToolDefinition } from "../../agent-connection/index.js";
-import { type Theme, theme } from "../theme/theme.js";
-import { getWorkingPulseFrame, workingIconFrame } from "../theme/working-icon.js";
-import { FileChangeSummaryComponent, getToolFileChanges } from "./edit-summary.js";
-import { getIpythonCodeFromArgs, IPythonCellComponent } from "./ipython-cell.js";
-import { ToolPanel } from "./tool-panel.js";
+import type { ToolDefinition, ToolRenderContext, ToolRenderResultOptions } from "../../../core/extensions/types.ts";
+import type { KernelSentAgentMessage } from "../../../core/kernel/index.ts";
+import { createBashToolDefinition } from "../../../core/tools/bash.ts";
+import { createEditToolDefinition } from "../../../core/tools/edit.ts";
+import { createAllToolDefinitions } from "../../../core/tools/index.ts";
+import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
+import type { AgentConnectionToolDefinition } from "../../agent-connection/index.ts";
+import { type Theme, theme } from "../theme/theme.ts";
+import { getWorkingPulseFrame, workingIconFrame } from "../theme/working-icon.ts";
+import { FileChangeSummaryComponent, getToolFileChanges } from "./edit-summary.ts";
+import { getIpythonCodeFromArgs, IPythonCellComponent } from "./ipython-cell.ts";
+import { ToolPanel } from "./tool-panel.ts";
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;

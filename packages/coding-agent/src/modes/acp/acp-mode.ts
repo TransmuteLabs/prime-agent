@@ -5,16 +5,16 @@ import { Readable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { VERSION } from "../../config.js";
-import type { AgentSessionRuntime } from "../../core/agent-session-runtime.js";
-import type { AgentAutonomousStatus } from "../../core/autonomous.js";
-import { takeOverStdout, writeRawStdout } from "../../core/output-guard.js";
-import { InProcessAgentConnection } from "../agent-connection/in-process-agent-connection.js";
-import type { AgentConnection } from "../agent-connection/types.js";
-import { latestAutonomousGateAttempt } from "../headless-completion.js";
-import { type AcpEventMappingState, acpUpdatesForSessionEvent } from "./acp-events.js";
-import { primeAgentMeta } from "./acp-meta.js";
-import { type AcpStopReason, acpStopReason } from "./acp-stop-reason.js";
+import { VERSION } from "../../config.ts";
+import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import type { AgentAutonomousStatus } from "../../core/autonomous.ts";
+import { takeOverStdout, writeRawStdout } from "../../core/output-guard.ts";
+import { InProcessAgentConnection } from "../agent-connection/in-process-agent-connection.ts";
+import type { AgentConnection } from "../agent-connection/types.ts";
+import { latestAutonomousGateAttempt } from "../headless-completion.ts";
+import { type AcpEventMappingState, acpUpdatesForSessionEvent } from "./acp-events.ts";
+import { primeAgentMeta } from "./acp-meta.ts";
+import { type AcpStopReason, acpStopReason } from "./acp-stop-reason.ts";
 
 /**
  * ACP (Agent Client Protocol) mode.

@@ -21,11 +21,11 @@ import { basename, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { SessionManager } from "../src/core/session-manager.js";
-import { createCompactAssistantDelta } from "../src/modes/daemon/compact-session-stream.js";
-import type { DaemonOutbound } from "../src/modes/daemon/daemon-protocol.js";
-import { SnapshotTranscriptCache } from "../src/modes/daemon/snapshot-transcript-cache.js";
-import { serializeJsonLine } from "../src/modes/rpc/jsonl.js";
+import { SessionManager } from "../src/core/session-manager.ts";
+import { createCompactAssistantDelta } from "../src/modes/daemon/compact-session-stream.ts";
+import type { DaemonOutbound } from "../src/modes/daemon/daemon-protocol.ts";
+import { SnapshotTranscriptCache } from "../src/modes/daemon/snapshot-transcript-cache.ts";
+import { serializeJsonLine } from "../src/modes/rpc/jsonl.ts";
 
 const CLIENT_COUNTS = [1, 10, 50, 100, 250] as const;
 const SESSION_CLIENT_COUNTS = [1, 2, 5, 10] as const;

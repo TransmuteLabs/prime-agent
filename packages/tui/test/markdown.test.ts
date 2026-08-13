@@ -2,11 +2,12 @@ import assert from "node:assert";
 import { afterEach, describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
-import { Markdown } from "../src/components/markdown.js";
-import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.js";
-import { type Component, TUI } from "../src/tui.js";
-import { defaultMarkdownTheme } from "./test-themes.js";
-import { VirtualTerminal } from "./virtual-terminal.js";
+import { Markdown } from "../src/components/markdown.ts";
+import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
+import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
+import { defaultMarkdownTheme } from "./test-themes.ts";
+import { VirtualTerminal } from "./virtual-terminal.ts";
 
 // Force full color in CI so ANSI assertions are deterministic
 const chalk = new Chalk({ level: 3 });
@@ -31,8 +32,50 @@ function getCellUnderline(terminal: VirtualTerminal, row: number, col: number): 
 	return cell.isUnderline();
 }
 
+function stripAnsi(line: string): string {
+	return line.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 describe("Markdown component", () => {
-	describe("Nested lists", () => {
+	describe("Transforms", () => {
+		it("caches transformed Markdown by source and available width", () => {
+			const calls: Array<{ source: string; availableWidth: number }> = [];
+			const markdown = new Markdown("source", 2, 0, defaultMarkdownTheme, undefined, {
+				transform: (source, availableWidth) => {
+					calls.push({ source, availableWidth });
+					return `${source} ${availableWidth}`;
+				},
+			});
+
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trim()),
+				["source 76"],
+			);
+			markdown.render(80);
+			assert.deepStrictEqual(
+				markdown.render(60).map((line) => stripAnsi(line).trim()),
+				["source 56"],
+			);
+			assert.deepStrictEqual(calls, [
+				{ source: "source", availableWidth: 76 },
+				{ source: "source", availableWidth: 56 },
+			]);
+
+			markdown.setText("updated");
+			assert.deepStrictEqual(
+				markdown.render(60).map((line) => stripAnsi(line).trim()),
+				["updated 56"],
+			);
+			assert.deepStrictEqual(calls.at(-1), { source: "updated", availableWidth: 56 });
+
+			markdown.invalidate();
+			markdown.render(60);
+			assert.deepStrictEqual(calls.at(-1), { source: "updated", availableWidth: 56 });
+			assert.strictEqual(calls.length, 4);
+		});
+	});
+
+	describe("Lists", () => {
 		it("should render simple nested list", () => {
 			const markdown = new Markdown(
 				`- Item 1
@@ -54,8 +97,8 @@ describe("Markdown component", () => {
 
 			// Check structure
 			assert.ok(plainLines.some((line) => line.includes("- Item 1")));
-			assert.ok(plainLines.some((line) => line.includes("  - Nested 1.1")));
-			assert.ok(plainLines.some((line) => line.includes("  - Nested 1.2")));
+			assert.ok(plainLines.some((line) => line.includes("    - Nested 1.1")));
+			assert.ok(plainLines.some((line) => line.includes("    - Nested 1.2")));
 			assert.ok(plainLines.some((line) => line.includes("- Item 2")));
 		});
 
@@ -75,9 +118,9 @@ describe("Markdown component", () => {
 
 			// Check proper indentation
 			assert.ok(plainLines.some((line) => line.includes("- Level 1")));
-			assert.ok(plainLines.some((line) => line.includes("  - Level 2")));
-			assert.ok(plainLines.some((line) => line.includes("    - Level 3")));
-			assert.ok(plainLines.some((line) => line.includes("      - Level 4")));
+			assert.ok(plainLines.some((line) => line.includes("    - Level 2")));
+			assert.ok(plainLines.some((line) => line.includes("        - Level 3")));
+			assert.ok(plainLines.some((line) => line.includes("            - Level 4")));
 		});
 
 		it("should render ordered nested list", () => {
@@ -95,9 +138,45 @@ describe("Markdown component", () => {
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 
 			assert.ok(plainLines.some((line) => line.includes("1. First")));
-			assert.ok(plainLines.some((line) => line.includes("  1. Nested first")));
-			assert.ok(plainLines.some((line) => line.includes("  2. Nested second")));
+			assert.ok(plainLines.some((line) => line.includes("    1. Nested first")));
+			assert.ok(plainLines.some((line) => line.includes("    2. Nested second")));
 			assert.ok(plainLines.some((line) => line.includes("2. Second")));
+		});
+
+		it("should normalize ordered list markers by default", () => {
+			const markdown = new Markdown("1. alpha\n1. beta\n1. gamma", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["1. alpha", "2. beta", "3. gamma"]);
+		});
+
+		it("should preserve source list markers when configured", () => {
+			const markdown = new Markdown(
+				"  4. forth\n  3. third\n\n10) ten\n7) seven\n\n+ plus\n* star\n- minus\n+",
+				0,
+				0,
+				defaultMarkdownTheme,
+				undefined,
+				{
+					preserveOrderedListMarkers: true,
+				},
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, [
+				"4. forth",
+				"3. third",
+				"",
+				"10) ten",
+				"7) seven",
+				"",
+				"+ plus",
+				"* star",
+				"- minus",
+				"+",
+			]);
 		});
 
 		it("should render mixed ordered and unordered nested lists", () => {
@@ -116,8 +195,47 @@ describe("Markdown component", () => {
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 
 			assert.ok(plainLines.some((line) => line.includes("1. Ordered item")));
-			assert.ok(plainLines.some((line) => line.includes("  - Unordered nested")));
+			assert.ok(plainLines.some((line) => line.includes("    - Unordered nested")));
 			assert.ok(plainLines.some((line) => line.includes("2. Second ordered")));
+		});
+
+		it("should render blank lines between loose list items", () => {
+			const markdown = new Markdown(
+				`1. Lorem ipsum dolor sit amet.
+
+   Ut enim ad minim veniam.
+
+2. Duis aute irure dolor.
+
+   Excepteur sint occaecat cupidatat.
+
+3. Beep boop`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, [
+				"1. Lorem ipsum dolor sit amet.",
+				"",
+				"   Ut enim ad minim veniam.",
+				"",
+				"2. Duis aute irure dolor.",
+				"",
+				"   Excepteur sint occaecat cupidatat.",
+				"",
+				"3. Beep boop",
+			]);
+		});
+
+		it("should render task list markers", () => {
+			const markdown = new Markdown("- [ ] beep\n- [x] boop", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["- [ ] beep", "- [x] boop"]);
 		});
 
 		it("should maintain numbering when code blocks are not indented (LLM output)", () => {
@@ -155,6 +273,67 @@ describe("Markdown component", () => {
 			assert.ok(numberedLines[0].startsWith("1."), `First item should be "1.", got: ${numberedLines[0]}`);
 			assert.ok(numberedLines[1].startsWith("2."), `Second item should be "2.", got: ${numberedLines[1]}`);
 			assert.ok(numberedLines[2].startsWith("3."), `Third item should be "3.", got: ${numberedLines[2]}`);
+		});
+
+		it("should indent wrapped unordered list lines", () => {
+			const markdown = new Markdown("- alpha beta gamma delta epsilon", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(20).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["- alpha beta gamma", "  delta epsilon"]);
+		});
+
+		it("should indent wrapped ordered list lines", () => {
+			const markdown = new Markdown("1. alpha beta gamma delta epsilon", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(20).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["1. alpha beta gamma", "   delta epsilon"]);
+		});
+
+		it("should indent wrapped ordered list lines with multi-digit markers", () => {
+			const markdown = new Markdown("10. alpha beta gamma delta epsilon", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(21).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["10. alpha beta gamma", "    delta epsilon"]);
+		});
+
+		it("should indent wrapped nested list lines", () => {
+			const markdown = new Markdown(`- parent\n  - alpha beta gamma delta epsilon`, 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["- parent", "    - alpha beta gamma", "      delta epsilon"]);
+		});
+
+		it("should indent wrapped nested list lines under ordered parents", () => {
+			const markdown = new Markdown(`1. parent\n   - alpha beta gamma delta epsilon`, 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["1. parent", "    - alpha beta gamma", "      delta epsilon"]);
+		});
+
+		it("should render and wrap blockquotes inside list items", () => {
+			const markdown = new Markdown("- > alpha beta gamma delta epsilon zeta", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["- │ alpha beta gamma", "  │ delta epsilon zeta"]);
+		});
+
+		it("should render and wrap code blocks inside list items", () => {
+			const markdown = new Markdown(
+				"- ```ts\n  alpha beta gamma delta epsilon zeta\n  ```",
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["- ```ts", "    alpha beta gamma", "  delta epsilon zeta", "  ```"]);
 		});
 	});
 
@@ -362,38 +541,6 @@ describe("Markdown component", () => {
 			assert.ok(extracted.includes(url), "Should preserve URL");
 		});
 
-		it("should expose wrapped table cell boundaries without changing rendered text", () => {
-			setCapabilities({ images: null, trueColor: false, hyperlinks: false });
-			const url = "https://example.com/this/is/a/long/path";
-			const markdown = new Markdown(
-				`| URL | Status |
-| --- | --- |
-| ${url} | ready |`,
-				0,
-				0,
-				defaultMarkdownTheme,
-			);
-
-			const lines = markdown.render(32);
-			resetCapabilitiesCache();
-			const regions = markdown.getSelectionRegions();
-			const urlRegions = regions.filter((region) => region.row === 1 && region.column === 0);
-			const statusRegions = regions.filter((region) => region.row === 1 && region.column === 1);
-
-			assert.ok(urlRegions.length > 1, "URL cell should wrap across physical lines");
-			assert.strictEqual(statusRegions.length, urlRegions.length);
-			assert.ok(
-				lines.every((line) => !line.includes("\x1b_pi:table:")),
-				"metadata markers must be stripped",
-			);
-			assert.ok(urlRegions.every((region) => region.table === urlRegions[0].table));
-			assert.ok(urlRegions.every((region) => region.content === url));
-			for (let i = 0; i < urlRegions.length; i++) {
-				assert.strictEqual(urlRegions[i].line, statusRegions[i].line);
-				assert.ok(urlRegions[i].col + urlRegions[i].width < statusRegions[i].col);
-			}
-		});
-
 		it("should wrap styled inline code inside table cells without breaking borders", () => {
 			const markdown = new Markdown(
 				`| Code |
@@ -539,10 +686,216 @@ describe("Markdown component", () => {
 			assert.ok(plainLines.some((line) => line.includes("Test Document")));
 			// Check list
 			assert.ok(plainLines.some((line) => line.includes("- Item 1")));
-			assert.ok(plainLines.some((line) => line.includes("  - Nested item")));
+			assert.ok(plainLines.some((line) => line.includes("    - Nested item")));
 			// Check table
 			assert.ok(plainLines.some((line) => line.includes("Col1")));
 			assert.ok(plainLines.some((line) => line.includes("│")));
+		});
+	});
+
+	describe("LaTeX math", () => {
+		it("renders inline dollar and parenthesis delimiters", () => {
+			const markdown = new Markdown(
+				String.raw`A map $\mathbb{C}^3 \to \mathbb{C}^3$, $xy$, $x-y$, $-x$, $\frac{1}{2}$, and \(s \to \infty\).`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["A map ℂ³ → ℂ³, xy, x-y, -x, 1/2, and s → ∞."]);
+		});
+
+		it("renders display dollar delimiters without Markdown escape corruption", () => {
+			const markdown = new Markdown(
+				String.raw`Before
+
+$$\{3x+2y,\; x \in \{0, \pm 1\}\}$$
+
+after`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["Before", "", "{3x+2y, x ∈ {0, ± 1}}", "", "after"]);
+		});
+
+		it("renders display bracket delimiters", () => {
+			const markdown = new Markdown(
+				String.raw`Before
+
+\[
+E \approx \frac{0.1\ \text{lux}}{100\ \text{lm/W}}
+\]
+
+after`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["Before", "", "    0.1 lux", "E ≈ ────────", "    100 lm/W", "", "after"]);
+		});
+
+		it("aligns matrix rows with the opening delimiter", () => {
+			const markdown = new Markdown(
+				String.raw`Consider the matrix
+
+\[
+A=
+\begin{pmatrix}
+\pi & 0\\
+0 & \frac{1}{\pi}
+\end{pmatrix}.
+\]`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["Consider the matrix", "", "A = ⎛ π │ 0   ⎞", "    ⎝ 0 │ 1/π ⎠."]);
+		});
+
+		it("renders lower limits beneath display operators", () => {
+			const markdown = new Markdown(
+				String.raw`\[
+\lim_{x\to 0}\frac{\frac{\sin x}{x}-1}{\frac{e^x-1}{x}-1}=0
+\]`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["     (sin x)/x-1", "lim  ─────────── = 0", "x→0  (eˣ-1)/x-1"]);
+		});
+
+		it("renders math inside lists and tables", () => {
+			const markdown = new Markdown(
+				String.raw`- Formula: $F_1 = u^2$
+
+| Value |
+| --- |
+| $\mathbb{C}^3$ |`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+			const output = lines.join("\n");
+
+			assert.ok(output.includes("- Formula: F₁ = u²"));
+			assert.ok(output.includes("│ ℂ³"));
+		});
+
+		it("does not treat currency, shell variables, or code spans as math", () => {
+			const source = "Costs $5 and $10 or $8k–$12k; use `$x$`, $HOME, and $" + "{PATH}.";
+			const markdown = new Markdown(source, 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["Costs $5 and $10 or $8k–$12k; use $x$, $HOME, and $" + "{PATH}."]);
+
+			const shellVariables = "Paths: $HOME/$USER and $XDG_CONFIG_HOME/$APP_CONFIG";
+			const shellLines = new Markdown(shellVariables, 0, 0, defaultMarkdownTheme)
+				.render(80)
+				.map((line) => stripAnsi(line).trimEnd());
+			assert.deepStrictEqual(shellLines, [shellVariables]);
+		});
+
+		it("preserves unsupported and incomplete LaTeX exactly", () => {
+			const cases = [String.raw`Unknown $x + \unknown{y}$ after`, String.raw`Streaming $\mathbb{C}^3`];
+
+			for (const source of cases) {
+				const markdown = new Markdown(source, 0, 0, defaultMarkdownTheme);
+				const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+				assert.deepStrictEqual(lines, [source]);
+			}
+		});
+
+		it("preserves incomplete backslash delimiters while streaming", () => {
+			const inline = new Markdown(String.raw`Map \(\mathbb{C}^3`, 0, 0, defaultMarkdownTheme);
+			assert.deepStrictEqual(
+				inline.render(80).map((line) => stripAnsi(line).trimEnd()),
+				[String.raw`Map \(\mathbb{C}^3`],
+			);
+
+			const display = new Markdown("\\[\nx^2", 0, 0, defaultMarkdownTheme);
+			assert.deepStrictEqual(
+				display.render(80).map((line) => stripAnsi(line).trimEnd()),
+				["\\[", "x^2"],
+			);
+		});
+
+		it("does not render LaTeX inside escaped delimiters or code fences", () => {
+			const source = [String.raw`Escaped \$x-y\$.`, "", "```text", String.raw`$\mathbb{C}^3$`, "```"].join("\n");
+			const markdown = new Markdown(source, 0, 0, defaultMarkdownTheme);
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["Escaped $x-y$.", "", "```text", "  $\\mathbb{C}^3$", "```"]);
+		});
+
+		it("allows LaTeX rendering to be disabled", () => {
+			const markdown = new Markdown(
+				String.raw`Map $\mathbb{C}^3 \to \mathbb{C}^3$`,
+				0,
+				0,
+				defaultMarkdownTheme,
+				undefined,
+				{
+					renderLatex: false,
+				},
+			);
+
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trimEnd()),
+				[String.raw`Map $\mathbb{C}^3 \to \mathbb{C}^3$`],
+			);
+		});
+
+		it("switches from raw to rendered math when a streamed delimiter closes", () => {
+			const markdown = new Markdown(String.raw`Map $\mathbb{C}^3`, 0, 0, defaultMarkdownTheme);
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trimEnd()),
+				[String.raw`Map $\mathbb{C}^3`],
+			);
+
+			markdown.setText(String.raw`Map $\mathbb{C}^3$`);
+
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trimEnd()),
+				["Map ℂ³"],
+			);
+		});
+	});
+
+	describe("Backslash escapes", () => {
+		it("should normalize escaped punctuation by default", () => {
+			const markdown = new Markdown(String.raw`"\"`, 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, [`""`]);
+		});
+
+		it("should preserve source backslash escapes when configured", () => {
+			const markdown = new Markdown(String.raw`"\"`, 0, 0, defaultMarkdownTheme, undefined, {
+				preserveBackslashEscapes: true,
+			});
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, [String.raw`"\"`]);
 		});
 	});
 
@@ -604,8 +957,11 @@ describe("Markdown component", () => {
 		it("should not leak styles into following lines when rendered in TUI", async () => {
 			class MarkdownWithInput implements Component {
 				public markdownLineCount = 0;
+				private readonly markdown: Markdown;
 
-				constructor(private readonly markdown: Markdown) {}
+				constructor(markdown: Markdown) {
+					this.markdown = markdown;
+				}
 
 				render(width: number): string[] {
 					const lines = this.markdown.render(width);
@@ -624,7 +980,7 @@ describe("Markdown component", () => {
 			});
 
 			const terminal = new VirtualTerminal(80, 6);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const component = new MarkdownWithInput(markdown);
 			tui.addChild(component);
 			tui.start();
@@ -655,25 +1011,17 @@ again, hello world`,
 			const lines = markdown.render(80);
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
 
-			const codeBlockIndex = plainLines.indexOf('  const hello = "world";');
-			assert.ok(codeBlockIndex !== -1, "Should have code block content");
+			const closingBackticksIndex = plainLines.indexOf("```");
+			assert.ok(closingBackticksIndex !== -1, "Should have closing backticks");
 
-			const afterCodeBlock = plainLines.slice(codeBlockIndex + 1);
-			const emptyLineCount = afterCodeBlock.findIndex((line) => line !== "");
+			const afterBackticks = plainLines.slice(closingBackticksIndex + 1);
+			const emptyLineCount = afterBackticks.findIndex((line) => line !== "");
 
 			assert.strictEqual(
 				emptyLineCount,
 				1,
-				`Expected 1 empty line after code block, but found ${emptyLineCount}. Lines after code block: ${JSON.stringify(afterCodeBlock.slice(0, 5))}`,
+				`Expected 1 empty line after code block, but found ${emptyLineCount}. Lines after backticks: ${JSON.stringify(afterBackticks.slice(0, 5))}`,
 			);
-		});
-
-		it("should not render code fence markers or language labels", () => {
-			const markdown = new Markdown("```python\nprint('hello')\n```", 0, 0, defaultMarkdownTheme);
-			const lines = markdown.render(80);
-			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
-
-			assert.deepStrictEqual(plainLines, ["  print('hello')"]);
 		});
 
 		it("should normalize paragraph and code block spacing to one blank line", () => {
@@ -691,7 +1039,7 @@ code block
 
 more text`,
 			];
-			const expectedLines = ["hello this is text", "", "  code block", "", "more text"];
+			const expectedLines = ["hello this is text", "", "```", "  code block", "```", "", "more text"];
 
 			for (const text of cases) {
 				const markdown = new Markdown(text, 0, 0, defaultMarkdownTheme);
@@ -1073,7 +1421,7 @@ bar`,
 		it("should not leak h1 underline into padding when inline code is the last token", async () => {
 			const markdown = new Markdown("# Important distinction from `open()`", 0, 0, defaultMarkdownTheme);
 			const terminal = new VirtualTerminal(80, 4);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			tui.addChild(markdown);
 			tui.start();
 			await terminal.waitForRender();
@@ -1274,95 +1622,46 @@ bar`,
 		});
 	});
 
-	describe("Streaming identity", () => {
-		// Incremental setText (as during token streaming) must render byte-identical
-		// to a fresh component constructed with the same final text. Guards the
-		// per-block render cache against stale or mis-keyed entries.
-		const assertStreamingIdentity = (corpus: string, chunkSize: number, width: number) => {
-			const streaming = new Markdown("", 1, 1, defaultMarkdownTheme);
-			let text = "";
-			for (let offset = 0; offset < corpus.length; offset += chunkSize) {
-				text += corpus.slice(offset, offset + chunkSize);
-				streaming.setText(text);
-				const incremental = streaming.render(width);
-				const fresh = new Markdown(text, 1, 1, defaultMarkdownTheme).render(width);
-				assert.deepStrictEqual(
-					incremental,
-					fresh,
-					`Streaming render diverged at ${text.length}/${corpus.length} chars`,
-				);
+	describe("Streaming code fences", () => {
+		it("stabilizes partial closing fence rendering", () => {
+			const cases = [
+				{
+					input: "```ts\nconst x = 1;\n``",
+					expected: ["```ts", "  const x = 1;", "```"],
+				},
+				{
+					input: "```md\nnot a closing fence:\n``\n```",
+					expected: ["```md", "  not a closing fence:", "  ``", "```"],
+				},
+				{
+					input: "```ts\n``",
+					expected: ["```ts", "", "```"],
+				},
+				{
+					input: "````\n```",
+					expected: ["```", "", "```"],
+				},
+				{
+					input: "~~~~~\n~~~~",
+					expected: ["```", "", "```"],
+				},
+				{
+					input: "```md\nnot a closing fence:\n``\n```\n\nafter",
+					expected: ["```md", "  not a closing fence:", "  ``", "```", "", "after"],
+				},
+			];
+
+			for (const { input, expected } of cases) {
+				const markdown = new Markdown(input, 0, 0, defaultMarkdownTheme);
+				const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+				assert.deepStrictEqual(lines, expected);
 			}
-		};
 
-		const corpus = [
-			"# Title",
-			"",
-			"Intro paragraph with **bold**, *italic*, and `code` that wraps at narrow widths.",
-			"",
-			"- item one",
-			"- item two",
-			"  - nested",
-			"- item three",
-			"",
-			"```ts",
-			"function f(x: number) {",
-			"  return x * 2;",
-			"}",
-			"```",
-			"",
-			"| a | b |",
-			"| - | - |",
-			"| 1 | 2 |",
-			"| 3 | 4 |",
-			"",
-			"> quote line that is long enough to wrap when rendered at narrow widths",
-			"",
-			"Closing paragraph.",
-		].join("\n");
+			const partial = new Markdown("```ts\nconst x = 1;\n``", 0, 0, defaultMarkdownTheme);
+			const complete = new Markdown("```ts\nconst x = 1;\n```", 0, 0, defaultMarkdownTheme);
 
-		it("renders identically when streamed in 3-char chunks", () => {
-			assertStreamingIdentity(corpus, 3, 60);
-		});
-
-		it("renders identically when streamed in 7-char chunks", () => {
-			assertStreamingIdentity(corpus, 7, 100);
-		});
-
-		it("handles a code fence that stays unterminated then closes", () => {
-			assertStreamingIdentity("Some text\n\n```js\nconst a = 1;\nconst b = 2;\n```\n\nAfter fence.", 4, 80);
-		});
-
-		it("handles a paragraph that becomes a setext heading", () => {
-			assertStreamingIdentity("Heading text\n===\n\nBody paragraph.", 2, 80);
-		});
-
-		it("handles width changes mid-stream", () => {
-			const streaming = new Markdown("", 1, 1, defaultMarkdownTheme);
-			let text = "";
-			const widths = [40, 80, 60, 100];
-			for (let offset = 0, i = 0; offset < corpus.length; offset += 16, i++) {
-				text += corpus.slice(offset, offset + 16);
-				streaming.setText(text);
-				const width = widths[i % widths.length];
-				const incremental = streaming.render(width);
-				const fresh = new Markdown(text, 1, 1, defaultMarkdownTheme).render(width);
-				assert.deepStrictEqual(incremental, fresh, `Diverged at ${text.length} chars, width ${width}`);
-			}
-		});
-
-		it("handles invalidate mid-stream", () => {
-			const streaming = new Markdown("", 1, 1, defaultMarkdownTheme);
-			let text = "";
-			for (let offset = 0, i = 0; offset < corpus.length; offset += 16, i++) {
-				text += corpus.slice(offset, offset + 16);
-				streaming.setText(text);
-				if (i % 5 === 4) {
-					streaming.invalidate();
-				}
-				const incremental = streaming.render(80);
-				const fresh = new Markdown(text, 1, 1, defaultMarkdownTheme).render(80);
-				assert.deepStrictEqual(incremental, fresh, `Diverged at ${text.length} chars`);
-			}
+			assert.strictEqual(partial.render(80).length, complete.render(80).length);
 		});
 	});
 });

@@ -46,7 +46,7 @@ vi.mock("node:fs", async (importOriginal) => {
 	};
 });
 
-import { SessionManager } from "../src/core/session-manager.js";
+import { SessionManager } from "../src/core/session-manager.ts";
 
 const tempDirs: string[] = [];
 

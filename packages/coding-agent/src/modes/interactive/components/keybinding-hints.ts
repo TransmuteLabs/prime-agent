@@ -3,9 +3,10 @@
  */
 
 import { getKeybindings, type Keybinding, type KeyId } from "@earendil-works/pi-tui";
-import { theme } from "../theme/theme.js";
+import { theme } from "../theme/theme.ts";
 
-export interface KeyTextOptions {
+export interface KeyTextFormatOptions {
+	/** Show only the first configured binding. */
 	primaryOnly?: boolean;
 }
 
@@ -51,18 +52,21 @@ export function formatKeyText(key: string, platform: NodeJS.Platform = process.p
 		.join("/");
 }
 
-function formatKeys(keys: KeyId[], options: KeyTextOptions = {}): string {
+function formatKeys(keys: KeyId[], options: KeyTextFormatOptions = {}): string {
 	const displayKeys = options.primaryOnly ? keys.slice(0, 1) : keys;
 	if (displayKeys.length === 0) return "";
-	if (displayKeys.length === 1) return formatKeyText(displayKeys[0]!);
 	return formatKeyText(displayKeys.join("/"));
 }
 
-export function keyText(keybinding: Keybinding, options: KeyTextOptions = {}): string {
+export function keyText(keybinding: Keybinding, options: KeyTextFormatOptions = {}): string {
 	return formatKeys(getKeybindings().getKeys(keybinding), options);
 }
 
-export function keyHint(keybinding: Keybinding, description: string, options: KeyTextOptions = {}): string {
+export function keyDisplayText(keybinding: Keybinding): string {
+	return formatKeys(getKeybindings().getKeys(keybinding));
+}
+
+export function keyHint(keybinding: Keybinding, description: string, options: KeyTextFormatOptions = {}): string {
 	return theme.fg("dim", keyText(keybinding, options)) + theme.fg("muted", ` ${description}`);
 }
 

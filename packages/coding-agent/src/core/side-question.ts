@@ -84,12 +84,10 @@ export function startSideQuestion(
 			systemPrompt: parent.state.systemPrompt,
 			messages: [...structuredClone(parent.state.messages), ...previousTurnMessages],
 			thinkingLevel: "off",
-			serviceTier: parent.state.serviceTier,
 			tools: [],
 		},
 		convertToLlm: parent.convertToLlm,
 		transformContext: parent.transformContext,
-		streamFn: parent.streamFn,
 		getApiKey: parent.getApiKey,
 		onPayload: parent.onPayload,
 		onResponse: parent.onResponse,
@@ -99,6 +97,7 @@ export function startSideQuestion(
 		transport: "sse",
 		maxRetryDelayMs: parent.maxRetryDelayMs,
 		toolExecution: parent.toolExecution,
+		streamFn: parent.streamFunction,
 	});
 
 	let answer = "";

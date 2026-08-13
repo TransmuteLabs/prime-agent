@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "vitest";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
-import { formatTmuxWarningNotice } from "../src/modes/shared/startup-notices.js";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { formatTmuxWarningNotice } from "../src/modes/shared/startup-notices.ts";
 
 const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 

@@ -1,7 +1,7 @@
-import type { AgentConnectionHeartbeat } from "../agent-connection/types.js";
-import type { DaemonClient } from "./daemon-client.js";
-import { deserializeDaemonError } from "./daemon-errors.js";
-import { isUnknownDaemonCommandError } from "./daemon-protocol.js";
+import type { AgentConnectionHeartbeat } from "../agent-connection/types.ts";
+import type { DaemonClient } from "./daemon-client.ts";
+import { deserializeDaemonError } from "./daemon-errors.ts";
+import { isUnknownDaemonCommandError } from "./daemon-protocol.ts";
 
 export async function listDaemonHeartbeats(
 	client: DaemonClient,

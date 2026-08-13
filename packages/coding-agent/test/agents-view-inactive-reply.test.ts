@@ -1,14 +1,14 @@
 import { setKeybindings } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { KeybindingsManager } from "../src/core/keybindings.js";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
 import {
 	AgentsViewMode,
 	createReplyComposerAutocompleteProvider,
 	getReplyComposerCommandRejection,
 	parseAgentsViewCommand,
-} from "../src/modes/agents-view/agents-view-mode.js";
-import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
+} from "../src/modes/agents-view/agents-view-mode.ts";
+import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.ts";
 
 function summary(overrides: Partial<SessionSummary>): SessionSummary {
 	return {

@@ -1,21 +1,21 @@
 import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { KeybindingsManager } from "../src/core/keybindings.js";
-import type { ModelRegistry } from "../src/core/model-registry.js";
-import { SettingsManager } from "../src/core/settings-manager.js";
-import { DaemonAgentConnection } from "../src/modes/agent-connection/daemon-agent-connection.js";
-import type { AgentConnectionSavedSessionInfo } from "../src/modes/agent-connection/types.js";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
+import type { ModelRegistry } from "../src/core/model-registry.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
+import { DaemonAgentConnection } from "../src/modes/agent-connection/daemon-agent-connection.ts";
+import type { AgentConnectionSavedSessionInfo } from "../src/modes/agent-connection/types.ts";
 import {
 	AgentsViewMode,
 	type AgentsViewPersistentState,
 	combineAgentsViewStartupNotices,
 	createInitialAgentsViewPersistentState,
 	runAgentsViewMode,
-} from "../src/modes/agents-view/agents-view-mode.js";
-import { type AgentsViewRow, resolveAgentsViewLeftResult } from "../src/modes/agents-view/agents-view-state.js";
-import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
-import type { InteractiveModeUiServices } from "../src/modes/interactive/interactive-mode-services.js";
-import { stopThemeWatcher } from "../src/modes/interactive/theme/theme.js";
+} from "../src/modes/agents-view/agents-view-mode.ts";
+import { type AgentsViewRow, resolveAgentsViewLeftResult } from "../src/modes/agents-view/agents-view-state.ts";
+import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.ts";
+import type { InteractiveModeUiServices } from "../src/modes/interactive/interactive-mode-services.ts";
+import { stopThemeWatcher } from "../src/modes/interactive/theme/theme.ts";
 
 const modeMocks = vi.hoisted(() => ({
 	interactiveRun: vi.fn<() => Promise<never>>(),
@@ -25,12 +25,12 @@ const modeMocks = vi.hoisted(() => ({
 	clientRequest: vi.fn<() => Promise<unknown>>(),
 }));
 
-vi.mock("../src/config.js", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../src/config.js")>();
+vi.mock("../src/config.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/config.ts")>();
 	return { ...actual, appendRotatingLog: vi.fn() };
 });
 
-vi.mock("../src/modes/daemon/daemon-client.js", () => ({
+vi.mock("../src/modes/daemon/daemon-client.ts", () => ({
 	DaemonClient: class {
 		connect = vi.fn(async () => undefined);
 		close = vi.fn();
@@ -39,14 +39,14 @@ vi.mock("../src/modes/daemon/daemon-client.js", () => ({
 	getDaemonSocketCloseReason: vi.fn(),
 }));
 
-vi.mock("../src/modes/agent-connection/daemon-agent-connection.js", () => ({
+vi.mock("../src/modes/agent-connection/daemon-agent-connection.ts", () => ({
 	DaemonAgentConnection: Object.assign(function DaemonAgentConnection() {}, {
 		attach: vi.fn(async () => ({ prompt: modeMocks.connectionPrompt, dispose: modeMocks.dispose })),
 	}),
 }));
 
-vi.mock("../src/modes/interactive/interactive-mode.js", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../src/modes/interactive/interactive-mode.js")>();
+vi.mock("../src/modes/interactive/interactive-mode.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/modes/interactive/interactive-mode.ts")>();
 	return {
 		...actual,
 		InteractiveMode: class {

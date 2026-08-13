@@ -2,9 +2,9 @@ import { lstatSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentSession, AgentSessionEvent } from "../src/core/agent-session.js";
-import { SettingsManager } from "../src/core/settings-manager.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentSession, AgentSessionEvent } from "../src/core/agent-session.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 import {
 	captureAgentCommandUsed,
 	captureOnboardingCompleted,
@@ -16,7 +16,7 @@ import {
 	type TelemetryEventName,
 	type TelemetrySink,
 	telemetryAuthCategory,
-} from "../src/core/telemetry.js";
+} from "../src/core/telemetry.ts";
 
 function uuidGenerator(): () => string {
 	let counter = 0;
@@ -94,6 +94,12 @@ class FakeAgentSession {
 		await this.disposeCallback?.();
 	}
 }
+
+beforeEach(() => {
+	// The package vitest config forces PI_OFFLINE=1; telemetry tests opt back in
+	// and stub opt-outs explicitly where they exercise them.
+	vi.stubEnv("PI_OFFLINE", "0");
+});
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -388,7 +394,7 @@ describe("agent telemetry aggregation", () => {
 		fakeSession.emit({ type: "message_end", message: assistant });
 		fakeSession.emit({ type: "turn_end", message: assistant, toolResults: [] });
 		timestamp = 1_125;
-		fakeSession.emit({ type: "agent_end", messages: [assistant] });
+		fakeSession.emit({ type: "agent_end", messages: [assistant], willRetry: false });
 		fakeSession.emit({ type: "session_action_update", actions: { queuedCount: 0, steering: [], followUps: [] } });
 
 		const run = sink.events.find((event) => event.name === "agent run completed");
@@ -443,7 +449,7 @@ describe("agent telemetry aggregation", () => {
 		});
 		fakeSession.emit({ type: "agent_start" });
 		fakeSession.emit({ type: "message_end", message: assistant });
-		fakeSession.emit({ type: "agent_end", messages: [assistant] });
+		fakeSession.emit({ type: "agent_end", messages: [assistant], willRetry: false });
 		expect(sink.events.find((event) => event.name === "agent run completed")).toBeUndefined();
 
 		fakeSession.emit({
@@ -477,7 +483,7 @@ describe("agent telemetry aggregation", () => {
 		});
 		fakeSession.emit({ type: "agent_start" });
 		fakeSession.emit({ type: "message_end", message: failed });
-		fakeSession.emit({ type: "agent_end", messages: [failed] });
+		fakeSession.emit({ type: "agent_end", messages: [failed], willRetry: true });
 		fakeSession.emit({
 			type: "auto_retry_start",
 			attempt: 1,
@@ -487,7 +493,7 @@ describe("agent telemetry aggregation", () => {
 		});
 		fakeSession.emit({ type: "agent_start" });
 		fakeSession.emit({ type: "message_end", message: succeeded });
-		fakeSession.emit({ type: "agent_end", messages: [succeeded] });
+		fakeSession.emit({ type: "agent_end", messages: [succeeded], willRetry: false });
 		fakeSession.emit({ type: "session_action_update", actions: { queuedCount: 0, steering: [], followUps: [] } });
 
 		const runs = sink.events.filter((event) => event.name === "agent run completed");

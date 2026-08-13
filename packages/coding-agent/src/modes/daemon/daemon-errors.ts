@@ -1,7 +1,7 @@
-import { MissingSessionCwdError } from "../../core/session-cwd.js";
-import { SessionImportFileNotFoundError } from "../../core/session-import-errors.js";
-import { SessionAlreadyActiveError } from "../../core/session-lease.js";
-import type { DaemonErrorInfo, DaemonResponse } from "./daemon-protocol.js";
+import { MissingSessionCwdError } from "../../core/session-cwd.ts";
+import { SessionImportFileNotFoundError } from "../../core/session-import-errors.ts";
+import { SessionAlreadyActiveError } from "../../core/session-lease.ts";
+import type { DaemonErrorInfo, DaemonResponse } from "./daemon-protocol.ts";
 
 export function serializeDaemonError(error: unknown): DaemonErrorInfo | undefined {
 	if (error instanceof MissingSessionCwdError) {

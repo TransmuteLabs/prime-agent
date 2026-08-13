@@ -1,6 +1,6 @@
 import type { Message } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { serializeConversation } from "../src/core/compaction/utils.js";
+import { serializeConversation } from "../src/core/compaction/utils.ts";
 
 describe("serializeConversation", () => {
 	it("should truncate long tool results", () => {
@@ -9,7 +9,7 @@ describe("serializeConversation", () => {
 			{
 				role: "toolResult",
 				toolCallId: "tc1",
-				toolName: "ipython",
+				toolName: "read",
 				content: [{ type: "text", text: longContent }],
 				isError: false,
 				timestamp: Date.now(),
@@ -31,7 +31,7 @@ describe("serializeConversation", () => {
 			{
 				role: "toolResult",
 				toolCallId: "tc1",
-				toolName: "ipython",
+				toolName: "read",
 				content: [{ type: "text", text: shortContent }],
 				isError: false,
 				timestamp: Date.now(),

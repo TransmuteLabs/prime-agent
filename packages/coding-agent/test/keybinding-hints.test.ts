@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatKeyText } from "../src/modes/interactive/components/keybinding-hints.js";
+import { formatKeyText } from "../src/modes/interactive/components/keybinding-hints.ts";
 
 describe("keybinding hint formatting", () => {
 	it("uses macOS modifier names on darwin but keeps Ctrl literal", () => {

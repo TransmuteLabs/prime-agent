@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createAgentSession } from "../src/core/sdk.js";
-import { SessionManager } from "../src/core/session-manager.js";
+import { createAgentSession } from "../src/core/sdk.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
 
 describe("createAgentSession session manager defaults", () => {
 	let tempDir: string;
@@ -35,7 +35,8 @@ describe("createAgentSession session manager defaults", () => {
 			model: model!,
 		});
 
-		const expectedSessionDir = join(agentDir, "sessions");
+		const safePath = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+		const expectedSessionDir = join(agentDir, "sessions", safePath);
 		const sessionDir = session.sessionManager.getSessionDir();
 		const sessionFile = session.sessionManager.getSessionFile();
 
@@ -74,21 +75,56 @@ describe("createAgentSession session manager defaults", () => {
 			agentDir,
 			model: model!,
 			sessionManager,
-			tools: ["ipython"],
 		});
 
 		expect(session.sessionManager).toBe(sessionManager);
-		expect(session.systemPrompt).toContain(`Working directory: ${sessionCwd}`);
+		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd}`);
 
-		const ipythonTool = session.agent.state.tools.find((tool) => tool.name === "ipython");
-		expect(ipythonTool).toBeTruthy();
-		const result = await ipythonTool!.execute("test", { code: "%%bash\npwd" });
+		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
+		expect(bashTool).toBeTruthy();
+		const result = await bashTool!.execute("test", { command: "pwd" });
 		const output = result.content
 			.filter((item): item is { type: "text"; text: string } => item.type === "text")
 			.map((item) => item.text)
 			.join("");
 
 		expect(realpathSync(output.trim())).toBe(realpathSync(sessionCwd));
+
+		session.dispose();
+	});
+
+	it("exposes current session state to the built-in bash tool", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		expect(model).toBeTruthy();
+
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			model: model!,
+			thinkingLevel: "high",
+		});
+		expect(session.sessionFile).toBeTruthy();
+		expect(session.systemPrompt).toContain(
+			"You can inspect PI_* environment variables for current model and session details.",
+		);
+
+		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
+		expect(bashTool).toBeTruthy();
+		const result = await bashTool!.execute("test", {
+			command: `printf '%s\\n' "$PI_SESSION_ID" "$PI_SESSION_FILE" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"`,
+		});
+		const output = result.content
+			.filter((item): item is { type: "text"; text: string } => item.type === "text")
+			.map((item) => item.text)
+			.join("");
+
+		expect(output.trim().split("\n")).toEqual([
+			session.sessionId,
+			session.sessionFile,
+			model!.provider,
+			model!.id,
+			session.thinkingLevel,
+		]);
 
 		session.dispose();
 	});

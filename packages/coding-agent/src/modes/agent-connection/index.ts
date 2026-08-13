@@ -1,6 +1,6 @@
-export { DaemonAgentConnection } from "./daemon-agent-connection.js";
-export { InProcessAgentConnection } from "./in-process-agent-connection.js";
-export { createAgentConnectionCommands, createAgentConnectionState } from "./snapshot.js";
+export { DaemonAgentConnection } from "./daemon-agent-connection.ts";
+export { InProcessAgentConnection } from "./in-process-agent-connection.ts";
+export { createAgentConnectionCommands, createAgentConnectionState } from "./snapshot.ts";
 export type {
 	AgentConnection,
 	AgentConnectionAgentStatus,
@@ -73,5 +73,5 @@ export type {
 	AgentConnectionThinkingLevelChangeEntry,
 	AgentConnectionToolDefinition,
 	AgentConnectionUserMessage,
-} from "./types.js";
-export { AgentConnectionPromptAdmissionError } from "./types.js";
+} from "./types.ts";
+export { AgentConnectionPromptAdmissionError } from "./types.ts";

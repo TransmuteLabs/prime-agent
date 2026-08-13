@@ -1,4 +1,4 @@
-import type { AgentConnectionHeartbeat, AgentConnectionRlmChildAgentSnapshot } from "../agent-connection/types.js";
+import type { AgentConnectionHeartbeat, AgentConnectionRlmChildAgentSnapshot } from "../agent-connection/types.ts";
 
 interface HeartbeatSessionIdentity {
 	activeSessionId?: string;

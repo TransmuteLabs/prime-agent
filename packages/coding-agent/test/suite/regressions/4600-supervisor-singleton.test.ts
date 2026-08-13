@@ -13,17 +13,17 @@ import {
 import { createConnection } from "node:net";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ENV_AGENT_DIR, getCronJobsPath } from "../../../src/config.js";
-import { getProcessStartId } from "../../../src/core/session-lease.js";
-import { DaemonAgentConnection } from "../../../src/modes/agent-connection/daemon-agent-connection.js";
-import { DaemonClient } from "../../../src/modes/daemon/daemon-client.js";
-import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.js";
+import { ENV_AGENT_DIR, getCronJobsPath } from "../../../src/config.ts";
+import { getProcessStartId } from "../../../src/core/session-lease.ts";
+import { DaemonAgentConnection } from "../../../src/modes/agent-connection/daemon-agent-connection.ts";
+import { DaemonClient } from "../../../src/modes/daemon/daemon-client.ts";
+import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.ts";
 import {
 	acquireDaemonSupervisorOwnership,
 	persistDaemonStartupFenceFromOwner,
 	waitForDaemonStartupFence,
-} from "../../../src/modes/daemon/daemon-supervisor-ownership.js";
-import { createHarness, type Harness } from "../harness.js";
+} from "../../../src/modes/daemon/daemon-supervisor-ownership.ts";
+import { createHarness, type Harness } from "../harness.ts";
 
 type FixtureMessage =
 	| { type: "booted" }

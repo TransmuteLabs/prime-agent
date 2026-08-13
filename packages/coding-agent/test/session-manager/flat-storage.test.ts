@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SessionManager } from "../../src/core/session-manager.js";
-import { assistantMsg, userMsg } from "../utilities.js";
+import { SessionManager } from "../../src/core/session-manager.ts";
+import { assistantMsg, userMsg } from "../utilities.ts";
 
 describe("SessionManager flat storage", () => {
 	it("stores sessions directly in the session root and filters current-cwd lists", async () => {

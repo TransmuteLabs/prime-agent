@@ -20,7 +20,7 @@ import {
 	isDaemonCommandEnvelope,
 	isDaemonMutatingCommand,
 	salvageDaemonCommandId,
-} from "../src/modes/daemon/daemon-protocol.js";
+} from "../src/modes/daemon/daemon-protocol.ts";
 
 describe("daemon protocol helpers", () => {
 	it("keeps the advertised schema identity synchronized with wire type shapes", () => {
@@ -196,7 +196,7 @@ describe("daemon protocol helpers", () => {
 		const event: DaemonOutbound = {
 			type: "session_event",
 			activeSessionId: "active-1",
-			event: { type: "agent_end", messages: [] },
+			event: { type: "agent_end", messages: [], willRetry: false },
 			meta: eventMeta,
 		};
 

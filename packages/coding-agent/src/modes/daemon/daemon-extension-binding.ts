@@ -5,18 +5,18 @@ import type {
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
-} from "../../core/extensions/index.js";
-import type { SubagentRuntimeHost } from "../../core/rlm-runtime.js";
-import { createAgentConnectionState } from "../agent-connection/snapshot.js";
-import type { AgentConnectionState } from "../agent-connection/types.js";
-import { type Theme, theme } from "../interactive/theme/theme.js";
-import type { ActiveSessionState } from "./active-session-state.js";
-import { execEnvForSession, withClientEnv } from "./daemon-client-env.js";
+} from "../../core/extensions/index.ts";
+import type { SubagentRuntimeHost } from "../../core/rlm-runtime.ts";
+import { createAgentConnectionState } from "../agent-connection/snapshot.ts";
+import type { AgentConnectionState } from "../agent-connection/types.ts";
+import { type Theme, theme } from "../interactive/theme/theme.ts";
+import type { ActiveSessionState } from "./active-session-state.ts";
+import { execEnvForSession, withClientEnv } from "./daemon-client-env.ts";
 import {
 	type DaemonExtensionUIResponse,
 	type DaemonOutbound,
 	isDaemonDialogExtensionUiRequest,
-} from "./daemon-protocol.js";
+} from "./daemon-protocol.ts";
 
 export interface ActiveSessionBindingCallbacks {
 	broadcast: (state: ActiveSessionState, message: DaemonOutbound) => void;

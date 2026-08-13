@@ -11,7 +11,7 @@ import {
 	SESSION_LEASE_OWNER_ID_ENV,
 	SESSION_LEASES_ENABLED_ENV,
 	SessionAlreadyActiveError,
-} from "../src/core/session-lease.js";
+} from "../src/core/session-lease.ts";
 
 const tempDirs: string[] = [];
 

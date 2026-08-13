@@ -1,6 +1,6 @@
 import { Container, type SelectItem, SelectList, type SelectListLayoutOptions } from "@earendil-works/pi-tui";
-import { getSelectListTheme } from "../theme/theme.js";
-import { DynamicBorder } from "./dynamic-border.js";
+import { getSelectListTheme } from "../theme/theme.ts";
+import { DynamicBorder } from "./dynamic-border.ts";
 
 const SHOW_IMAGES_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	minPrimaryColumnWidth: 12,
@@ -17,7 +17,7 @@ export class ShowImagesSelectorComponent extends Container {
 		super();
 
 		const items: SelectItem[] = [
-			{ value: "yes", label: "Yes", description: "Show image type and dimensions" },
+			{ value: "yes", label: "Yes", description: "Show images inline in terminal" },
 			{ value: "no", label: "No", description: "Show text placeholder instead" },
 		];
 

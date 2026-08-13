@@ -4,15 +4,14 @@ import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, wr
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Writable } from "node:stream";
-import { getLogger } from "@earendil-works/pi-ai";
-import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.js";
+import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.ts";
 import {
 	appendRotatingLog,
 	getCronJobsPath,
 	getDaemonLogPath,
 	getDaemonUpdateRestartManifestPath,
 	VERSION,
-} from "../../config.js";
+} from "../../config.ts";
 import {
 	type AgentFamilyCatalogEntry,
 	type AgentSessionMessageAgentSummary,
@@ -20,38 +19,38 @@ import {
 	assertAgentSessionNameAvailable,
 	formatAgentSessionNameUnavailable,
 	sessionNameReservationKey,
-} from "../../core/agent-messages.js";
-import { type AgentSessionRuntimeConfig, mergeAgentSessionRuntimeConfig } from "../../core/agent-session-config.js";
+} from "../../core/agent-messages.ts";
+import { type AgentSessionRuntimeConfig, mergeAgentSessionRuntimeConfig } from "../../core/agent-session-config.ts";
 import {
 	type AgentCronJob,
 	AgentCronJobStore,
 	migrateLegacyCronJobsToSessionArtifacts,
 	SESSION_SCHEDULED_JOBS_FILENAME,
-} from "../../core/cron-jobs.js";
+} from "../../core/cron-jobs.ts";
 import {
 	clearOrphanProcessJournal,
 	isOrphanProcessIdentityCurrent,
 	ORPHAN_PROCESS_JOURNAL_ENV,
 	readActiveOrphanProcesses,
-} from "../../core/orphan-process-journal.js";
-import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../../core/prompt-admission.js";
+} from "../../core/orphan-process-journal.ts";
+import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../../core/prompt-admission.ts";
 import {
 	canEvictWorker,
 	type IdleEvictionMinutes,
 	type WorkerEvictionSnapshot,
-} from "../../core/session-action-store.js";
-import { canonicalSessionPath, getProcessStartId, SessionAlreadyActiveError } from "../../core/session-lease.js";
-import { readSessionInfo, type SessionInfo } from "../../core/session-manager.js";
-import { SettingsManager } from "../../core/settings-manager.js";
-import { isProcessAlive, processIdExists, signalProcessGroupOrProcess } from "../../utils/child-process.js";
-import type { AgentConnectionHeartbeat } from "../agent-connection/types.js";
-import { attachJsonlLineReader, serializeJsonLine } from "../rpc/jsonl.js";
-import type { PrivateFrame } from "../session-worker/private-framing.js";
-import { createActiveSessionId, type DaemonSocketClient } from "./active-session-state.js";
-import { CommandRecoveryJournal, createCommandIdempotencyKey } from "./command-recovery-journal.js";
-import { CompactAssistantStreamReconstructor, isCompactAssistantDelta } from "./compact-session-stream.js";
-import { DAEMON_CATALOG_ROLE_ENV, DaemonCatalogClient } from "./daemon-catalog-process.js";
-import { deserializeDaemonError, serializeDaemonError } from "./daemon-errors.js";
+} from "../../core/session-action-store.ts";
+import { canonicalSessionPath, getProcessStartId, SessionAlreadyActiveError } from "../../core/session-lease.ts";
+import { readSessionInfo, type SessionInfo } from "../../core/session-manager.ts";
+import { SettingsManager } from "../../core/settings-manager.ts";
+import { isProcessAlive, processIdExists, signalProcessGroupOrProcess } from "../../utils/child-process.ts";
+import type { AgentConnectionHeartbeat } from "../agent-connection/types.ts";
+import { attachJsonlLineReader, serializeJsonLine } from "../rpc/jsonl.ts";
+import type { PrivateFrame } from "../session-worker/private-framing.ts";
+import { createActiveSessionId, type DaemonSocketClient } from "./active-session-state.ts";
+import { CommandRecoveryJournal, createCommandIdempotencyKey } from "./command-recovery-journal.ts";
+import { CompactAssistantStreamReconstructor, isCompactAssistantDelta } from "./compact-session-stream.ts";
+import { DAEMON_CATALOG_ROLE_ENV, DaemonCatalogClient } from "./daemon-catalog-process.ts";
+import { deserializeDaemonError, serializeDaemonError } from "./daemon-errors.ts";
 import {
 	collectDaemonClientEnv,
 	createDaemonEventMeta,
@@ -76,15 +75,15 @@ import {
 	salvageDaemonCommandId,
 	success,
 	UPDATE_RESTART_DRAIN_COMMANDS,
-} from "./daemon-protocol.js";
-import { getDaemonRuntimeIdentity } from "./daemon-runtime-identity.js";
-import { matchesSessionIdSuffix } from "./daemon-session-id.js";
+} from "./daemon-protocol.ts";
+import { getDaemonRuntimeIdentity } from "./daemon-runtime-identity.ts";
+import { matchesSessionIdSuffix } from "./daemon-session-id.ts";
 import {
 	classifySessionRosterStatus,
 	isSessionSummaryBusy,
 	type SessionSummary,
 	summaryForInactiveSession,
-} from "./daemon-session-list.js";
+} from "./daemon-session-list.ts";
 import {
 	acquireDaemonSocketPathLease,
 	cleanupDaemonSocketPath,
@@ -95,13 +94,13 @@ import {
 	getDaemonSocketIdentity,
 	prepareDaemonSocketPath,
 	restrictDaemonSocketPath,
-} from "./daemon-socket.js";
+} from "./daemon-socket.ts";
 import {
 	acquireDaemonSupervisorOwnership,
 	isDaemonShutdownAdmissionActive,
 	waitForDaemonStartupFence,
-} from "./daemon-supervisor-ownership.js";
-import { DaemonWorkerClient } from "./daemon-worker-client.js";
+} from "./daemon-supervisor-ownership.ts";
+import { DaemonWorkerClient } from "./daemon-worker-client.ts";
 import {
 	DAEMON_WORKER_ACTIVE_SESSION_ID_ENV,
 	DAEMON_WORKER_RECOVERY_JOURNAL_ENV,
@@ -116,11 +115,12 @@ import {
 	type DaemonWorkerLifecycle,
 	SESSION_LEASE_OWNER_ID_ENV,
 	SESSION_LEASES_ENABLED_ENV,
-} from "./daemon-worker-protocol.js";
-import { MutationDrainLatch } from "./mutation-drain-latch.js";
-import { serializeSavedSessionInfo } from "./saved-session-info.js";
-import { SNAPSHOT_TARGET_CHUNK_BYTES, SnapshotTranscriptCache } from "./snapshot-transcript-cache.js";
-import { WorkerRecoveryJournal } from "./worker-recovery-journal.js";
+} from "./daemon-worker-protocol.ts";
+import { MutationDrainLatch } from "./mutation-drain-latch.ts";
+import { getLogger } from "./prime-port-ai-compat.ts";
+import { serializeSavedSessionInfo } from "./saved-session-info.ts";
+import { SNAPSHOT_TARGET_CHUNK_BYTES, SnapshotTranscriptCache } from "./snapshot-transcript-cache.ts";
+import { WorkerRecoveryJournal } from "./worker-recovery-journal.ts";
 
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 type DaemonCommandBody = DistributiveOmit<DaemonCommand, "id">;
@@ -617,10 +617,10 @@ export class DaemonSupervisor {
 	private idleEvictionSweep?: Promise<void>;
 	private idleEvictionFence?: Promise<void>;
 
-	constructor(
-		private readonly socketPath: string,
-		options: DaemonSupervisorOptions,
-	) {
+	private readonly socketPath: string;
+
+	constructor(socketPath: string, options: DaemonSupervisorOptions) {
+		this.socketPath = socketPath;
 		this.ready = new Promise<void>((resolveReady, rejectReady) => {
 			this.markReady = resolveReady;
 			this.rejectReady = rejectReady;

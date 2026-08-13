@@ -14,10 +14,13 @@ const DAEMON_SOCKET_LOCK_UPDATE_MS = 1000;
 export class DaemonSocketPathLease {
 	private released = false;
 
-	constructor(
-		readonly socketPath: string,
-		private readonly releaseLock: () => Promise<void>,
-	) {}
+	readonly socketPath: string;
+	private readonly releaseLock: () => Promise<void>;
+
+	constructor(socketPath: string, releaseLock: () => Promise<void>) {
+		this.socketPath = socketPath;
+		this.releaseLock = releaseLock;
+	}
 
 	async release(): Promise<void> {
 		if (this.released) {

@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SettingsManager } from "../src/core/settings-manager.js";
-import { BUILTIN_SLASH_COMMANDS } from "../src/core/slash-commands.js";
+import { SettingsManager } from "../src/core/settings-manager.ts";
+import { BUILTIN_SLASH_COMMANDS } from "../src/core/slash-commands.ts";
 
 describe("fullscreen mode settings", () => {
 	const testDir = join(process.cwd(), "test-fullscreen-tmp");

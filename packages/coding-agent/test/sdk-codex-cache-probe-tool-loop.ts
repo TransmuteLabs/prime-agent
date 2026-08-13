@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 /**
  * Manual SDK probe for OpenAI Codex prompt caching through the tool loop.
  *
@@ -20,19 +20,19 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 	Type,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import {
 	getOpenAICodexWebSocketDebugStats,
-	streamSimpleOpenAICodexResponses,
-} from "../../ai/src/providers/openai-codex-responses.js";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { createExtensionRuntime } from "../src/core/extensions/loader.js";
-import type { ToolDefinition } from "../src/core/extensions/types.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
-import type { ResourceLoader } from "../src/core/resource-loader.js";
-import { createAgentSession } from "../src/core/sdk.js";
-import { SessionManager } from "../src/core/session-manager.js";
-import { SettingsManager } from "../src/core/settings-manager.js";
+	streamSimple as streamSimpleOpenAICodexResponses,
+} from "../../ai/src/api/openai-codex-responses.ts";
+import { AuthStorage } from "../src/core/auth-storage.ts";
+import { createExtensionRuntime } from "../src/core/extensions/loader.ts";
+import type { ToolDefinition } from "../src/core/extensions/types.ts";
+import type { ResourceLoader } from "../src/core/resource-loader.ts";
+import { createAgentSession } from "../src/core/sdk.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 
@@ -82,9 +82,9 @@ function parseArgs(argv: string[]): Args {
 				turns = Number.parseInt(value, 10);
 				break;
 			}
-			case "--output": {
+			case "--session": {
 				const value = argv[++i];
-				if (!value) throw new Error("Missing value for --output");
+				if (!value) throw new Error("Missing value for --session");
 				sessionPath = resolve(value);
 				break;
 			}
@@ -123,11 +123,11 @@ function parseArgs(argv: string[]): Args {
 }
 
 function printHelp(): void {
-	console.log(`Usage: npx tsx test/sdk-codex-cache-probe-tool-loop.ts [options]
+	console.log(`Usage: node test/sdk-codex-cache-probe-tool-loop.ts [options]
 
 Options:
   --turns <n>         Number of turns to run. Must be between ${MIN_TURNS} and ${MAX_TURNS}. Default: ${DEFAULT_TURNS}
-  --output <path>     JSONL file to write
+  --session <path>    Specific session jsonl file to write
   --transport <mode>  sse | websocket | websocket-cached | auto. Default: sse
   --max-tokens <n>    Max output tokens per subrequest. Default: ${DEFAULT_MAX_TOKENS}
   --help              Show this message
@@ -178,7 +178,9 @@ function createMinimalResourceLoader(systemPrompt: string): ResourceLoader {
 		getThemes: () => ({ themes: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),
 		getSystemPrompt: () => systemPrompt,
+		getSystemPromptSource: () => undefined,
 		getAppendSystemPrompt: () => [],
+		getAppendSystemPromptSources: () => [],
 		extendResources: () => {},
 		reload: async () => {},
 	};
@@ -275,7 +277,7 @@ async function main(): Promise<void> {
 	mkdirSync(dirname(args.sessionPath), { recursive: true });
 
 	const authStorage = AuthStorage.create();
-	const modelRegistry = ModelRegistry.create(authStorage);
+	const modelRegistry = await createModelRegistry(authStorage);
 
 	const model = getModel("openai-codex", "gpt-5.5");
 	if (!model) {
@@ -296,6 +298,7 @@ async function main(): Promise<void> {
 		models: [baseModel],
 	});
 
+	const modelRuntime = getModelRuntime(modelRegistry);
 	const settingsManager = SettingsManager.inMemory({
 		compaction: { enabled: false },
 		retry: { enabled: false },
@@ -315,8 +318,7 @@ async function main(): Promise<void> {
 		resourceLoader,
 		sessionManager: SessionManager.open(args.sessionPath),
 		settingsManager,
-		authStorage,
-		modelRegistry,
+		modelRuntime,
 	});
 
 	session.setActiveToolsByName(["deterministic_probe"]);

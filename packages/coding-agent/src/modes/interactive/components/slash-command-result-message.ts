@@ -1,6 +1,6 @@
 import { Box, Container, Text } from "@earendil-works/pi-tui";
-import type { SessionSlashCommandResultMessage } from "../../../core/messages.js";
-import { theme } from "../theme/theme.js";
+import type { SessionSlashCommandResultMessage } from "../../../core/messages.ts";
+import { theme } from "../theme/theme.ts";
 
 /** Renders a durable session-command outcome with user-message spacing. */
 export class SlashCommandResultMessageComponent extends Container {

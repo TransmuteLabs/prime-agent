@@ -19,28 +19,32 @@ interface SessionLeaseOwner {
 
 export class SessionAlreadyActiveError extends Error {
 	readonly code = "session_already_active" as const;
+	readonly sessionPath: string;
+	readonly activeSessionId?: string;
 
-	constructor(
-		readonly sessionPath: string,
-		readonly activeSessionId?: string,
-	) {
+	constructor(sessionPath: string, activeSessionId?: string) {
 		super(
 			activeSessionId
 				? `Session is already active in ${activeSessionId}: ${sessionPath}`
 				: `Session is already active in another process: ${sessionPath}`,
 		);
 		this.name = "SessionAlreadyActiveError";
+		this.sessionPath = sessionPath;
+		this.activeSessionId = activeSessionId;
 	}
 }
 
 export class SessionLease {
+	readonly sessionPath: string;
+	private readonly directory: string;
+	private readonly token: string;
 	private released = false;
 
-	constructor(
-		readonly sessionPath: string,
-		private readonly directory: string,
-		private readonly token: string,
-	) {}
+	constructor(sessionPath: string, directory: string, token: string) {
+		this.sessionPath = sessionPath;
+		this.directory = directory;
+		this.token = token;
+	}
 
 	release(): void {
 		if (this.released) {

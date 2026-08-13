@@ -5,18 +5,18 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ActiveSessionState, DaemonSocketClient } from "../../../src/modes/daemon/active-session-state.js";
-import { AgentDaemon, markClientSnapshotStreaming } from "../../../src/modes/daemon/daemon-mode.js";
+import type { ActiveSessionState, DaemonSocketClient } from "../../../src/modes/daemon/active-session-state.ts";
+import { AgentDaemon, markClientSnapshotStreaming } from "../../../src/modes/daemon/daemon-mode.ts";
 import {
 	DAEMON_PROTOCOL_INFO,
 	type DaemonAttachResult,
 	type DaemonOutbound,
-} from "../../../src/modes/daemon/daemon-protocol.js";
+} from "../../../src/modes/daemon/daemon-protocol.ts";
 import {
 	createSnapshotTranscriptChunks,
 	SnapshotTranscriptCache,
 	type SnapshotTranscriptChunkSource,
-} from "../../../src/modes/daemon/snapshot-transcript-cache.js";
+} from "../../../src/modes/daemon/snapshot-transcript-cache.ts";
 
 const tempDirectories: string[] = [];
 const activeSessionId = "active-4601";

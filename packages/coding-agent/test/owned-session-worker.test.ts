@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { PUBLIC_COMMAND_NAMES } from "../src/cli/command-registry.js";
+import { PUBLIC_COMMAND_NAMES } from "../src/cli/command-registry.ts";
 import {
 	classifyOwnedSessionWorkerInvocation,
 	createOwnedWorkerLaunchSpec,
 	createRpcRecoveryArgs,
 	isOwnedSessionWorkerProcess,
-} from "../src/cli/owned-session-worker.js";
+} from "../src/cli/owned-session-worker.ts";
 
 describe("owned session worker CLI routing", () => {
 	it("leaves resident interactive and non-session operations in the frontend", () => {

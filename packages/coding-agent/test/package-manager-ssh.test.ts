@@ -2,8 +2,8 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DefaultPackageManager } from "../src/core/package-manager.js";
-import { SettingsManager } from "../src/core/settings-manager.js";
+import { DefaultPackageManager } from "../src/core/package-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 
 describe("Package Manager git source parsing", () => {
 	let tempDir: string;
@@ -74,6 +74,11 @@ describe("Package Manager git source parsing", () => {
 	describe("unsupported without git: prefix", () => {
 		it("should treat git@host:path as local without git: prefix", () => {
 			const parsed = (packageManager as any).parseSource("git@github.com:user/repo");
+			expect(parsed.type).toBe("local");
+		});
+
+		it("should treat host/path shorthand as local without git: prefix", () => {
+			const parsed = (packageManager as any).parseSource("github.com/user/repo");
 			expect(parsed.type).toBe("local");
 		});
 	});

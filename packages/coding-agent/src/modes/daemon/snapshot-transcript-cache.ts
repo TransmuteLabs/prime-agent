@@ -88,7 +88,10 @@ export class SnapshotTranscriptCache {
 	readonly snapshotId: string;
 	readonly activeSessionId: string;
 
-	constructor(private readonly options: SnapshotTranscriptCacheOptions) {
+	private readonly options: SnapshotTranscriptCacheOptions;
+
+	constructor(options: SnapshotTranscriptCacheOptions) {
+		this.options = options;
 		this.targetChunkBytes = options.targetChunkBytes ?? SNAPSHOT_TARGET_CHUNK_BYTES;
 		this.snapshotId = options.snapshotId;
 		this.activeSessionId = options.activeSessionId;

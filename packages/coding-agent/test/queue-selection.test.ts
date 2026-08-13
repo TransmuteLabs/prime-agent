@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { QueueSelection } from "../src/modes/interactive/queue-selection.js";
+import { QueueSelection } from "../src/modes/interactive/queue-selection.ts";
 
 const queue = { steering: ["s1", "s2"], followUp: ["f1", "f2"] };
 

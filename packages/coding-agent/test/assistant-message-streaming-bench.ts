@@ -8,8 +8,8 @@
  */
 import { performance } from "node:perf_hooks";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const SECTION = `## Section heading
 

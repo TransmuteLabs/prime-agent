@@ -9,7 +9,7 @@ const toolState = vi.hoisted(() => ({
 	extractZip: async (_source: string, _options: { dir: string }): Promise<void> => {},
 }));
 
-vi.mock("../src/config.js", () => ({
+vi.mock("../src/config.ts", () => ({
 	APP_NAME: "prime-agent",
 	getBinDir: () => toolState.toolsDir,
 }));
@@ -28,7 +28,7 @@ import {
 	formatMissingRipgrepMessage,
 	getToolPath,
 	type ToolUnavailableResult,
-} from "../src/utils/tools-manager.js";
+} from "../src/utils/tools-manager.ts";
 
 const originalPath = process.env.PATH;
 const originalOffline = process.env.PI_OFFLINE;

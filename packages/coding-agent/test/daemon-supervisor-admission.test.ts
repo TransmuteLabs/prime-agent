@@ -1,16 +1,16 @@
 import type { Socket } from "node:net";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import type { DaemonSocketClient } from "../src/modes/daemon/active-session-state.js";
+import type { DaemonSocketClient } from "../src/modes/daemon/active-session-state.ts";
 import {
 	createDaemonCommandEnvelope,
 	type DaemonCommand,
 	type DaemonResponse,
 	success,
-} from "../src/modes/daemon/daemon-protocol.js";
-import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.js";
-import { MutationDrainLatch } from "../src/modes/daemon/mutation-drain-latch.js";
-import { type Deferred, createDeferred as deferred } from "./suite/scheduling.js";
+} from "../src/modes/daemon/daemon-protocol.ts";
+import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.ts";
+import { MutationDrainLatch } from "../src/modes/daemon/mutation-drain-latch.ts";
+import { type Deferred, createDeferred as deferred } from "./suite/scheduling.ts";
 
 interface AdmissionRecord {
 	client: DaemonSocketClient;

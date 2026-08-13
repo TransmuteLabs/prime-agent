@@ -1,25 +1,88 @@
-export interface Rgb {
+export interface RgbColor {
 	r: number;
 	g: number;
 	b: number;
 }
 
+export type TerminalColorScheme = "dark" | "light";
+
+function hexToRgb(hex: string): RgbColor {
+	const normalized = hex.startsWith("#") ? hex.slice(1) : hex;
+	const r = parseInt(normalized.slice(0, 2), 16);
+	const g = parseInt(normalized.slice(2, 4), 16);
+	const b = parseInt(normalized.slice(4, 6), 16);
+	return { r, g, b };
+}
+
+function parseOscHexChannel(channel: string): number | undefined {
+	if (!/^[0-9a-f]+$/i.test(channel)) {
+		return undefined;
+	}
+	const max = 16 ** channel.length - 1;
+	if (max <= 0) {
+		return undefined;
+	}
+	return Math.round((parseInt(channel, 16) / max) * 255);
+}
+
+const OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN = /^\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
+const COLOR_SCHEME_REPORT_PATTERN = /^(?:\x1b\[\?997;(1|2)n)+$/;
+
+export function isOsc11BackgroundColorResponse(data: string): boolean {
+	return OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN.test(data);
+}
+
+export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
+	const match = data.match(OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN);
+	if (!match) {
+		return undefined;
+	}
+
+	const value = match[1].trim();
+	if (value.startsWith("#")) {
+		const hex = value.slice(1);
+		if (/^[0-9a-f]{6}$/i.test(hex)) {
+			return hexToRgb(value);
+		}
+		if (/^[0-9a-f]{12}$/i.test(hex)) {
+			const r = parseOscHexChannel(hex.slice(0, 4));
+			const g = parseOscHexChannel(hex.slice(4, 8));
+			const b = parseOscHexChannel(hex.slice(8, 12));
+			return r !== undefined && g !== undefined && b !== undefined ? { r, g, b } : undefined;
+		}
+		return undefined;
+	}
+
+	const rgbValue = value.replace(/^rgba?:/i, "");
+	const [red, green, blue] = rgbValue.split("/");
+	if (red === undefined || green === undefined || blue === undefined) {
+		return undefined;
+	}
+	const r = parseOscHexChannel(red);
+	const g = parseOscHexChannel(green);
+	const b = parseOscHexChannel(blue);
+	return r !== undefined && g !== undefined && b !== undefined ? { r, g, b } : undefined;
+}
+
+export function parseTerminalColorSchemeReport(data: string): TerminalColorScheme | undefined {
+	const match = data.match(COLOR_SCHEME_REPORT_PATTERN);
+	if (!match) {
+		return undefined;
+	}
+	return match[1] === "2" ? "light" : "dark";
+}
+
+// ============================================================================
+// Default terminal colors (OSC 10/11) shared state + contrast helpers
+// ============================================================================
+
 export interface DefaultTerminalColors {
-	foreground: Rgb;
-	background: Rgb;
+	foreground?: RgbColor;
+	background: RgbColor;
 }
 
 export type TerminalBackgroundKind = "dark" | "light";
 export type TerminalColorMode = "truecolor" | "256color" | "ansi16" | "unknown";
-export type OscColorKind = "foreground" | "background";
-
-export interface OscColorResponse {
-	kind: OscColorKind;
-	rgb: Rgb;
-}
-
-export const QUERY_DEFAULT_FOREGROUND = "\x1b]10;?\x1b\\";
-export const QUERY_DEFAULT_BACKGROUND = "\x1b]11;?\x1b\\";
 
 const CUBE_VALUES = [0, 95, 135, 175, 215, 255];
 const GRAY_VALUES = Array.from({ length: 24 }, (_, i) => 8 + i * 10);
@@ -31,43 +94,7 @@ function clampChannel(value: number): number {
 	return Math.max(0, Math.min(255, Math.round(value)));
 }
 
-function normalizeHexChannel(value: string): number | undefined {
-	if (!/^[0-9a-fA-F]{2,4}$/.test(value)) {
-		return undefined;
-	}
-	const parsed = parseInt(value, 16);
-	if (Number.isNaN(parsed)) {
-		return undefined;
-	}
-	if (value.length <= 2) {
-		return parsed;
-	}
-	const max = 16 ** value.length - 1;
-	return Math.round((parsed / max) * 255);
-}
-
-function parseRgbPayload(payload: string): Rgb | undefined {
-	const rgbMatch = payload.match(/^rgb:([0-9a-fA-F]{2,4})\/([0-9a-fA-F]{2,4})\/([0-9a-fA-F]{2,4})$/);
-	if (rgbMatch) {
-		const r = normalizeHexChannel(rgbMatch[1]!);
-		const g = normalizeHexChannel(rgbMatch[2]!);
-		const b = normalizeHexChannel(rgbMatch[3]!);
-		return r === undefined || g === undefined || b === undefined ? undefined : { r, g, b };
-	}
-
-	const hexMatch = payload.match(/^#?([0-9a-fA-F]{6})$/);
-	if (!hexMatch) {
-		return undefined;
-	}
-	const hex = hexMatch[1]!;
-	return {
-		r: parseInt(hex.slice(0, 2), 16),
-		g: parseInt(hex.slice(2, 4), 16),
-		b: parseInt(hex.slice(4, 6), 16),
-	};
-}
-
-function colorDistance(a: Rgb, b: Rgb): number {
+function colorDistance(a: RgbColor, b: RgbColor): number {
 	const dr = a.r - b.r;
 	const dg = a.g - b.g;
 	const db = a.b - b.b;
@@ -78,7 +105,7 @@ function findClosestIndex(value: number, values: readonly number[]): number {
 	let minDist = Infinity;
 	let minIdx = 0;
 	for (let i = 0; i < values.length; i++) {
-		const dist = Math.abs(value - values[i]!);
+		const dist = Math.abs(value - values[i]);
 		if (dist < minDist) {
 			minDist = dist;
 			minIdx = i;
@@ -93,16 +120,16 @@ function notifyDefaultColorListeners(): void {
 	}
 }
 
-export function rgbToHex(rgb: Rgb): string {
+export function rgbToHex(rgb: RgbColor): string {
 	const toHex = (value: number) => clampChannel(value).toString(16).padStart(2, "0");
 	return `#${toHex(rgb.r)}${toHex(rgb.g)}${toHex(rgb.b)}`;
 }
 
-export function isLightColor(rgb: Rgb): boolean {
+export function isLightColor(rgb: RgbColor): boolean {
 	return 0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b > 128;
 }
 
-export function blendColor(top: Rgb, bottom: Rgb, alpha: number): Rgb {
+export function blendColor(top: RgbColor, bottom: RgbColor, alpha: number): RgbColor {
 	const clampedAlpha = Math.max(0, Math.min(1, alpha));
 	return {
 		r: clampChannel(top.r * clampedAlpha + bottom.r * (1 - clampedAlpha)),
@@ -111,17 +138,17 @@ export function blendColor(top: Rgb, bottom: Rgb, alpha: number): Rgb {
 	};
 }
 
-export function rgbTo256(rgb: Rgb): number {
+export function rgbTo256(rgb: RgbColor): number {
 	const rIdx = findClosestIndex(rgb.r, CUBE_VALUES);
 	const gIdx = findClosestIndex(rgb.g, CUBE_VALUES);
 	const bIdx = findClosestIndex(rgb.b, CUBE_VALUES);
-	const cubeRgb = { r: CUBE_VALUES[rIdx]!, g: CUBE_VALUES[gIdx]!, b: CUBE_VALUES[bIdx]! };
+	const cubeRgb = { r: CUBE_VALUES[rIdx], g: CUBE_VALUES[gIdx], b: CUBE_VALUES[bIdx] };
 	const cubeIndex = 16 + 36 * rIdx + 6 * gIdx + bIdx;
 	const cubeDist = colorDistance(rgb, cubeRgb);
 
 	const gray = Math.round(0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b);
 	const grayIdx = findClosestIndex(gray, GRAY_VALUES);
-	const grayValue = GRAY_VALUES[grayIdx]!;
+	const grayValue = GRAY_VALUES[grayIdx];
 	const grayRgb = { r: grayValue, g: grayValue, b: grayValue };
 	const grayIndex = 232 + grayIdx;
 	const grayDist = colorDistance(rgb, grayRgb);
@@ -135,7 +162,7 @@ export function rgbTo256(rgb: Rgb): number {
 	return cubeIndex;
 }
 
-export function bestAnsiColor(rgb: Rgb, mode: TerminalColorMode): string | number {
+export function bestAnsiColor(rgb: RgbColor, mode: TerminalColorMode): string | number {
 	if (mode === "truecolor") {
 		return rgbToHex(rgb);
 	}
@@ -143,21 +170,6 @@ export function bestAnsiColor(rgb: Rgb, mode: TerminalColorMode): string | numbe
 		return rgbTo256(rgb);
 	}
 	return "";
-}
-
-export function parseOscColorResponse(sequence: string): OscColorResponse | undefined {
-	const match = sequence.match(/^\x1b\](10|11);([^\x07\x1b]+)(?:\x07|\x1b\\)$/);
-	if (!match) {
-		return undefined;
-	}
-	const rgb = parseRgbPayload(match[2]!);
-	if (!rgb) {
-		return undefined;
-	}
-	return {
-		kind: match[1] === "10" ? "foreground" : "background",
-		rgb,
-	};
 }
 
 export function detectBackgroundFromColorFgBg(
@@ -170,7 +182,7 @@ export function detectBackgroundFromColorFgBg(
 	if (parts.length < 2) {
 		return undefined;
 	}
-	const bg = parseInt(parts[1]!, 10);
+	const bg = parseInt(parts[1], 10);
 	if (Number.isNaN(bg)) {
 		return undefined;
 	}

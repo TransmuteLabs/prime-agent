@@ -1,11 +1,11 @@
-import type { AgentSession, ExtensionBindings } from "../../core/agent-session.js";
-import type { AgentSessionRuntime } from "../../core/agent-session-runtime.js";
-import type { AgentSessionServices } from "../../core/agent-session-services.js";
-import type { ExtensionCommandContext, ExtensionRunner, ToolDefinition } from "../../core/extensions/index.js";
-import type { ModelRegistry } from "../../core/model-registry.js";
-import type { SessionManager } from "../../core/session-manager.js";
-import type { SettingsManager } from "../../core/settings-manager.js";
-import type { Theme } from "./theme/theme.js";
+import type { AgentSession, ExtensionBindings } from "../../core/agent-session.ts";
+import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import type { AgentSessionServices } from "../../core/agent-session-services.ts";
+import type { ExtensionCommandContext, ExtensionRunner, ToolDefinition } from "../../core/extensions/index.ts";
+import type { ModelRegistry } from "../../core/model-registry.ts";
+import type { SessionManager } from "../../core/session-manager.ts";
+import type { SettingsManager } from "../../core/settings-manager.ts";
+import type { Theme } from "./theme/theme.ts";
 
 /**
  * Local UI services that are intentionally separate from AgentConnection.

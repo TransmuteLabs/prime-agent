@@ -10,7 +10,7 @@ import {
 	defaultDaemonSocketPath,
 	getDaemonSocketIdentity,
 	prepareDaemonSocketPath,
-} from "../src/modes/daemon/daemon-socket.js";
+} from "../src/modes/daemon/daemon-socket.ts";
 
 describe("defaultDaemonSocketPath", () => {
 	it("uses a fixed Windows named pipe path", () => {

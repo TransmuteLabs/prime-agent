@@ -4,8 +4,8 @@
 
 import { existsSync } from "node:fs";
 import chalk from "chalk";
-import { APP_NAME } from "../../config.js";
-import type { SessionStats } from "../../core/session-stats.js";
+import { APP_NAME } from "../../config.ts";
+import type { SessionStats } from "../../core/session-stats.ts";
 
 export type ResumeHintStats = Pick<SessionStats, "sessionId" | "sessionFile" | "userMessages">;
 

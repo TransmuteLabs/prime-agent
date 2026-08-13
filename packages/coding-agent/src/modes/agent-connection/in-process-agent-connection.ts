@@ -1,32 +1,34 @@
 import { resolve } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, ServiceTier, Transport } from "@earendil-works/pi-ai";
-import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.js";
-import type { AgentSessionRuntime } from "../../core/agent-session-runtime.js";
-import type { AgentAutonomousStatus } from "../../core/autonomous.js";
-import type { BashResult } from "../../core/bash-executor.js";
-import type { CompactionResult } from "../../core/compaction/index.js";
-import type { ContextTreeNode } from "../../core/context-tree.js";
+import type { ImageContent, Transport } from "@earendil-works/pi-ai";
+import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.ts";
+import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import type { AgentAutonomousStatus } from "../../core/autonomous.ts";
+import type { BashResult } from "../../core/bash-executor.ts";
+import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { ContextTreeNode } from "../../core/context-tree.ts";
 import type {
 	AgentCronJob,
 	AgentHeartbeatDeliveryMode,
 	AgentHeartbeatManagementAction,
 	AgentHeartbeatUpdateAction,
-} from "../../core/cron-jobs.js";
-import type { ExtensionUIContext } from "../../core/extensions/types.js";
-import type { RefinementResult } from "../../core/refinement/index.js";
-import { type DeleteSessionFileResult, deleteSessionFile } from "../../core/session-file-actions.js";
-import { SessionManager } from "../../core/session-manager.js";
-import type { SessionStats } from "../../core/session-stats.js";
-import { type SideQuestionRun, startSideQuestion } from "../../core/side-question.js";
-import { waitForHeadlessCompletion } from "../headless-completion.js";
+} from "../../core/cron-jobs.ts";
+import type { ExtensionUIContext } from "../../core/extensions/types.ts";
+import type { RefinementResult } from "../../core/refinement/index.ts";
+import { type DeleteSessionFileResult, deleteSessionFile } from "../../core/session-file-actions.ts";
+import { type SessionInfo, SessionManager } from "../../core/session-manager.ts";
+import type { SessionStats } from "../../core/session-stats.ts";
+import { type SideQuestionRun, startSideQuestion } from "../../core/side-question.ts";
+import type { ServiceTier } from "../daemon/prime-port-ai-compat.ts";
+import { deserializeSavedSessionInfo, serializeSavedSessionInfo } from "../daemon/saved-session-info.ts";
+import { waitForHeadlessCompletion } from "../headless-completion.ts";
 import {
 	createAgentConnectionCommands,
 	createAgentConnectionResourceSnapshot,
 	createAgentConnectionSnapshot,
 	createAgentConnectionState,
-} from "./snapshot.js";
-import { createAgentConnectionToolDefinition } from "./tool-definition.js";
+} from "./snapshot.ts";
+import { createAgentConnectionToolDefinition } from "./tool-definition.ts";
 import type {
 	AgentConnection,
 	AgentConnectionBeforeSessionInvalidateListener,
@@ -64,7 +66,7 @@ import type {
 	AgentConnectionSwitchSessionOptions,
 	AgentConnectionToolDefinition,
 	AgentConnectionUserMessage,
-} from "./types.js";
+} from "./types.ts";
 
 export interface InProcessHeadlessExtensionOptions {
 	uiContext?: ExtensionUIContext;
@@ -78,7 +80,10 @@ export class InProcessAgentConnection implements AgentConnection {
 	private headlessExtensionOptions: InProcessHeadlessExtensionOptions | undefined;
 	private unsubscribeSessionEvents: (() => void) | undefined;
 
-	constructor(private readonly runtimeHost: AgentSessionRuntime) {
+	private readonly runtimeHost: AgentSessionRuntime;
+
+	constructor(runtimeHost: AgentSessionRuntime) {
+		this.runtimeHost = runtimeHost;
 		this.bindCurrentSessionEvents();
 		if (typeof this.runtimeHost.setBeforeSessionInvalidate === "function") {
 			this.runtimeHost.setBeforeSessionInvalidate(() => {
@@ -178,10 +183,19 @@ export class InProcessAgentConnection implements AgentConnection {
 		// In-memory managers hold "" for "no explicit session dir"; pass undefined so
 		// list()/listAll() fall back to the default directories instead of scanning "".
 		const sessionDir = this.session.sessionManager.getSessionDir() || undefined;
-		if (scope === "current") {
-			return SessionManager.list(this.session.sessionManager.getCwd(), sessionDir, callbacks);
-		}
-		return SessionManager.listAll(callbacks, sessionDir);
+		const listCallbacks = callbacks
+			? {
+					onProgress: callbacks.onProgress,
+					onSession: (session: SessionInfo) => {
+						callbacks.onSession?.(deserializeSavedSessionInfo(serializeSavedSessionInfo(session)));
+					},
+				}
+			: undefined;
+		const sessions =
+			scope === "current"
+				? await SessionManager.list(this.session.sessionManager.getCwd(), sessionDir, listCallbacks)
+				: await SessionManager.listAll(listCallbacks, sessionDir);
+		return sessions.map((session) => deserializeSavedSessionInfo(serializeSavedSessionInfo(session)));
 	}
 
 	async getQueue(): Promise<AgentConnectionQueueState> {

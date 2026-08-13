@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { VERSION } from "../../config.js";
-import type { DaemonRuntimeIdentity } from "./daemon-protocol.js";
+import { VERSION } from "../../config.ts";
+import type { DaemonRuntimeIdentity } from "./daemon-protocol.ts";
 
 declare const __PI_BUILD_ID__: string | undefined;
 

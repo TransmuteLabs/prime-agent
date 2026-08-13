@@ -6,17 +6,17 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { formatAgentMessageParticipant } from "../../../core/agent-messages.js";
-import { previewIpythonCode } from "../../../core/tools/code-preview.js";
-import { generateDiffString } from "../../../core/tools/edit-diff.js";
-import { parseIpythonBashCell } from "../../../core/tools/ipython-cell-code.js";
-import { shortenPath } from "../../../core/tools/render-utils.js";
-import { getLanguageFromPath, highlightCode, theme } from "../theme/theme.js";
-import { getWorkingPulseFrame, WORKING_ICON_FRAMES, workingIconFrame } from "../theme/working-icon.js";
-import { agentMessageBodyLines, agentMessagePreview, agentMessageSummaryLine } from "./agent-message.js";
-import { normalizeErrorDetails, summarizeErrorDetails } from "./collapsible-error.js";
-import { renderDiffSeparator, renderRichDiff } from "./diff.js";
-import { expandCollapseHint } from "./keybinding-hints.js";
+import { formatAgentMessageParticipant } from "../../../core/agent-messages.ts";
+import { previewIpythonCode } from "../../../core/tools/code-preview.ts";
+import { generateDiffString } from "../../../core/tools/edit-diff.ts";
+import { parseIpythonBashCell } from "../../../core/tools/ipython-cell-code.ts";
+import { shortenPath } from "../../../core/tools/render-utils.ts";
+import { getLanguageFromPath, highlightCode, theme } from "../theme/theme.ts";
+import { getWorkingPulseFrame, WORKING_ICON_FRAMES, workingIconFrame } from "../theme/working-icon.ts";
+import { agentMessageBodyLines, agentMessagePreview, agentMessageSummaryLine } from "./agent-message.ts";
+import { normalizeErrorDetails, summarizeErrorDetails } from "./collapsible-error.ts";
+import { renderDiffSeparator, renderRichDiff } from "./diff.ts";
+import { expandCollapseHint } from "./keybinding-hints.ts";
 
 export interface IPythonCellContentBlock {
 	type: string;

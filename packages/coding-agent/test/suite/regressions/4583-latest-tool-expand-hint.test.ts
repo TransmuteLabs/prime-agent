@@ -4,10 +4,10 @@ import type { TUI } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { Type } from "typebox";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { buildConversationComponents } from "../../../src/modes/interactive/components/conversation-components.js";
-import { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.js";
-import { initTheme } from "../../../src/modes/interactive/theme/theme.js";
-import { createHarness, type Harness } from "../harness.js";
+import { buildConversationComponents } from "../../../src/modes/interactive/components/conversation-components.ts";
+import { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { createHarness, type Harness } from "../harness.ts";
 
 const ipythonTool: AgentTool = {
 	name: "ipython",

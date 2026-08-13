@@ -4,51 +4,51 @@ import {
 	type AutocompleteProvider,
 	CombinedAutocompleteProvider,
 	type Component,
-	clippedFullscreenDockHeight,
 	type Focusable,
 	ProcessTerminal,
 	setKeybindings,
-	TUI,
+	type TUI,
+	TuiAltScreen,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { APP_TITLE, appendRotatingLog, getAgentDir, getClientErrorLogPath, VERSION } from "../../config.js";
-import type { AgentSessionRuntimeConfig } from "../../core/agent-session-config.js";
-import { KeybindingsManager } from "../../core/keybindings.js";
-import { SessionManager } from "../../core/session-manager.js";
+import { APP_TITLE, appendRotatingLog, getAgentDir, getClientErrorLogPath, VERSION } from "../../config.ts";
+import type { AgentSessionRuntimeConfig } from "../../core/agent-session-config.ts";
+import { KeybindingsManager } from "../../core/keybindings.ts";
+import { SessionManager } from "../../core/session-manager.ts";
 import {
 	BUILTIN_SLASH_COMMANDS,
 	isBuiltinSlashCommandName,
 	isSessionSlashCommandName,
 	parseSlashCommand,
 	resolveBuiltinSlashCommandName,
-} from "../../core/slash-commands.js";
-import { canonicalizePath } from "../../utils/paths.js";
-import { ensureTool } from "../../utils/tools-manager.js";
-import { DaemonAgentConnection } from "../agent-connection/daemon-agent-connection.js";
-import type { AgentConnectionHeartbeat, AgentConnectionSavedSessionInfo } from "../agent-connection/types.js";
-import { DaemonClient, getDaemonSocketCloseReason } from "../daemon/daemon-client.js";
+} from "../../core/slash-commands.ts";
+import { canonicalizePath } from "../../utils/paths.ts";
+import { ensureTool } from "../../utils/tools-manager.ts";
+import { DaemonAgentConnection } from "../agent-connection/daemon-agent-connection.ts";
+import type { AgentConnectionHeartbeat, AgentConnectionSavedSessionInfo } from "../agent-connection/types.ts";
+import { DaemonClient, getDaemonSocketCloseReason } from "../daemon/daemon-client.ts";
 import {
 	collectDaemonClientEnv,
 	type DaemonClosingReason,
 	type DaemonCommand,
 	type DaemonResponse,
 	isUnknownDaemonCommandError,
-} from "../daemon/daemon-protocol.js";
-import { resolveAttachModelFallbackMessage, type SessionSummary } from "../daemon/daemon-session-list.js";
-import { listDaemonHeartbeats } from "../daemon/heartbeat-catalog.js";
+} from "../daemon/daemon-protocol.ts";
+import { resolveAttachModelFallbackMessage, type SessionSummary } from "../daemon/daemon-session-list.ts";
+import { listDaemonHeartbeats } from "../daemon/heartbeat-catalog.ts";
 import {
 	type DaemonSavedSessionCatalogContext,
 	deleteDaemonSavedSession,
 	listDaemonSavedSessions,
 	renameDaemonSavedSession,
-} from "../daemon/saved-session-catalog.js";
-import { CustomEditor } from "../interactive/components/custom-editor.js";
-import { keyText } from "../interactive/components/keybinding-hints.js";
-import { BrandSplashHeader, InteractiveMode } from "../interactive/interactive-mode.js";
-import type { InteractiveModeUiServices } from "../interactive/interactive-mode-services.js";
-import { ClientPromptStashStore } from "../interactive/prompt-stash-state.js";
+} from "../daemon/saved-session-catalog.ts";
+import { CustomEditor } from "../interactive/components/custom-editor.ts";
+import { keyText } from "../interactive/components/keybinding-hints.ts";
+import { BrandSplashHeader, InteractiveMode } from "../interactive/interactive-mode.ts";
+import type { InteractiveModeUiServices } from "../interactive/interactive-mode-services.ts";
+import { ClientPromptStashStore } from "../interactive/prompt-stash-state.ts";
 import {
 	getEditorTheme,
 	initTheme,
@@ -56,15 +56,15 @@ import {
 	setRegisteredThemes,
 	stopThemeWatcher,
 	theme,
-} from "../interactive/theme/theme.js";
-import { WORKING_ICON_INTERVAL_MS, workingIconFrame } from "../interactive/theme/working-icon.js";
+} from "../interactive/theme/theme.ts";
+import { WORKING_ICON_INTERVAL_MS, workingIconFrame } from "../interactive/theme/working-icon.ts";
 import {
 	formatPackageUpdateNotice,
 	formatTmuxWarningNotice,
 	formatUpdateAvailableNotice,
 	gatherStartupNotices,
 	type StartupNotices,
-} from "../shared/startup-notices.js";
+} from "../shared/startup-notices.ts";
 import {
 	type AgentsViewRow,
 	type AgentsViewScopeFrame,
@@ -94,8 +94,8 @@ import {
 	transitionAgentsViewScope,
 	type UnifiedSessionIndex,
 	type UnifiedSessionRecord,
-} from "./agents-view-state.js";
-import { matchesSearchText } from "./session-view-search.js";
+} from "./agents-view-state.ts";
+import { matchesSearchText } from "./session-view-search.ts";
 
 const POLL_INTERVAL_MS = 1000;
 const HEARTBEAT_POLL_INTERVAL_MS = 15000;
@@ -113,6 +113,11 @@ const SELECTED_ROW_MARKER = "\0agents-view-selected-row\0";
 // Tags a spawn-code line so finalize can wrap the whole row in a panel
 // background, visually segmenting the program from the agent rows.
 const CODE_ROW_MARKER = "\0agents-view-code-row\0";
+
+/** Keep at least one content row when the dock would otherwise fill the screen. */
+function clippedFullscreenDockHeight(dockLines: number, rows: number): number {
+	return Math.max(0, Math.min(dockLines, Math.max(0, rows - 1)));
+}
 
 export interface AgentsViewModeOptions {
 	socketPath?: string;
@@ -619,10 +624,9 @@ export function resolveCurrentReplyTargetSummary(
 export class AgentsViewMode implements Component, Focusable {
 	focused = false;
 
-	private readonly ui: TUI;
+	private readonly ui: TuiAltScreen;
 	private readonly editor: CustomEditor;
 	private readonly splash: BrandSplashHeader;
-	private readonly fullscreenDock: Component;
 	private readonly keybindings: KeybindingsManager;
 	private client: DaemonClient | undefined;
 	private unsubscribeClientClose: (() => void) | undefined;
@@ -687,10 +691,12 @@ export class AgentsViewMode implements Component, Focusable {
 	private statusMessageTimer: ReturnType<typeof setTimeout> | undefined;
 	private stopped = false;
 
-	constructor(
-		private readonly options: AgentsViewModeOptions,
-		private readonly persistentState: AgentsViewPersistentState = {},
-	) {
+	private readonly options: AgentsViewModeOptions;
+	private readonly persistentState: AgentsViewPersistentState;
+
+	constructor(options: AgentsViewModeOptions, persistentState: AgentsViewPersistentState = {}) {
+		this.options = options;
+		this.persistentState = persistentState;
 		const initialFrames =
 			persistentState.scopeFrames ??
 			createInitialAgentsViewScopeFrames(
@@ -718,10 +724,15 @@ export class AgentsViewMode implements Component, Focusable {
 		setRegisteredThemes(options.uiServices.getThemes());
 		initTheme(options.uiServices.settingsManager.getTheme(), true);
 
-		this.ui = new TUI(new ProcessTerminal(), options.uiServices.settingsManager.getShowHardwareCursor());
+		this.ui = new TuiAltScreen(
+			new ProcessTerminal(),
+			options.uiServices.settingsManager.getShowHardwareCursor(),
+			getAgentDir(),
+			{ mouse: false },
+		);
 		this.ui.setClearOnShrink(options.uiServices.settingsManager.getClearOnShrink());
 		this.ui.terminal.setTitle(`${APP_TITLE} - Agents`);
-		this.editor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
+		this.editor = new CustomEditor(this.ui as TUI, getEditorTheme(), this.keybindings, {
 			paddingX: options.uiServices.settingsManager.getEditorPaddingX(),
 			autocompleteMaxVisible: options.uiServices.settingsManager.getAutocompleteMaxVisible(),
 			placeholder: SEARCH_PROMPT_PLACEHOLDER,
@@ -806,12 +817,6 @@ export class AgentsViewMode implements Component, Focusable {
 				);
 			}
 		};
-		this.fullscreenDock = {
-			render: (width) => this.renderDock(width),
-			invalidate: () => {
-				this.editor.invalidate();
-			},
-		};
 		this.splash = new BrandSplashHeader(
 			VERSION,
 			() => this.getSplashModelId(),
@@ -839,15 +844,9 @@ export class AgentsViewMode implements Component, Focusable {
 			if (message.type === "heartbeats_changed") void this.refreshHeartbeats();
 		});
 
-		this.ui.addChild(this);
+		this.ui.setLayoutRoot(this);
 		this.ui.setFocus(this);
 		this.ui.start();
-		this.ui.enterFullscreen({
-			scroll: [this],
-			dock: this.fullscreenDock,
-			mouse: false,
-			viewportControls: false,
-		});
 		const startupStatusMessage = this.persistentState.statusMessage;
 		this.persistentState.statusMessage = undefined;
 		if (startupStatusMessage) {
@@ -950,12 +949,13 @@ export class AgentsViewMode implements Component, Focusable {
 
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
+		const dock = this.renderDock(safeWidth);
 		const height = this.contentHeight(safeWidth);
 		const lines = this.renderContent(safeWidth, height).slice(0, height);
 		while (lines.length < height) {
 			lines.push("");
 		}
-		return lines.slice(0, height).map((line) => this.finalizeRenderedLine(line, safeWidth));
+		return [...lines.slice(0, height).map((line) => this.finalizeRenderedLine(line, safeWidth)), ...dock];
 	}
 
 	invalidate(): void {
@@ -2357,8 +2357,7 @@ export class AgentsViewMode implements Component, Focusable {
 		this.clearDeleteConfirmation({ render: false });
 		this.setStatusMessage(undefined, { render: false });
 		this.ui.stop({
-			preserveAltScreen: result.type !== "exit",
-			flushFullscreen: false,
+			preserveScreen: result.type !== "exit",
 		});
 		stopThemeWatcher();
 		this.unsubscribeClientClose?.();

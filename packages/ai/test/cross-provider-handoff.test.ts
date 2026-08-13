@@ -25,13 +25,11 @@
 import { writeFileSync } from "fs";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, it } from "vitest";
-import { getModel } from "../src/models.js";
-import { completeSimple, getEnvApiKey } from "../src/stream.js";
-import type { Api, AssistantMessage, Message, Model, Tool, ToolResultMessage } from "../src/types.js";
-import { hasAzureOpenAICredentials } from "./azure-utils.js";
-import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.js";
-import { getKimiCodingTestModel } from "./kimi-test-model.js";
-import { resolveApiKey } from "./oauth.js";
+import { completeSimple, getEnvApiKey, getModel } from "../src/compat.ts";
+import type { Api, AssistantMessage, Message, Model, Tool, ToolResultMessage } from "../src/types.ts";
+import { hasAzureOpenAICredentials } from "./azure-utils.ts";
+import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { resolveApiKey } from "./oauth.ts";
 
 // Simple tool for testing
 const testToolSchema = Type.Object({
@@ -68,9 +66,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "openai", model: "gpt-5-mini", label: "openai-responses-gpt-5-mini" },
 	{ provider: "azure-openai-responses", model: "gpt-4o-mini", label: "azure-openai-responses-gpt-4o-mini" },
 	// OpenAI Codex
-	{ provider: "openai-codex", model: "gpt-5.2-codex", label: "openai-codex-gpt-5.2-codex" },
-	// Prime Inference
-	{ provider: "prime-inference", model: "openai/gpt-5.5", label: "prime-inference-gpt-5.5" },
+	{ provider: "openai-codex", model: "gpt-5.5", label: "openai-codex-gpt-5.5" },
 	// GitHub Copilot
 	{ provider: "github-copilot", model: "claude-sonnet-4.5", label: "copilot-claude-sonnet-4.5" },
 	{ provider: "github-copilot", model: "gpt-5.1-codex", label: "copilot-gpt-5.1-codex" },
@@ -83,7 +79,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 		label: "bedrock-claude-sonnet-4-5",
 	},
 	// xAI
-	{ provider: "xai", model: "grok-code-fast-1", label: "xai-grok-code-fast-1" },
+	{ provider: "xai", model: "grok-4.3", label: "xai-grok-4.3" },
 	// Cerebras
 	{ provider: "cerebras", model: "zai-glm-4.7", label: "cerebras-zai-glm-4.7" },
 	// Cloudflare Workers AI
@@ -110,8 +106,12 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "groq", model: "openai/gpt-oss-120b", label: "groq-gpt-oss-120b" },
 	// Hugging Face
 	{ provider: "huggingface", model: "moonshotai/Kimi-K2.5", label: "huggingface-kimi-k2.5" },
+	// Together AI
+	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
+	// Baseten
+	{ provider: "baseten", model: "zai-org/GLM-5.2", label: "baseten-glm-5.2" },
 	// Kimi For Coding
-	{ provider: "kimi-coding", model: getKimiCodingTestModel().id, label: "kimi-coding" },
+	{ provider: "kimi-coding", model: "kimi-for-coding", label: "kimi-for-coding" },
 	// Mistral
 	{ provider: "mistral", model: "devstral-medium-latest", label: "mistral-devstral-medium" },
 	// MiniMax
@@ -132,6 +132,24 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "xiaomi-token-plan-cn", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-cn-mimo-v2.5-pro" },
 	{ provider: "xiaomi-token-plan-ams", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-ams-mimo-v2.5-pro" },
 	{ provider: "xiaomi-token-plan-sgp", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-sgp-mimo-v2.5-pro" },
+	// Qwen Token Plan
+	{ provider: "qwen-token-plan", model: "qwen3.7-max", label: "qwen-token-plan-qwen3.7-max" },
+	{ provider: "qwen-token-plan-cn", model: "qwen3.7-max", label: "qwen-token-plan-cn-qwen3.7-max" },
+	{
+		provider: "qwen-token-plan-individual",
+		model: "qwen3.8-max",
+		label: "qwen-token-plan-individual-qwen3.8-max",
+	},
+	{
+		provider: "qwen-token-plan-individual",
+		model: "deepseek-v4-flash-0731",
+		label: "qwen-token-plan-individual-deepseek-v4-flash-0731",
+	},
+	{
+		provider: "qwen-token-plan-individual",
+		model: "glm-5.2",
+		label: "qwen-token-plan-individual-glm-5.2",
+	},
 ];
 
 // Cached context structure

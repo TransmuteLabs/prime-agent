@@ -1,4 +1,4 @@
-import type { ContextUsage } from "./extensions/index.js";
+import type { ContextUsage } from "./extensions/index.ts";
 
 /** Session statistics for the /session command and connection snapshots. */
 export interface SessionStats {

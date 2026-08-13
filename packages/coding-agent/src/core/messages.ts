@@ -7,8 +7,8 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
-import type { AgentCronJob } from "./cron-jobs.js";
-import { isSessionSlashCommandName, parseSessionSlashCommand, type SessionSlashCommand } from "./slash-commands.js";
+import type { AgentCronJob } from "./cron-jobs.ts";
+import { isSessionSlashCommandName, parseSessionSlashCommand, type SessionSlashCommand } from "./slash-commands.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -185,15 +185,8 @@ export interface CompactionSummaryMessage {
 	timestamp: number;
 }
 
-// Extend CustomAgentMessages via declaration merging
-declare module "@earendil-works/pi-agent-core" {
-	interface CustomAgentMessages {
-		bashExecution: BashExecutionMessage;
-		custom: CustomMessage;
-		branchSummary: BranchSummaryMessage;
-		compactionSummary: CompactionSummaryMessage;
-	}
-}
+// coding-agent CompactionSummaryMessage is a structural superset of the agent package's
+// declaration; avoid a conflicting module augmentation here. Call sites use local types.
 
 /**
  * Format bash output for LLM context. The fence must be longer than any

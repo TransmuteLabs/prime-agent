@@ -1,5 +1,5 @@
-import type { AutocompleteProvider } from "./autocomplete.js";
-import type { Component } from "./tui.js";
+import type { AutocompleteProvider } from "./autocomplete.ts";
+import type { Component } from "./tui.ts";
 
 export interface EditorPasteSnapshot {
 	pastes: readonly (readonly [number, string])[];

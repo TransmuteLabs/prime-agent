@@ -4,9 +4,9 @@ import {
 	acpToolKind,
 	acpUpdatesForSessionEvent,
 	bashToolCallId,
-} from "../src/modes/acp/acp-events.js";
-import { PRIME_AGENT_META_NAMESPACE } from "../src/modes/acp/acp-meta.js";
-import type { AgentConnectionSessionEvent } from "../src/modes/agent-connection/types.js";
+} from "../src/modes/acp/acp-events.ts";
+import { PRIME_AGENT_META_NAMESPACE } from "../src/modes/acp/acp-meta.ts";
+import type { AgentConnectionSessionEvent } from "../src/modes/agent-connection/types.ts";
 
 /** Real streaming shape: the discriminator is on the event, delta is a string. */
 function assistantDelta(type: "text_delta" | "thinking_delta", delta: string): AgentConnectionSessionEvent {

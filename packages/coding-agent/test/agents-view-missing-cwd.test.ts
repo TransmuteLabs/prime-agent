@@ -2,13 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createAgentSessionRuntime } from "../src/core/agent-session-runtime.js";
-import { MissingSessionCwdError } from "../src/core/session-cwd.js";
-import { SessionLease } from "../src/core/session-lease.js";
-import { SessionManager } from "../src/core/session-manager.js";
-import { createAgentsViewResumeConfig, resolveAgentsViewOpenCwd } from "../src/modes/agents-view/agents-view-mode.js";
-import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
-import { assistantMsg, userMsg } from "./utilities.js";
+import { createAgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
+import { MissingSessionCwdError } from "../src/core/session-cwd.ts";
+import { SessionLease } from "../src/core/session-lease.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
+import { createAgentsViewResumeConfig, resolveAgentsViewOpenCwd } from "../src/modes/agents-view/agents-view-mode.ts";
+import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.ts";
+import { assistantMsg, userMsg } from "./utilities.ts";
 
 describe("agents view open with a missing session cwd", () => {
 	it("repros the failure and proves the override opens the session", async () => {

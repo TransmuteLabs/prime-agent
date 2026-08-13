@@ -7,8 +7,8 @@
  *   npx tsx test/markdown-streaming-bench.ts
  */
 import { performance } from "node:perf_hooks";
-import { Markdown } from "../src/components/markdown.js";
-import { defaultMarkdownTheme } from "./test-themes.js";
+import { Markdown } from "../src/components/markdown.ts";
+import { defaultMarkdownTheme } from "./test-themes.ts";
 
 const SECTION = `## Section heading
 

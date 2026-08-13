@@ -6,13 +6,13 @@ import {
 	DaemonUpdateRestartStatusWriter,
 	launchDaemonUpdateRestartCoordinator,
 	readDaemonUpdateRestartStatus,
-} from "../../../src/cli/daemon-update-restart.js";
-import { ENV_AGENT_DIR } from "../../../src/config.js";
-import { DaemonAgentConnection } from "../../../src/modes/agent-connection/daemon-agent-connection.js";
-import { DaemonClient } from "../../../src/modes/daemon/daemon-client.js";
-import type { DaemonResponse } from "../../../src/modes/daemon/daemon-protocol.js";
-import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.js";
-import { createHarness, type Harness } from "../harness.js";
+} from "../../../src/cli/daemon-update-restart.ts";
+import { ENV_AGENT_DIR } from "../../../src/config.ts";
+import { DaemonAgentConnection } from "../../../src/modes/agent-connection/daemon-agent-connection.ts";
+import { DaemonClient } from "../../../src/modes/daemon/daemon-client.ts";
+import type { DaemonResponse } from "../../../src/modes/daemon/daemon-protocol.ts";
+import type { SessionSummary } from "../../../src/modes/daemon/daemon-session-list.ts";
+import { createHarness, type Harness } from "../harness.ts";
 
 interface SupervisorHandle {
 	child: ChildProcess;

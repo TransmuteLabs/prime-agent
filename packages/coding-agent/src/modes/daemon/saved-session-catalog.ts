@@ -1,20 +1,20 @@
-import type { DeleteSessionFileResult } from "../../core/session-file-actions.js";
+import type { DeleteSessionFileResult } from "../../core/session-file-actions.ts";
 import type {
 	AgentConnectionSavedSessionInfo,
 	AgentConnectionSavedSessionScope,
 	AgentConnectionSessionListCallbacks,
-} from "../agent-connection/types.js";
-import type { DaemonClient } from "./daemon-client.js";
-import { deserializeDaemonError } from "./daemon-errors.js";
+} from "../agent-connection/types.ts";
+import type { DaemonClient } from "./daemon-client.ts";
+import { deserializeDaemonError } from "./daemon-errors.ts";
 import type {
 	DaemonCommand,
 	DaemonDeleteSavedSessionResult,
 	DaemonSavedSessionInfo,
 	DaemonSavedSessionListCommand,
-} from "./daemon-protocol.js";
-import { deserializeSavedSessionInfo } from "./saved-session-info.js";
+} from "./daemon-protocol.ts";
+import { deserializeSavedSessionInfo } from "./saved-session-info.ts";
 
-export { deserializeSavedSessionInfo } from "./saved-session-info.js";
+export { deserializeSavedSessionInfo } from "./saved-session-info.ts";
 
 export type DaemonSavedSessionCatalogContext = { activeSessionId: string } | { cwd: string; sessionDir?: string };
 

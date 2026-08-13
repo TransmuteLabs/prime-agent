@@ -2,12 +2,12 @@ import { isAbsolute } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { EditToolDetails } from "../../../core/tools/edit.js";
-import { generateDiffString } from "../../../core/tools/edit-diff.js";
-import type { IpythonToolDetails } from "../../../core/tools/ipython.js";
-import { resolveToCwd } from "../../../core/tools/path-utils.js";
-import { canonicalizePath, formatPathRelativeToCwdOrAbsolute } from "../../../utils/paths.js";
-import { theme } from "../theme/theme.js";
+import type { EditToolDetails } from "../../../core/tools/edit.ts";
+import { generateDiffString } from "../../../core/tools/edit-diff.ts";
+import type { IpythonToolDetails } from "../../../core/tools/ipython.ts";
+import { resolveToCwd } from "../../../core/tools/path-utils.ts";
+import { canonicalizePath, formatPathRelativeToCwdOrAbsolute } from "../../../utils/paths.ts";
+import { theme } from "../theme/theme.ts";
 
 export interface FileChangeSummary {
 	path: string;
@@ -91,10 +91,13 @@ function formatFileChangePath(path: string, cwd: string): string {
 }
 
 export class FileChangeSummaryComponent implements Component {
-	constructor(
-		private readonly changes: readonly FileChangeSummary[],
-		private readonly cwd: string,
-	) {}
+	private readonly changes: readonly FileChangeSummary[];
+	private readonly cwd: string;
+
+	constructor(changes: readonly FileChangeSummary[], cwd: string) {
+		this.changes = changes;
+		this.cwd = cwd;
+	}
 
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);

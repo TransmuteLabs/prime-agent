@@ -1,7 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
-import { IPythonCellComponent } from "../src/modes/interactive/components/ipython-cell.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import { IPythonCellComponent } from "../src/modes/interactive/components/ipython-cell.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 type CellState = ConstructorParameters<typeof IPythonCellComponent>[0];
 

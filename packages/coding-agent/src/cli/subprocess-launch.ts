@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { isBunBinary } from "../config.js";
+import { isBunBinary } from "../config.ts";
 
 export interface CliSubprocessLaunchSpec {
 	command: string;
