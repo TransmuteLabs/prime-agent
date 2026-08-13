@@ -18,6 +18,8 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain("You are a general purpose agent that uses code to solve tasks.");
 			expect(prompt).toContain("Working directory: /x");
 			expect(prompt).toContain("# Delegating to sub-agents");
+			expect(prompt).toContain("Parent orchestration is mandatory when recursion is available.");
+			expect(prompt).toContain("After three IPython cells on the same slice without a spawn, stop and delegate.");
 		});
 
 		test("omits subagent guidance when recursion is disabled", () => {

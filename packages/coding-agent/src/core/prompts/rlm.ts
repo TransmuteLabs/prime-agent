@@ -33,6 +33,16 @@ const IPYTHON_CONTROL_PROMPT = [
 	"RLM-native call contract: installed Python skills are pre-imported modules. Read the matching SKILL.md and call its documented function, such as `await <skill_import>.<function>(...)`; when a CLI exists, use `<skill_import> ...` from shell. Continual harness skill entries are Python REPL skills with an explicit Python `reference` and `arguments` contract. Spawn a reusable delegation spec with `await rlm('sub-task')`; admission returns a child handle immediately. Results arrive only through an available messaging capability or files, never as an `rlm()` return value. Do not invent non-native wrappers such as `call_skill(...)` or `run_subagent(...)`.",
 ].join("\n");
 
+const PARENT_ORCHESTRATION_RULES = [
+	"Parent orchestration is mandatory when recursion is available. You are the orchestrator for this session, not the default worker.",
+	"A long-running goal is valid and should stay on the parent: the parent tracks the completion condition and existing goal infrastructure (status, budget, continuations, goal.complete()). Do not drop or finish a goal early to avoid delegation.",
+	"Children execute bounded slices toward that goal. They must not carry the open-ended parent goal or continue it as a notebook worker.",
+	"Must spawn with `await rlm(...)` and then end the turn when the next slice is any of: a multi-file or repo scan, porting or implementing across more than one file, a full test/build/lint suite, or work that would take more than three IPython cells or dump large command output into this transcript.",
+	"Must not keep doing that class of work inline in the parent kernel. After three IPython cells on the same slice without a spawn, stop and delegate.",
+	"May do inline: one known file or command, a small transform of existing kernel variables, committing already-finished child work, or fan-in of child files and agent messages.",
+	"If an active goal remains incomplete, the next parent action is to check children / spawn the next slice / complete the goal — not another long inline scan or port.",
+].join("\n");
+
 export interface ChildAgentDoctrineOptions {
 	depth?: number;
 	parentAgent?: string;
@@ -147,6 +157,7 @@ export function buildRlmPrompt(options: RlmPromptOptions): string {
 		}
 		parts.push(
 			"Spawn independent children in separate calls and end your turn instead of awaiting completion. Multiple replies may arrive over multiple turns. Delete a direct child explicitly with `await rlm.delete_subagent(child)` when it is no longer needed.",
+			PARENT_ORCHESTRATION_RULES,
 		);
 	}
 
@@ -190,6 +201,10 @@ export function buildSubagentGuidance(
 	}
 	lines.push(
 		"Have children write files and read those files for fan-in.",
+		"A durable goal stays on the parent. The parent owns the completion condition and calls goal.complete() only when that condition is met. Children execute bounded slices; they do not inherit the open-ended goal.",
+		"Must delegate with `await rlm(...)` then end the turn: multi-file scans, whole-crate ports, full test/build suites, and any work that would take more than a few IPython cells or dump large listings into this transcript.",
+		"Must not keep executing that class of work inline in the parent notebook. After three IPython cells on the same bounded slice without a spawn, stop and delegate.",
+		"May do inline: one known file/command, a tiny transform of kernel state, or fan-in of child files/messages.",
 		"Delegate parallel context-heavy research or independent implementation; do a single known lookup, edit, or command inline.",
 	);
 	if (options.includeRefineExamples ?? true) {
