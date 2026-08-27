@@ -80,8 +80,7 @@ import {
 	uploadAgentTraceFile,
 	uploadAllAgentTraces,
 } from "../../core/agent-traces.ts";
-import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
-import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { parseSkillBlock } from "../../core/skill-blocks.ts";
 import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
 import { isNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import type { AuthStorage } from "../../core/auth-storage.ts";
@@ -309,7 +308,11 @@ import {
 import { setWorkingPulseFrame, WORKING_ICON_INTERVAL_MS } from "./theme/working-icon.ts";
 
 function quoteIfNeeded(value: string): string {
-	return /[\s"']/.test(value) ? JSON.stringify(value) : value;
+	// Shell-safe single quoting: double quotes would leave $, ` and \ live in the resumed command.
+	if (value.length > 0 && !/[^a-zA-Z0-9_\-./~:@]/.test(value)) {
+		return value;
+	}
+	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /** CLI resume command for the current session (tests + exit hints). */
