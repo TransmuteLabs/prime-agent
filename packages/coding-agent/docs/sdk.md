@@ -501,6 +501,16 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 
 ### Tools
 
+Specify which built-in tools to enable:
+
+- Built-in tool names: `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, `ls`, `ipython`
+- Default built-in: `ipython` (override with the `defaultTools` setting)
+- `noTools: "all"` disables all tools
+- `noTools: "builtin"` disables default built-ins while keeping extension and custom tools enabled
+- `excludeTools` disables specific built-in, extension, or custom tool names after any `tools` allowlist is applied
+
+The `edit` tool returns `details.diff` for the TUI display and `details.patch` as a standard unified patch for SDK consumers.
+
 ```typescript
 // Use the default built-in tool set: ipython
 const { session } = await createAgentSession({
@@ -510,6 +520,16 @@ const { session } = await createAgentSession({
 // Pick specific tools
 const { session } = await createAgentSession({
   tools: ["ipython"],
+});
+
+// Use PowerShell instead of Bash on Windows
+const { session } = await createAgentSession({
+  tools: ["read", "powershell", "edit", "write"],
+});
+
+// Disable one tool while keeping the rest available
+const { session } = await createAgentSession({
+  excludeTools: ["ask_question"],
 });
 ```
 
@@ -1140,9 +1160,11 @@ defineTool
 SessionManager
 SettingsManager
 
-// Tool factories (for custom cwd)
-createIpythonTool, createBashTool, createEditTool
-createIpythonToolDefinition, createBashToolDefinition, createEditToolDefinition
+// Tool factories
+createCodingTools
+createReadOnlyTools
+createReadTool, createBashTool, createPowerShellTool, createEditTool, createWriteTool
+createGrepTool, createFindTool, createLsTool
 
 // Types
 type CreateAgentSessionOptions

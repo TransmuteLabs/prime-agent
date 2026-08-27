@@ -10,12 +10,12 @@
 import { spawn } from "node:child_process";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
-import { checkForNewPiVersion } from "../../utils/version-check.ts";
+import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { theme } from "../interactive/theme/theme.ts";
 
 export interface StartupNotices {
 	/** Newer Prime Agent version available, if any. */
-	newVersion?: string;
+	newVersion?: LatestPiRelease;
 	/** Display names of extensions with available updates. */
 	packageUpdates: string[];
 	/** tmux keyboard setup warning, if the current tmux config is suboptimal. */
@@ -36,7 +36,7 @@ export async function gatherStartupNotices(options: StartupNoticeCheckOptions): 
 		checkForPackageUpdates(options),
 		checkTmuxKeyboardSetup(),
 	]);
-	return { newVersion: newVersion?.version, packageUpdates, tmuxWarning };
+	return { newVersion, packageUpdates, tmuxWarning };
 }
 
 export async function checkForPackageUpdates(options: {
@@ -108,11 +108,12 @@ export async function checkTmuxKeyboardSetup(): Promise<string | undefined> {
 	return undefined;
 }
 
-export function formatUpdateAvailableNotice(newVersion: string): string {
-	return (
+export function formatUpdateAvailableNotice(release: LatestPiRelease): string {
+	const notice =
 		`${theme.bold(theme.fg("accent", "Update available:"))} ` +
-		`${theme.fg("muted", `v${newVersion}. Run `)}${theme.fg("accent", "/update")}`
-	);
+		`${theme.fg("muted", `v${release.version}. Run `)}${theme.fg("accent", "/update")}`;
+	const note = release.note?.trim();
+	return note ? `${notice}\n${theme.fg("muted", note)}` : notice;
 }
 
 export function formatPackageUpdateNotice(packages: string[]): string {

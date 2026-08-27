@@ -131,7 +131,7 @@ The command output is sent to the model. Use `!!command` to run a command withou
 
 ### Switch Models
 
-Use `/model` or Ctrl+L to choose a model. Use `/effort` to set the reasoning level. Use Ctrl+P / Shift+Ctrl+P to cycle through scoped models.
+Use `/model` or Ctrl+L to choose a model for the current session. Press Ctrl+S in the model picker to save the highlighted model as the startup default. Use `/effort` (alias `/thinking`) to choose a reasoning level for the current session, or Ctrl+S in that picker to save the startup default.
 
 ### Continue Later
 

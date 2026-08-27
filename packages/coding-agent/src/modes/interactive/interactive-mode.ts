@@ -8,7 +8,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type {
 	Api,
 	AssistantMessage,
@@ -43,6 +42,7 @@ import {
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
+	setCapabilityOverrides,
 	setKeybindings,
 	Text,
 	TruncatedText,
@@ -71,6 +71,7 @@ import {
 	VERSION,
 } from "../../config.ts";
 import { AGENT_MESSAGE_RECEIVED_PREVIEW_LABEL, isAgentSessionMessage } from "../../core/agent-messages.ts";
+import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
 import {
 	type AgentTracePreviewResult,
 	type AgentTraceUploadAllResult,
@@ -80,14 +81,11 @@ import {
 	uploadAgentTraceFile,
 	uploadAllAgentTraces,
 } from "../../core/agent-traces.ts";
-import { parseSkillBlock } from "../../core/skill-blocks.ts";
-import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
 import { isNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import type { AuthStorage } from "../../core/auth-storage.ts";
 import {
 	CACHE_TTL_MS,
 	type CacheMiss,
-	collectCacheMisses,
 	computeCacheWaste,
 	detectCacheMiss,
 	type ModelPriceSource,
@@ -112,12 +110,13 @@ import type {
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { emptyGoalState, formatGoalUsage, GOAL_CONTEXT_PREVIEW_LABEL, type GoalState } from "../../core/goals.ts";
+import { configureHttpDispatcher } from "../../core/http-dispatcher.ts";
 import type { KernelSentAgentMessage } from "../../core/kernel/index.ts";
-import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import {
 	bashOutputToText,
 	COMPACTION_OUTCOME_CUSTOM_TYPE,
+	createCompactionSummaryMessage,
 	createHeartbeatPromptMessage,
 	HEARTBEAT_PROMPT_CUSTOM_TYPE,
 	HEARTBEAT_PROMPT_PREVIEW_LABEL,
@@ -135,7 +134,8 @@ import { parseCommandArgs } from "../../core/prompt-templates.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { SessionImportFileNotFoundError } from "../../core/session-import-errors.ts";
 import type { SessionManager } from "../../core/session-manager.ts";
-import type { TuiMode } from "../../core/settings-manager.ts";
+import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
+import { parseSkillBlock } from "../../core/skill-blocks.ts";
 import {
 	BUILTIN_SLASH_COMMANDS,
 	builtinSlashCommandTakesArgument,
@@ -153,14 +153,15 @@ import { type TruncationResult, truncateTail } from "../../core/tools/truncate.t
 import { hasProjectConfigDir, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { PRIME_BUTTERFLY_LOGO } from "../../themes/prime-logo.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
-import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { resizeImage } from "../../utils/image-resize.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
+import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import {
 	ensureTool,
 	ensureToolWithStatus,
@@ -243,14 +244,6 @@ import {
 	styleSlashCommandText,
 } from "./components/slash-command-message.ts";
 import { SlashCommandResultMessageComponent } from "./components/slash-command-result-message.ts";
-import {
-	BranchSummaryStatusIndicator,
-	CompactionStatusIndicator,
-	IdleStatus,
-	RetryStatusIndicator,
-	type StatusIndicator,
-	WorkingStatusIndicator,
-} from "./components/status-indicator.ts";
 import { countDirectSubagentStatuses, SubagentSummaryLine } from "./components/subagent-summary-line.ts";
 import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import {
@@ -258,8 +251,8 @@ import {
 	ToolExecutionComponent,
 	type ToolExecutionDefinition,
 } from "./components/tool-execution.ts";
-import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
+import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
@@ -277,8 +270,6 @@ import type {
 	InteractiveModeLocalToolRendererDefinition,
 	InteractiveModeUiServices,
 } from "./interactive-mode-services.ts";
-import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
-import { getModelSearchText } from "./model-search.ts";
 import {
 	isOnboardingModelReady,
 	type OnboardingStartupState,
@@ -617,6 +608,7 @@ interface InteractiveTuiOptions {
 	terminal?: Terminal;
 	mouse?: boolean;
 	onRightClickPaste?: () => void;
+	fullscreenCopyOnSelect?: boolean;
 }
 
 /** Composition root for selecting the interactive terminal renderer. */
@@ -630,6 +622,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
+			copyOnSelect: options.fullscreenCopyOnSelect,
 			copySelection: async (text) => {
 				try {
 					await copyToClipboard(text);
@@ -1253,6 +1246,7 @@ export class InteractiveMode {
 
 	// Changelog markdown computed at startup; shown once per version bump.
 	private changelogMarkdown: string | undefined = undefined;
+	private startupNoticesShown = false;
 
 	// Custom footer from extension (undefined = use built-in footer)
 	private customFooter: (Component & { dispose?(): void }) | undefined = undefined;
@@ -1340,6 +1334,7 @@ export class InteractiveMode {
 			logDirectory: getAgentDir(),
 			mouse: this.settingsManager.getFullscreenMouse(),
 			onRightClickPaste: this.onRightClickPaste,
+			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -1631,6 +1626,45 @@ export class InteractiveMode {
 		}
 	}
 
+	private showStartupNoticesIfNeeded(): void {
+		if (this.startupNoticesShown) {
+			return;
+		}
+		this.startupNoticesShown = true;
+
+		if (!this.changelogMarkdown) {
+			return;
+		}
+
+		if (this.chatContainer.children.length > 0) {
+			this.chatContainer.addChild(new Spacer(1));
+		}
+		this.chatContainer.addChild(new DynamicBorder());
+		if (this.settingsManager.getCollapseChangelog()) {
+			const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
+			const latestVersion = versionMatch ? versionMatch[1] : this.version;
+			const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
+			this.chatContainer.addChild(new Text(condensedText, 1, 0));
+		} else {
+			this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(
+				new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
+			);
+			this.chatContainer.addChild(new Spacer(1));
+		}
+		this.chatContainer.addChild(new DynamicBorder());
+	}
+
+	private stopInteractiveTui(fullscreenExitOutput: FullscreenExitOutput): void {
+		if (this.renderer.mode === "fullscreen" && fullscreenExitOutput === "transcript") {
+			while (this.renderer.hasOverlayEntries) this.renderer.hideOverlay();
+			this.switchTuiMode("regular", false, false);
+			this.renderer.renderNow();
+		}
+		this.ui.stop({ preserveScreen: this.renderer.mode === "fullscreen" });
+	}
+
 	async init(): Promise<void> {
 		if (this.isInitialized) return;
 
@@ -1723,6 +1757,10 @@ export class InteractiveMode {
 		this.ui.addChild(this.mainContainer);
 		this.ui.setFocus(this.editor);
 
+		// Accept text while startup completes, but only report that submission is not
+		// live yet; setupEditorSubmitHandler() installs the real handler below.
+		this.defaultEditor.onSubmit = async (text: string) => this.handleStartupSubmit(text);
+
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
 		this.fullscreenEnabled =
@@ -1736,11 +1774,18 @@ export class InteractiveMode {
 		// Ensure fd and rg are available after mounting the TUI (downloads if missing, adds to PATH via getBinDir)
 		// so slow downloads do not make startup appear frozen.
 		// Both are needed: fd for autocomplete, rg for grep tool and bash commands.
-		const [fdPath] = await Promise.all([
+		const [fdPath, rgResult] = await Promise.all([
 			ensureTool("fd", (status) => this.showManagedToolStatus(status)),
-			ensureTool("rg", (status) => this.showManagedToolStatus(status)),
+			ensureToolWithStatus("rg", (status) => {
+				// The unavailable branch below renders the full guidance, which already
+				// contains the install hint these warnings carry in short form.
+				if (status.type !== "warning") this.showManagedToolStatus(status);
+			}),
 		]);
 		this.fdPath = fdPath;
+		if (rgResult.status === "unavailable") {
+			this.showManagedToolStatus({ type: "warning", message: formatMissingRipgrepMessage(rgResult) });
+		}
 
 		// Enable the remaining input handlers only after managed-tool setup completes.
 		this.setupKeyHandlers();
@@ -1767,6 +1812,14 @@ export class InteractiveMode {
 
 		// Initialize available provider count for footer display
 		await this.updateAvailableProviderCount();
+
+		// Flush the completed startup state before loading the remaining syntax grammars.
+		this.ui.renderNow();
+		void loadAllHighlightLanguages().then(() => {
+			if (!this.isInitialized) return;
+			this.ui.invalidate();
+			this.ui.requestRender();
+		});
 	}
 
 	/**
@@ -1947,7 +2000,7 @@ export class InteractiveMode {
 			void newVersionPromise
 				?.then((newVersion) => {
 					if (newVersion) {
-						this.showNewVersionNotification(newVersion.version);
+						this.showNewVersionNotification(newVersion);
 					}
 				})
 				.catch(() => {});
@@ -2827,9 +2880,15 @@ export class InteractiveMode {
 		const extensionRunner = localSessionHost.getExtensionRunner();
 		this.setupExtensionShortcuts(extensionRunner);
 		this.showLoadedResources({ force: false, showDiagnosticsWhenQuiet: true });
+		this.showStartupNoticesIfNeeded();
 	}
 
 	private applyRuntimeSettings(): void {
+		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
+		configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
+		if (this.renderer instanceof TuiAltScreen) {
+			this.renderer.setCopyOnSelect(this.settingsManager.getFullscreenCopyOnSelect());
+		}
 		this.footer.setAutoCompactEnabled(
 			this.connectionState?.autoCompactionEnabled ?? this.settingsManager.getCompactionEnabled(),
 		);
@@ -4502,8 +4561,12 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.heartbeats.open", () => {
 			void this.showHeartbeatManager();
 		});
-		this.defaultEditor.onAction("app.editor.external", () => this.openExternalEditor());
+		this.defaultEditor.onAction("app.editor.external", () => void this.openExternalEditor());
 		this.defaultEditor.onAction("app.prompt.stash", () => this.handlePromptStash());
+		this.defaultEditor.onAction(
+			"app.message.copy",
+			() => void this.handleCopyCommand({ flashConfirmation: true, preferSelection: true }),
+		);
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.navigateOlder", () => this.browseQueueSelection(-1));
 		this.defaultEditor.onAction("app.message.navigateNewer", () => this.browseQueueSelection(1));
@@ -5018,6 +5081,11 @@ export class InteractiveMode {
 				if (commandName === "scoped-models" && !commandArgs) {
 					this.editor.setText("");
 					await this.showModelsSelector();
+					return;
+				}
+				if (commandName === "trust" && !commandArgs) {
+					this.editor.setText("");
+					this.showTrustSelector();
 					return;
 				}
 				if (commandName === "model") {
@@ -7324,6 +7392,12 @@ export class InteractiveMode {
 		process.stderr.on("error", terminalErrorHandler);
 		this.signalCleanupHandlers.push(() => process.stdout.off("error", terminalErrorHandler));
 		this.signalCleanupHandlers.push(() => process.stderr.off("error", terminalErrorHandler));
+
+		// Restore the terminal before the process dies on any uncaught throw: without
+		// this the terminal is left in raw mode with no cursor, needing `stty sane`.
+		const uncaughtExceptionHandler = (error: Error) => this.uncaughtCrash(error);
+		process.prependListener("uncaughtException", uncaughtExceptionHandler);
+		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
 	}
 
 	private unregisterSignalHandlers(): void {
@@ -7701,6 +7775,7 @@ export class InteractiveMode {
 			terminal,
 			mouse: this.settingsManager.getFullscreenMouse(),
 			onRightClickPaste: this.onRightClickPaste,
+			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -7777,69 +7852,37 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/** Update rendered assistant messages without rebuilding live tool components. */
+	private updateThinkingBlockVisibility(): void {
+		for (const child of this.chatContainer.children) {
+			if (child instanceof AssistantMessageComponent) {
+				child.setHideThinkingBlock(this.hideThinkingBlock);
+			}
+		}
+		this.ui.requestRender();
+	}
+
 	private toggleThinkingBlockVisibility(): void {
 		this.hideThinkingBlock = !this.hideThinkingBlock;
 		this.settingsManager.setHideThinkingBlock(this.hideThinkingBlock);
 
-		void (async () => {
-			// Rebuild chat from session messages
-			await this.rebuildChatFromMessages();
-
-			// If streaming, re-add the streaming component with updated visibility and re-render
-			if (this.streamingComponent && this.streamingMessage) {
-				this.streamingComponent.setHideThinkingBlock(this.hideThinkingBlock);
-				this.streamingComponent.updateContent(this.streamingMessage);
-				this.chatContainer.addChild(this.streamingComponent);
-			}
-
-			this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
-		})().catch((error) => {
-			this.showError(error instanceof Error ? error.message : String(error));
-		});
+		this.streamingComponent?.setHideThinkingBlock(this.hideThinkingBlock);
+		this.updateThinkingBlockVisibility();
+		this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
 	}
 
-	private openExternalEditor(): void {
-		// Determine editor (respect $VISUAL, then $EDITOR)
-		const editorCmd = process.env.VISUAL || process.env.EDITOR;
-		if (!editorCmd) {
-			this.showWarning("No editor configured. Set $VISUAL or $EDITOR environment variable.");
-			return;
-		}
-
-		const currentText = this.editor.getExpandedText?.() ?? this.editor.getText();
-		const tmpFile = path.join(os.tmpdir(), `pi-editor-${Date.now()}.pi.md`);
-
+	private async openExternalEditor(): Promise<void> {
+		const content = this.editor.getExpandedText?.() ?? this.editor.getText();
+		this.ui.stop();
 		try {
-			// Write current content to temp file
-			fs.writeFileSync(tmpFile, currentText, "utf-8");
-
-			// Stop TUI to release terminal
-			this.ui.stop();
-
-			// Split by space to support editor arguments (e.g., "code --wait")
-			const [editor, ...editorArgs] = editorCmd.split(" ");
-
-			// Spawn editor synchronously with inherited stdio for interactive editing
-			const result = spawnSync(editor, [...editorArgs, tmpFile], {
-				stdio: "inherit",
-				shell: process.platform === "win32",
+			const result = await editInExternalEditor({
+				command: this.settingsManager.getExternalEditorCommand(),
+				content,
 			});
-
-			// On successful exit (status 0), replace editor content
-			if (result.status === 0) {
-				const newContent = fs.readFileSync(tmpFile, "utf-8").replace(/\n$/, "");
-				this.editor.setText(newContent);
+			if (result.status === "complete") {
+				this.editor.setText(result.content);
 			}
-			// On non-zero exit, keep original text (no action needed)
 		} finally {
-			// Clean up temp file
-			try {
-				fs.unlinkSync(tmpFile);
-			} catch {
-				// Ignore cleanup errors
-			}
-
-			// Restart TUI
 			this.ui.start();
 			// ui.stop() left fullscreen so the editor got a clean terminal
 			if (this.fullscreenEnabled) {
@@ -7875,8 +7918,8 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	showNewVersionNotification(newVersion: string): void {
-		this.chatContainer.addChild(new Text(formatUpdateAvailableNotice(newVersion), 1, 0));
+	showNewVersionNotification(release: LatestPiRelease): void {
+		this.chatContainer.addChild(new Text(formatUpdateAvailableNotice(release), 1, 0));
 		this.ui.requestRender();
 	}
 
@@ -8017,6 +8060,7 @@ export class InteractiveMode {
 					tuiMode: this.options.tuiMode ?? this.settingsManager.getTuiMode(),
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
+					fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 					warnings: this.settingsManager.getWarnings(),
 				},
 				{
@@ -8145,14 +8189,8 @@ export class InteractiveMode {
 					onHideThinkingBlockChange: (hidden) => {
 						this.hideThinkingBlock = hidden;
 						this.settingsManager.setHideThinkingBlock(hidden);
-						for (const child of this.chatContainer.children) {
-							if (child instanceof AssistantMessageComponent) {
-								child.setHideThinkingBlock(hidden);
-							}
-						}
-						void this.rebuildChatFromMessages().catch((error) => {
-							this.showError(error instanceof Error ? error.message : String(error));
-						});
+						this.streamingComponent?.setHideThinkingBlock(hidden);
+						this.updateThinkingBlockVisibility();
 					},
 					onQuietStartupChange: (enabled) => {
 						this.settingsManager.setQuietStartup(enabled);
@@ -8194,6 +8232,10 @@ export class InteractiveMode {
 					},
 					onFullscreenScrollbarChange: (mode) => {
 						this.settingsManager.setFullscreenScrollbar(mode);
+					},
+					onFullscreenCopyOnSelectChange: (enabled) => {
+						this.settingsManager.setFullscreenCopyOnSelect(enabled);
+						if (this.renderer instanceof TuiAltScreen) this.renderer.setCopyOnSelect(enabled);
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
@@ -9686,7 +9728,19 @@ export class InteractiveMode {
 		}
 	}
 
-	private async handleCopyCommand(): Promise<void> {
+	private async handleCopyCommand(
+		options: { flashConfirmation?: boolean; preferSelection?: boolean } = {},
+	): Promise<void> {
+		if (
+			options.preferSelection &&
+			this.ui instanceof TuiAltScreen &&
+			!this.ui.getCopyOnSelect() &&
+			this.ui.hasActiveSelection()
+		) {
+			await this.ui.copyActiveSelectionToClipboard();
+			return;
+		}
+
 		const text = await this.agentConnection.getLastAssistantText();
 		if (!text) {
 			this.showError("No agent messages to copy yet.");
@@ -9788,6 +9842,18 @@ export class InteractiveMode {
 		info += `${theme.fg("dim", "Tool Calls:")} ${stats.toolCalls}\n`;
 		info += `${theme.fg("dim", "Tool Results:")} ${stats.toolResults}\n`;
 		info += `${theme.fg("dim", "Total:")} ${stats.totalMessages}\n\n`;
+		// Cache waste is derived from local session entries; /context reports the
+		// daemon-side totals and has no view of what was re-billed.
+		const cacheWaste = computeCacheWaste(this.sessionManager.getEntries(), this.modelRuntimePriceSource());
+		if (cacheWaste.missedTokens > 0) {
+			const missLabel = cacheWaste.missCount === 1 ? "1 miss" : `${cacheWaste.missCount} misses`;
+			const detail = `${cacheWaste.missedTokens.toLocaleString()} tokens, ${missLabel}`;
+			info += `${theme.bold("Cache")}\n`;
+			info +=
+				cacheWaste.missedCost >= 0.0001
+					? `${theme.fg("dim", "Re-billed:")} $${cacheWaste.missedCost.toFixed(3)} ${theme.fg("dim", `(${detail})`)}\n\n`
+					: `${theme.fg("dim", "Re-billed:")} ${detail}\n\n`;
+		}
 		info += theme.fg("dim", "Use /context for token, cost, and context usage.");
 
 		this.chatContainer.addChild(new Spacer(1));
@@ -10665,9 +10731,11 @@ ${interrupt ? `| \`${interrupt}\` | Interrupt current operation |\n` : ""}${shor
 			this.unsubscribe();
 		}
 		if (this.isInitialized) {
-			this.ui.stop({
-				preserveScreen: options.preserveAltScreen === true,
-			});
+			if (options.preserveAltScreen === true) {
+				this.ui.stop({ preserveScreen: true });
+			} else {
+				this.stopInteractiveTui(this.settingsManager.getFullscreenExitOutput());
+			}
 			this.isInitialized = false;
 		}
 	}

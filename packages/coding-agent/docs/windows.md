@@ -8,7 +8,29 @@ Prime Agent requires a bash shell on Windows. Checked locations (in order):
 
 For most users, [Git for Windows](https://git-scm.com/download/win) is sufficient.
 
-## Custom Shell Path
+## PowerShell Tool
+
+The optional `powershell` tool runs commands through `pwsh.exe` when available, otherwise Windows PowerShell. It starts PowerShell with `-NoProfile -NonInteractive -ExecutionPolicy Bypass`. Administrator-enforced execution policies can still take precedence.
+
+Use `defaultTools` to replace the model-facing `bash` tool:
+
+```json
+{
+  "defaultTools": ["read", "powershell", "edit", "write"]
+}
+```
+
+Or enable both while comparing behavior:
+
+```json
+{
+  "defaultTools": ["read", "bash", "powershell", "edit", "write"]
+}
+```
+
+The `!` and `!!` editor commands still use Bash.
+
+## Custom Bash Path
 
 ```json
 {

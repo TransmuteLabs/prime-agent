@@ -15,7 +15,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
@@ -273,18 +273,15 @@ import {
 	transitionSessionAction,
 	type WakePolicy,
 } from "./session-action-store.ts";
-import type {
-	BranchSummaryEntry,
-	CompactionEntry,
-	SessionContext,
-	SessionEntry,
-	SessionMessageEntry,
-} from "./session-manager.ts";
+import { exportSessionToJsonl } from "./session-export.ts";
 import {
-	CURRENT_SESSION_VERSION,
+	type BranchSummaryEntry,
+	type CompactionEntry,
 	getLatestCompactionEntry,
-	type SessionHeader,
+	type SessionContext,
+	type SessionEntry,
 	SessionManager,
+	type SessionMessageEntry,
 } from "./session-manager.ts";
 import type { SessionStats } from "./session-stats.ts";
 import type { SettingsManager } from "./settings-manager.ts";
@@ -1196,6 +1193,8 @@ export class AgentSession {
 	private readonly _sessionInputCheckpointWaiters = new Set<() => void>();
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
+	/** Context-only custom messages queued during a run, flushed once the current turn's tool results are in. */
+	private _pendingCustomMessages: CustomMessage[] = [];
 
 	private _goalState: GoalState = emptyGoalState();
 	private _goalAccountingStartedAt: number | undefined = undefined;
@@ -1660,7 +1659,7 @@ export class AgentSession {
 	}
 
 	private _summarizationRetryCallbacks(
-		source: { source: "branchSummary" } | { source: "compaction"; reason: "manual" | "threshold" | "overflow" },
+		source: { source: "branchSummary" } | { source: "compaction"; reason: CompactionReason },
 	): RetryCallbacks {
 		return {
 			onRetryScheduled: (attempt, maxAttempts, delayMs, errorMessage) => {
@@ -3760,6 +3759,15 @@ export class AgentSession {
 			}
 		}
 
+		// A turn ends after its assistant message and every tool result has been appended,
+		// so this is the first point in the run where a context-only custom message can be
+		// inserted without landing between a tool call and its result. Flushing after the
+		// extension and listener dispatch above also picks up messages that turn_end
+		// handlers queued.
+		if (event.type === "turn_end") {
+			this._flushPendingCustomMessages();
+		}
+
 		if (clearedDispatchEnded) {
 			return;
 		}
@@ -4610,10 +4618,16 @@ export class AgentSession {
 		) {
 			await this._waitForRefineIdle();
 		}
-		if (policy.flushPendingBashBeforeValidation) this._flushPendingBashMessages();
+		if (policy.flushPendingBashBeforeValidation) {
+			this._flushPendingBashMessages();
+			this._flushPendingCustomMessages();
+		}
 		if (policy.validateModelAndAuth) await this._validateCanStartAgentRun();
 		steps.afterValidation?.();
-		if (!policy.flushPendingBashBeforeValidation) this._flushPendingBashMessages();
+		if (!policy.flushPendingBashBeforeValidation) {
+			this._flushPendingBashMessages();
+			this._flushPendingCustomMessages();
+		}
 
 		if (policy.preTurnCompaction === "beforeModelSelection") await this._runPreTurnCompaction();
 		if (policy.awaitPendingModelSelection) {
@@ -6120,8 +6134,9 @@ export class AgentSession {
 	/**
 	 * Send a custom message to the session. Creates a CustomMessageEntry.
 	 *
-	 * Handles three cases:
+	 * Handles four cases:
 	 * - Streaming: queues message, processed when loop pulls from queue
+	 * - Streaming + triggerTurn false: appended to state/session once the current turn ends
 	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
 	 * - Not streaming + no trigger: appends to state/session, no turn
 	 *
@@ -6178,15 +6193,33 @@ export class AgentSession {
 				admissionFence.release();
 			}
 		} else {
-			this.agent.state.messages.push(appMessage);
-			this.sessionManager.appendCustomMessageEntry(
-				message.customType,
-				message.content,
-				message.display,
-				message.details,
-			);
-			this._emit({ type: "message_start", message: appMessage });
-			this._emit({ type: "message_end", message: appMessage });
+			this._appendCustomMessage(appMessage);
+		}
+	}
+
+	private _appendCustomMessage(appMessage: CustomMessage): void {
+		this.agent.state.messages.push(appMessage);
+		this.sessionManager.appendCustomMessageEntry(
+			appMessage.customType,
+			appMessage.content,
+			appMessage.display,
+			appMessage.details,
+		);
+		this._emit({ type: "message_start", message: appMessage });
+		this._emit({ type: "message_end", message: appMessage });
+	}
+
+	/**
+	 * Append custom messages queued while the agent was running.
+	 * Called once the current turn's tool results are in agent state and session history.
+	 */
+	private _flushPendingCustomMessages(): void {
+		if (this._pendingCustomMessages.length === 0) return;
+
+		const pending = this._pendingCustomMessages;
+		this._pendingCustomMessages = [];
+		for (const appMessage of pending) {
+			this._appendCustomMessage(appMessage);
 		}
 	}
 
@@ -6925,6 +6958,7 @@ export class AgentSession {
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+			this._addPersistedDefaultToNonEmptyScope(model);
 		}
 
 		// Apply thinking level for the new model.
@@ -6961,6 +6995,20 @@ export class AgentSession {
 			return this._modelSelectEmitQueue;
 		}
 		return undefined;
+	}
+
+	private _addPersistedDefaultToNonEmptyScope(model: Model<any>): void {
+		if (this._scopedModels.length === 0) return;
+		if (this._scopedModels.some((scoped) => modelsAreEqual(scoped.model, model))) return;
+
+		this._scopedModels = [...this._scopedModels, { model }];
+
+		const enabledModels = this.settingsManager.getEnabledModels();
+		if (!enabledModels?.length) return;
+
+		const modelReference = `${model.provider}/${model.id}`;
+		if (enabledModels.some((pattern) => pattern.toLowerCase() === modelReference.toLowerCase())) return;
+		this.settingsManager.setEnabledModels([...enabledModels, modelReference]);
 	}
 
 	/**
@@ -7004,6 +7052,7 @@ export class AgentSession {
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+			this._addPersistedDefaultToNonEmptyScope(next.model);
 		}
 
 		// Apply thinking level for the new model.
@@ -7050,6 +7099,7 @@ export class AgentSession {
 		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
+			this._addPersistedDefaultToNonEmptyScope(nextModel);
 		}
 
 		// Apply thinking level for the new model.
@@ -7317,7 +7367,7 @@ export class AgentSession {
 		customInstructions: string | undefined,
 		signal: AbortSignal,
 		env: Record<string, string> | undefined,
-		reason: "manual" | "threshold" | "overflow",
+		reason: CompactionReason,
 	): Promise<CompactionResult> {
 		return compact(
 			preparation,
@@ -7369,7 +7419,7 @@ export class AgentSession {
 			reason: "manual",
 			customInstructions,
 		});
-		let fromExtension = false;
+		const fromExtension = false;
 
 		try {
 			if (!this.model) {
@@ -7383,6 +7433,7 @@ export class AgentSession {
 				headers,
 				customInstructions,
 				signal: this._compactionAbortController.signal,
+				reason: "manual",
 			});
 
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
@@ -7457,8 +7508,9 @@ export class AgentSession {
 		headers?: Record<string, string>;
 		customInstructions?: string;
 		signal: AbortSignal;
+		reason: CompactionReason;
 	}): Promise<CompactionResult> {
-		const { model, apiKey, headers, customInstructions, signal } = options;
+		const { model, apiKey, headers, customInstructions, signal, reason } = options;
 		const pathEntries = this.sessionManager.getBranch();
 		const settings = this.settingsManager.getCompactionSettings();
 
@@ -7497,7 +7549,17 @@ export class AgentSession {
 
 		const { summary, firstKeptEntryId, tokensBefore, details, usage } =
 			extensionCompaction ??
-			(await compact(preparation, model, apiKey, headers, customInstructions, signal, this.thinkingLevel));
+			(await this._runDefaultCompaction(
+				preparation,
+				model,
+				apiKey,
+				headers,
+				customInstructions,
+				signal,
+				// No summarization-specific environment is resolved in this fork yet.
+				undefined,
+				reason,
+			));
 
 		if (signal.aborted) {
 			throw new Error("Compaction cancelled");
@@ -8545,6 +8607,7 @@ export class AgentSession {
 				headers: withoutDeletedHeaders(authResult.headers),
 				customInstructions,
 				signal: this._autoCompactionAbortController.signal,
+				reason,
 			});
 
 			this._emit({
@@ -11518,33 +11581,7 @@ export class AgentSession {
 	 * @returns The resolved output file path.
 	 */
 	exportToJsonl(outputPath?: string): string {
-		const filePath = resolve(outputPath ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`);
-		const dir = dirname(filePath);
-		if (!existsSync(dir)) {
-			mkdirSync(dir, { recursive: true });
-		}
-
-		const header: SessionHeader = {
-			type: "session",
-			version: CURRENT_SESSION_VERSION,
-			id: this.sessionManager.getSessionId(),
-			timestamp: new Date().toISOString(),
-			cwd: this.sessionManager.getCwd(),
-		};
-
-		const branchEntries = this.sessionManager.getBranch();
-		const lines = [JSON.stringify(header)];
-
-		// Re-chain parentIds to form a linear sequence
-		let prevId: string | null = null;
-		for (const entry of branchEntries) {
-			const linear = { ...entry, parentId: prevId };
-			lines.push(JSON.stringify(linear));
-			prevId = entry.id;
-		}
-
-		writeFileSync(filePath, `${lines.join("\n")}\n`);
-		return filePath;
+		return exportSessionToJsonl(this.sessionManager, outputPath);
 	}
 
 	// =========================================================================

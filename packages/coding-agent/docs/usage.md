@@ -24,6 +24,7 @@ The editor can be replaced temporarily by built-in UI such as `/settings` or by 
 | File reference | Type `@` to fuzzy-search project files |
 | Path completion | Press Tab to complete paths |
 | Multi-line input | Shift+Enter, or Ctrl+Enter on Windows Terminal |
+| Copy response | Ctrl+X copies the last agent message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
 | Images | Paste with Ctrl+V, Alt+V on Windows, or drag into the terminal |
 | Shell command | `!command` runs and sends output to the model |
 | Hidden shell command | `!!command` runs without sending output to the model |
@@ -38,10 +39,11 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | Command | Description |
 |---------|-------------|
 | `/login`, `/logout` | Manage OAuth or API-key credentials |
-| `/model` | Switch models |
-| `/effort` | Set the reasoning/thinking level |
+| [`/llama`](llama-cpp.md) | Download, load, and unload llama.cpp router models |
+| `/model` | Switch models; Ctrl+S in the picker saves the startup default |
+| `/effort` | Set the reasoning/thinking level; Ctrl+S in the picker saves the startup default (alias: `/thinking`) |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
-| `/settings` | Thinking level, theme, message delivery, transport |
+| `/settings` | Theme, message delivery, transport, and other preferences |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -159,7 +161,7 @@ Use `/share` to upload a private GitHub gist with a shareable HTML link.
 ## CLI Reference
 
 ```bash
-prime-agent [options] [@files...] [messages...]
+prime-agent [options] [--] [@files...] [messages...]
 ```
 
 ### Shell Commands
@@ -233,7 +235,7 @@ Use `prime-agent session export <file> [output]` to export a session to HTML.
 | `--no-builtin-tools`, `-nbt` | Disable built-in tools but keep extension/custom tools enabled |
 | `--no-tools`, `-nt` | Disable all tools |
 
-Built-in tools: `ipython`.
+Built-in tools: `read`, `bash`, `powershell` (Windows), `edit`, `write`, `grep`, `find`, `ls`, `ipython`. The default active tool is `ipython`; use the `defaultTools` setting or `--tools` to change it.
 
 ### Resource Options
 
@@ -307,6 +309,9 @@ Goals are separate from autonomous mode: `--goal <objective>` starts a persisten
 | `--use-theme <name[/name]>` | Set the initial interactive theme for this run without changing settings |
 | `--verbose` | Force verbose startup |
 | `--offline` | Disable startup network operations |
+| `-a`, `--approve` | Trust project-local files for this run |
+| `-na`, `--no-approve` | Ignore project-local files for this run |
+| `--` | Stop option parsing; remaining arguments are prompts or `@file` inputs |
 | `-h`, `--help` | Show help |
 | `-v`, `--version` | Show version |
 | `--` | End option parsing and treat all following arguments as messages |
@@ -329,6 +334,9 @@ prime-agent "List all .ts files in src/"
 
 # Non-interactive
 prime-agent -p "Summarize this codebase"
+
+# Prompt beginning with a dash
+prime-agent -p -- "- Summarize these points"
 
 # Non-interactive with piped stdin
 cat README.md | prime-agent -p "Summarize this text"

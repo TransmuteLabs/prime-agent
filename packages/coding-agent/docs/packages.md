@@ -34,7 +34,9 @@ prime-agent update                        # update Prime Agent
 prime-agent update --force                # reinstall Prime Agent even if current
 ```
 
-By default, `package install` and `package remove` write to global settings (`~/.prime/agent/settings.json`). Use `--local` to write to project settings (`.prime/agent/settings.json`) instead. Project settings can be shared with your team, and Prime Agent installs any missing packages automatically on startup.
+These commands manage Prime Agent packages, and `prime-agent update` can update the CLI installation itself. For experimental installer-managed installations, `update` installs the exact checked version into a staged, lockfile-backed release and activates it only after verification, leaving the current release intact if the update fails. Managed installations do not support `--force`; rerun the installer to repair one.
+
+By default, `package install` and `package remove` write to global settings (`~/.prime/agent/settings.json`). Use `-l`/`--local` to write to project settings (`.prime/agent/settings.json`) instead. Project settings can be shared with your team, and Prime Agent installs any missing packages automatically on startup.
 
 To try a package without installing it, use `--extension` or `-e`. This installs to a temporary directory for the current run only:
 
@@ -123,7 +125,7 @@ Add a `pi` manifest to `package.json` or use conventional directories. Include t
 }
 ```
 
-Paths are relative to the package root. Arrays support glob patterns and `!exclusions`.
+Paths are relative to the package root. Arrays support glob patterns and `!exclusions`. Positive manifest globs discover visible paths in lexical order. List dot-prefixed paths directly. If a glob would need to continue through a symlink, list the symlinked resource root directly.
 
 ### Gallery Metadata
 

@@ -46,6 +46,7 @@ const config: SettingsConfig = {
 	tuiMode: "regular",
 	fullscreenExitOutput: "transcript",
 	fullscreenScrollbar: "auto",
+	fullscreenCopyOnSelect: true,
 	warnings: {},
 };
 
@@ -83,6 +84,7 @@ const callbacks: SettingsCallbacks = {
 	onTuiModeChange: () => {},
 	onFullscreenExitOutputChange: () => {},
 	onFullscreenScrollbarChange: () => {},
+	onFullscreenCopyOnSelectChange: () => {},
 	onWarningsChange: () => {},
 	onCancel: () => {},
 };
@@ -95,15 +97,18 @@ describe("SettingsSelectorComponent", () => {
 	it("cycles through fullscreen settings", () => {
 		const onExitOutputChange = vi.fn();
 		const onScrollbarChange = vi.fn();
+		const onCopyOnSelectChange = vi.fn();
 		const fullscreenConfig: SettingsConfig = {
 			...config,
 			fullscreenExitOutput: "transcript",
 			fullscreenScrollbar: "auto",
+			fullscreenCopyOnSelect: true,
 		};
 		const fullscreenCallbacks = {
 			...callbacks,
 			onFullscreenExitOutputChange: onExitOutputChange,
 			onFullscreenScrollbarChange: onScrollbarChange,
+			onFullscreenCopyOnSelectChange: onCopyOnSelectChange,
 		};
 
 		const cycle = (label: string, count: number) => {
@@ -116,6 +121,8 @@ describe("SettingsSelectorComponent", () => {
 		expect(onExitOutputChange.mock.calls.flat()).toEqual(["resume-hint", "transcript"]);
 		cycle("Fullscreen scrollbar", 3);
 		expect(onScrollbarChange.mock.calls.flat()).toEqual(["always", "hidden", "auto"]);
+		cycle("Fullscreen copy on select", 2);
+		expect(onCopyOnSelectChange.mock.calls.flat()).toEqual([false, true]);
 	});
 
 	test("cycles a custom idle eviction value to the next numeric option", () => {

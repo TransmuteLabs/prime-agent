@@ -91,6 +91,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "effort", description: "Select reasoning/thinking level (opens selector UI)", argumentHint: "[level]" },
 	{ name: "fast", description: "Toggle OpenAI Fast mode" },
 	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling" },
+	{ name: "trust", description: "Save project trust decision for future sessions" },
 	{
 		name: "export",
 		description: "Export session (HTML default, or specify path: .html/.jsonl)",
