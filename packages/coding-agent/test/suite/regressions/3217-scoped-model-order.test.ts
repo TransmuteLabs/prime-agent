@@ -78,7 +78,7 @@ describe("issue #3217 scoped model ordering", () => {
 		const selector = new ModelSelectorComponent(
 			createFakeTui(),
 			modelOne,
-			harness.session.modelRegistry,
+			harness.session.modelRuntime,
 			[{ model: modelTwo }, { model: modelOne }, { model: modelThree }],
 			() => {},
 			() => {},

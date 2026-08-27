@@ -303,6 +303,8 @@ Goals are separate from autonomous mode: `--goal <objective>` starts a persisten
 | `--cwd <dir>` | Use a specific working directory for the session |
 | `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
 | `--append-system-prompt <text>` | Append to system prompt |
+| `--tui-mode <mode>` | TUI mode: `regular` (default) or experimental `fullscreen` |
+| `--use-theme <name[/name]>` | Set the initial interactive theme for this run without changing settings |
 | `--verbose` | Force verbose startup |
 | `--offline` | Disable startup network operations |
 | `-h`, `--help` | Show help |

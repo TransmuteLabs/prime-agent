@@ -126,6 +126,7 @@ Example of a well-formed `[Unreleased]` section:
 - Read the full `[Unreleased]` section first so you don't duplicate an existing bullet
 - New entries ALWAYS go under `## [Unreleased]`
 - NEVER modify already-released version sections (e.g., `## [0.2.1]`) — each is immutable once released
+- Do not create changelog entries when working on a branch other than `main` or a pull request
 
 ### Attribution
 

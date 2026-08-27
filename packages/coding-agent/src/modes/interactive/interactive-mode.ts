@@ -8,7 +8,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, AssistantMessage, ImageContent, Message, Model, ToolCall } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import type {
+	Api,
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	ToolCall,
+	Usage,
+} from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -26,6 +35,7 @@ import {
 	CombinedAutocompleteProvider,
 	type Component,
 	Container,
+	fuzzyFilter,
 	isViewportTUI,
 	Loader,
 	type LoaderIndicatorOptions,
@@ -70,14 +80,26 @@ import {
 	uploadAgentTraceFile,
 	uploadAllAgentTraces,
 } from "../../core/agent-traces.ts";
+import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
 import { isNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import type { AuthStorage } from "../../core/auth-storage.ts";
+import {
+	CACHE_TTL_MS,
+	type CacheMiss,
+	collectCacheMisses,
+	computeCacheWaste,
+	detectCacheMiss,
+	type ModelPriceSource,
+} from "../../core/cache-stats.ts";
 import {
 	type AgentCronJob,
 	type AgentHeartbeatManagementAction,
 	DEFAULT_HEARTBEAT_DELIVERY_MODE,
 	parseHeartbeatCommand,
 } from "../../core/cron-jobs.ts";
+import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
 import type {
 	AutocompleteProviderFactory,
 	ContextUsage,
@@ -92,6 +114,7 @@ import type {
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { emptyGoalState, formatGoalUsage, GOAL_CONTEXT_PREVIEW_LABEL, type GoalState } from "../../core/goals.ts";
 import type { KernelSentAgentMessage } from "../../core/kernel/index.ts";
+import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import {
 	bashOutputToText,
@@ -114,7 +137,6 @@ import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../cor
 import { SessionImportFileNotFoundError } from "../../core/session-import-errors.ts";
 import type { SessionManager } from "../../core/session-manager.ts";
 import type { TuiMode } from "../../core/settings-manager.ts";
-import { parseSkillBlock } from "../../core/skill-blocks.ts";
 import {
 	BUILTIN_SLASH_COMMANDS,
 	builtinSlashCommandTakesArgument,
@@ -125,12 +147,14 @@ import {
 import {
 	captureAgentCommandUsed,
 	captureOnboardingCompleted,
+	isInstallTelemetryEnabled,
 	type TelemetryOnboardingOutcome,
 } from "../../core/telemetry.ts";
 import { type TruncationResult, truncateTail } from "../../core/tools/truncate.ts";
 import { hasProjectConfigDir, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { PRIME_BUTTERFLY_LOGO } from "../../themes/prime-logo.ts";
-import { getChangelogPath, parseChangelog } from "../../utils/changelog.ts";
+import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
+import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
@@ -138,8 +162,13 @@ import { resizeImage } from "../../utils/image-resize.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
-import { ensureTool, ensureToolWithStatus, formatMissingRipgrepMessage } from "../../utils/tools-manager.ts";
-import { checkForNewPiVersion } from "../../utils/version-check.ts";
+import {
+	ensureTool,
+	ensureToolWithStatus,
+	formatMissingRipgrepMessage,
+	type ToolStatus,
+} from "../../utils/tools-manager.ts";
+import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import type {
 	AgentConnection,
 	AgentConnectionExtensionUiRequest,
@@ -215,6 +244,14 @@ import {
 	styleSlashCommandText,
 } from "./components/slash-command-message.ts";
 import { SlashCommandResultMessageComponent } from "./components/slash-command-result-message.ts";
+import {
+	BranchSummaryStatusIndicator,
+	CompactionStatusIndicator,
+	IdleStatus,
+	RetryStatusIndicator,
+	type StatusIndicator,
+	WorkingStatusIndicator,
+} from "./components/status-indicator.ts";
 import { countDirectSubagentStatuses, SubagentSummaryLine } from "./components/subagent-summary-line.ts";
 import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import {
@@ -222,9 +259,11 @@ import {
 	ToolExecutionComponent,
 	type ToolExecutionDefinition,
 } from "./components/tool-execution.ts";
+import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { editInExternalEditor } from "./external-editor.ts";
 import { FeatureHintDeck } from "./feature-hints.ts";
 import { scopeHeartbeatsToSession } from "./heartbeat-scope.ts";
 import {
@@ -239,6 +278,8 @@ import type {
 	InteractiveModeLocalToolRendererDefinition,
 	InteractiveModeUiServices,
 } from "./interactive-mode-services.ts";
+import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
+import { getModelSearchText } from "./model-search.ts";
 import {
 	isOnboardingModelReady,
 	type OnboardingStartupState,
@@ -249,6 +290,7 @@ import type { ClientPromptStashStore, PromptStash, PromptStashState } from "./pr
 import { QueueSelection } from "./queue-selection.ts";
 import { formatResumeHint } from "./resume-hint.ts";
 import {
+	detectTerminalBackgroundFromEnv,
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
 	getEditorTheme,
@@ -375,6 +417,24 @@ export function formatSplashCwd(cwd: string): string {
 	return normalized;
 }
 
+function formatTokens(count: number): string {
+	if (count < 1000) return count.toString();
+	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1000000) return `${Math.round(count / 1000)}k`;
+	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+	return `${Math.round(count / 1000000)}M`;
+}
+
+function formatAuthSelectorProviderType(authType: AuthSelectorProvider["authType"]): string {
+	return authType === "oauth" ? "subscription" : "API key";
+}
+
+type CompactionCostNotice = {
+	type: "compaction_cost";
+	kind: "compaction" | "branch_summary";
+	usage: Usage;
+};
+
 function mergeSubagentSnapshot(
 	previous: AgentConnectionRlmChildAgentSnapshot,
 	incoming: AgentConnectionRlmChildAgentSnapshot,
@@ -418,6 +478,59 @@ export function truncatePathMiddle(value: string, width: number): string {
 	return truncateToWidth(candidate, width);
 }
 
+type LoginProviderCompletionOption = {
+	id: string;
+	name: string;
+	authTypes: AuthSelectorProvider["authType"][];
+};
+
+const AUTH_TYPE_ORDER = { oauth: 0, api_key: 1 } satisfies Record<AuthSelectorProvider["authType"], number>;
+
+function createFuzzyAutocompleteItems<T>(
+	items: T[],
+	prefix: string,
+	getSearchText: (item: T) => string,
+	toAutocompleteItem: (item: T) => AutocompleteItem,
+): AutocompleteItem[] | null {
+	const filtered = fuzzyFilter(items, prefix, getSearchText);
+	if (filtered.length === 0) return null;
+	return filtered.map(toAutocompleteItem);
+}
+
+function getLoginProviderCompletionOptions(
+	providerOptions: readonly AuthSelectorProvider[],
+): LoginProviderCompletionOption[] {
+	const byId = new Map<string, LoginProviderCompletionOption>();
+	for (const provider of providerOptions) {
+		const existing = byId.get(provider.id);
+		if (existing) {
+			if (!existing.authTypes.includes(provider.authType)) {
+				existing.authTypes.push(provider.authType);
+				existing.authTypes.sort((a, b) => AUTH_TYPE_ORDER[a] - AUTH_TYPE_ORDER[b]);
+			}
+			continue;
+		}
+		byId.set(provider.id, {
+			id: provider.id,
+			name: provider.name,
+			authTypes: [provider.authType],
+		});
+	}
+	return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getLoginProviderSearchText(provider: LoginProviderCompletionOption): string {
+	const authTypes = provider.authTypes
+		.map((authType) => `${authType} ${formatAuthSelectorProviderType(authType)}`)
+		.join(" ");
+	return `${provider.id} ${provider.name} ${authTypes}`;
+}
+
+function formatLoginProviderCompletionDescription(provider: LoginProviderCompletionOption): string {
+	const authTypes = provider.authTypes.map(formatAuthSelectorProviderType).join("/");
+	return provider.name === provider.id ? authTypes : `${provider.name} · ${authTypes}`;
+}
+
 export interface BrandSplashMetadataLine {
 	label: string;
 	value: string;
@@ -429,6 +542,69 @@ export interface BrandSplashHeaderOptions {
 	getExtraMetadata?: () => readonly BrandSplashMetadataLine[];
 	getHideStartHint?: () => boolean;
 	getStartHint?: () => string;
+}
+
+/**
+ * Options for InteractiveMode initialization.
+ */
+export interface InteractiveModeOptions {
+	/** Preferred TUI renderer mode (regular main-screen or fullscreen alt-screen). */
+	tuiMode?: TuiMode;
+	/** Providers that were migrated to auth.json (shows warning) */
+	migratedProviders?: string[];
+	/** Diagnostics collected before the interactive TUI was initialized. */
+	startupDiagnostics?: AgentSessionRuntimeDiagnostic[];
+	/** Warning message if session model couldn't be restored */
+	modelFallbackMessage?: string;
+	/** Cwd to trust after reload if it gained a project config dir during this implicitly trusted session. */
+	autoTrustOnReloadCwd?: string;
+	/** One-off warning shown on startup. */
+	startupNotice?: string;
+	/** Initial message to send on startup (can include @file content) */
+	initialMessage?: string;
+	/** Images to attach to the initial message */
+	initialImages?: ImageContent[];
+	/** Additional text-only messages to send after the initial message. */
+	initialMessages?: string[];
+	/** Additional image-bearing prompts to send after the initial messages. */
+	initialPrompts?: InteractiveInitialPrompt[];
+	/** Force verbose startup (overrides quietStartup setting) */
+	verbose?: boolean;
+	/** Agent execution boundary. InteractiveMode never talks directly to AgentSession for core execution. */
+	agentConnection: AgentConnection;
+	/** Exact daemon socket to preserve across an interactive self-update restart. */
+	daemonSocketPath?: string;
+	/**
+	 * Local-only host for in-process extension binding and callback-bearing session operations.
+	 * This must remain optional adapter glue, not a generic execution dependency.
+	 */
+	localSessionHost?: InteractiveModeLocalSessionHost;
+	/** Bind extension handlers in the local session host. Disabled for daemon/gateway-backed clients. */
+	bindLocalSessionExtensions?: boolean;
+	/** UI-local services used for settings, auth, resources, and rendering. Defaults to services from localSessionHost. */
+	uiServices?: InteractiveModeUiServices;
+	/** Extra cleanup for externally-owned UI service hosts. Runs after the connection is disposed and before process exit. */
+	onShutdown?: () => void | Promise<void>;
+	/** Allow returning from a full session to the agents view without stopping the daemon-owned agent. */
+	returnToAgentsView?: boolean;
+	/** Enter fullscreen regardless of the persisted fullscreen preference. */
+	forceFullscreen?: boolean;
+	/**
+	 * The agents view already surfaced global startup notices (app/extension updates, tmux setup),
+	 * so this session must not repeat them in its chat stream. Distinct from `returnToAgentsView`,
+	 * which also covers direct daemon attaches where the agents view was never shown.
+	 */
+	agentsViewOwnsStartupNotices?: boolean;
+	/** Persisted RLM depth supplied by the daemon SessionSummary. */
+	sessionDepth?: number;
+	/** Whether the unified daemon/catalog projection had any direct children. */
+	sessionHasChildren?: boolean;
+	/** Client-owned stash store shared across chat views in this TUI process. */
+	promptStashStore?: ClientPromptStashStore;
+	/** Initial stable session id used to scope prompt stash state. */
+	promptStashSessionId?: string;
+	/** Initial interactive theme setting for this invocation. */
+	initialThemeSetting?: string;
 }
 
 interface InteractiveTuiOptions {
@@ -451,6 +627,14 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
+			copySelection: async (text) => {
+				try {
+					await copyToClipboard(text);
+					return true;
+				} catch {
+					return false;
+				}
+			},
 		});
 	}
 	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
@@ -844,62 +1028,6 @@ export interface InteractiveInitialPrompt {
 	images?: ImageContent[];
 }
 
-export interface InteractiveModeOptions {
-	/** Preferred TUI renderer mode (regular main-screen or fullscreen alt-screen). */
-	tuiMode?: TuiMode;
-	/** Providers that were migrated to auth.json (shows warning) */
-	migratedProviders?: string[];
-	/** Warning message if session model couldn't be restored */
-	modelFallbackMessage?: string;
-	/** Cwd to trust after reload if it gained a project config dir during this implicitly trusted session. */
-	autoTrustOnReloadCwd?: string;
-	/** One-off warning shown on startup. */
-	startupNotice?: string;
-	/** Initial message to send on startup (can include @file content) */
-	initialMessage?: string;
-	/** Images to attach to the initial message */
-	initialImages?: ImageContent[];
-	/** Additional text-only messages to send after the initial message. */
-	initialMessages?: string[];
-	/** Additional image-bearing prompts to send after the initial messages. */
-	initialPrompts?: InteractiveInitialPrompt[];
-	/** Force verbose startup (overrides quietStartup setting) */
-	verbose?: boolean;
-	/** Agent execution boundary. InteractiveMode never talks directly to AgentSession for core execution. */
-	agentConnection: AgentConnection;
-	/** Exact daemon socket to preserve across an interactive self-update restart. */
-	daemonSocketPath?: string;
-	/**
-	 * Local-only host for in-process extension binding and callback-bearing session operations.
-	 * This must remain optional adapter glue, not a generic execution dependency.
-	 */
-	localSessionHost?: InteractiveModeLocalSessionHost;
-	/** Bind extension handlers in the local session host. Disabled for daemon/gateway-backed clients. */
-	bindLocalSessionExtensions?: boolean;
-	/** UI-local services used for settings, auth, resources, and rendering. Defaults to services from localSessionHost. */
-	uiServices?: InteractiveModeUiServices;
-	/** Extra cleanup for externally-owned UI service hosts. Runs after the connection is disposed and before process exit. */
-	onShutdown?: () => void | Promise<void>;
-	/** Allow returning from a full session to the agents view without stopping the daemon-owned agent. */
-	returnToAgentsView?: boolean;
-	/** Enter fullscreen regardless of the persisted fullscreen preference. */
-	forceFullscreen?: boolean;
-	/**
-	 * The agents view already surfaced global startup notices (app/extension updates, tmux setup),
-	 * so this session must not repeat them in its chat stream. Distinct from `returnToAgentsView`,
-	 * which also covers direct daemon attaches where the agents view was never shown.
-	 */
-	agentsViewOwnsStartupNotices?: boolean;
-	/** Persisted RLM depth supplied by the daemon SessionSummary. */
-	sessionDepth?: number;
-	/** Whether the unified daemon/catalog projection had any direct children. */
-	sessionHasChildren?: boolean;
-	/** Client-owned stash store shared across chat views in this TUI process. */
-	promptStashStore?: ClientPromptStashStore;
-	/** Initial stable session id used to scope prompt stash state. */
-	promptStashSessionId?: string;
-}
-
 export interface InteractiveModeRunResult {
 	type: "agents_view" | "scoped_agents_view";
 	source: Pick<AgentConnectionState, "activeSessionId" | "sessionFile" | "sessionId" | "sessionName" | "cwd">;
@@ -1000,6 +1128,7 @@ export class InteractiveMode {
 	private lastStatusText: Text | undefined = undefined;
 	private lastGoalAnnouncement: GoalAnnouncementSnapshot | undefined = undefined;
 	private goalTrayTimer: NodeJS.Timeout | undefined = undefined;
+	private managedToolStatusStarted = false;
 
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
@@ -1119,6 +1248,9 @@ export class InteractiveMode {
 	private recapContainer!: Container;
 	private sessionRecap: string | undefined;
 
+	// Changelog markdown computed at startup; shown once per version bump.
+	private changelogMarkdown: string | undefined = undefined;
+
 	// Custom footer from extension (undefined = use built-in footer)
 	private customFooter: (Component & { dispose?(): void }) | undefined = undefined;
 
@@ -1142,6 +1274,18 @@ export class InteractiveMode {
 	}
 	private get modelRegistry() {
 		return this.uiServices.modelRegistry;
+	}
+
+	// Session-entry view used by cache-miss/compaction-cost notices; requires the
+	// local host (daemon-only clients do not render these notices).
+	private get sessionManager(): SessionManager {
+		return this.getLocalSessionHost().getSessionManager();
+	}
+
+	private modelRuntimePriceSource(): ModelPriceSource {
+		return {
+			getModel: (provider, modelId) => this.modelRegistry.find(provider, modelId),
+		};
 	}
 
 	private getAuthStorage(): AuthStorage {
@@ -1401,6 +1545,26 @@ export class InteractiveMode {
 			}
 		}
 
+		// /thinking is the pi name for the same setting /effort exposes; both
+		// share one thinking-level implementation.
+		const thinkingCommand = slashCommands.find((command) => command.name === "thinking");
+		if (thinkingCommand) {
+			thinkingCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null =>
+				this.getThinkingLevelCompletions(prefix);
+		}
+
+		const loginCommand = slashCommands.find((command) => command.name === "login");
+		if (loginCommand) {
+			loginCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
+				const providers = getLoginProviderCompletionOptions(this.createAuthFlows().getLoginProviderOptions());
+				return createFuzzyAutocompleteItems(providers, prefix, getLoginProviderSearchText, (provider) => ({
+					value: provider.id,
+					label: provider.id,
+					description: formatLoginProviderCompletionDescription(provider),
+				}));
+			};
+		}
+
 		const heartbeatCommand = slashCommands.find((command) => command.name === "heartbeat");
 		if (heartbeatCommand) {
 			heartbeatCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null =>
@@ -1469,12 +1633,21 @@ export class InteractiveMode {
 
 		this.registerSignalHandlers();
 
-		// Ensure fd and rg are available (downloads if missing, adds to PATH via getBinDir)
-		// fd powers autocomplete, and rg is available for shell commands.
-		const [fdPath, rgResult] = await Promise.all([ensureTool("fd"), ensureToolWithStatus("rg")]);
-		this.fdPath = fdPath;
-		if (rgResult.status === "unavailable") {
-			this.showWarning(formatMissingRipgrepMessage(rgResult));
+		// Load changelog (only show new entries, skip for resumed sessions)
+		this.changelogMarkdown = this.getChangelogForDisplay();
+
+		const scopedModels = this.getScopedModelState();
+		if (scopedModels.length > 0 && (this.options.verbose || !this.settingsManager.getQuietStartup())) {
+			const modelList = scopedModels
+				.map((sm) => {
+					const thinkingStr = sm.thinkingLevel ? `:${sm.thinkingLevel}` : "";
+					return `${sm.model.id}${thinkingStr}`;
+				})
+				.join(", ");
+			const cycleKeys = this.keybindings.getKeys("app.model.cycleForward");
+			const cycleHint =
+				cycleKeys.length > 0 ? theme.fg("muted", ` (${formatKeyText(cycleKeys.join("/"))} to cycle)`) : "";
+			console.log(theme.fg("dim", `Model scope: ${modelList}${cycleHint}`));
 		}
 
 		// Add header container as first child
@@ -1547,9 +1720,6 @@ export class InteractiveMode {
 		this.ui.addChild(this.mainContainer);
 		this.ui.setFocus(this.editor);
 
-		this.setupKeyHandlers();
-		this.setupEditorSubmitHandler();
-
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
 		this.fullscreenEnabled =
@@ -1559,6 +1729,20 @@ export class InteractiveMode {
 			this.applyFullscreen(true);
 		}
 		this.isInitialized = true;
+
+		// Ensure fd and rg are available after mounting the TUI (downloads if missing, adds to PATH via getBinDir)
+		// so slow downloads do not make startup appear frozen.
+		// Both are needed: fd for autocomplete, rg for grep tool and bash commands.
+		const [fdPath] = await Promise.all([
+			ensureTool("fd", (status) => this.showManagedToolStatus(status)),
+			ensureTool("rg", (status) => this.showManagedToolStatus(status)),
+		]);
+		this.fdPath = fdPath;
+
+		// Enable the remaining input handlers only after managed-tool setup completes.
+		this.setupKeyHandlers();
+		this.setupEditorSubmitHandler();
+		this.ui.requestRender();
 
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
@@ -1618,15 +1802,35 @@ export class InteractiveMode {
 			: undefined;
 		const tmuxKeyboardWarningPromise = ownsGlobalStartupNotices ? checkTmuxKeyboardSetup() : undefined;
 
+		if (!process.env.PI_OFFLINE) {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 15_000);
+			void this.getConnectionAvailableModels()
+				.then(() => this.updateAvailableProviderCount())
+				.catch(() => {})
+				.finally(() => clearTimeout(timeout));
+		}
+
 		// Show startup warnings
 		const {
 			migratedProviders,
+			startupDiagnostics,
 			modelFallbackMessage,
 			initialMessage,
 			initialImages,
 			initialMessages,
 			initialPrompts,
 		} = this.options;
+
+		for (const diagnostic of startupDiagnostics ?? []) {
+			if (diagnostic.type === "error") {
+				this.showError(diagnostic.message);
+			} else if (diagnostic.type === "warning") {
+				this.showWarning(diagnostic.message);
+			} else {
+				this.showStatus(diagnostic.message);
+			}
+		}
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
@@ -4726,6 +4930,11 @@ export class InteractiveMode {
 		this.showStatus("Navigated to selected point");
 	}
 
+	private handleStartupSubmit(text: string): void {
+		this.editor.setText(text);
+		this.showStatus("Startup is still in progress");
+	}
+
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			const streamingBehavior = this.submittedInputBehavior;
@@ -5652,6 +5861,9 @@ export class InteractiveMode {
 						for (const [, component] of this.pendingTools.entries()) {
 							component.setArgsComplete();
 						}
+						if (this.streamingMessage) {
+							this.maybeShowCacheMissNotice(this.streamingMessage);
+						}
 					}
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
@@ -5762,6 +5974,20 @@ export class InteractiveMode {
 				} else if (event.result) {
 					try {
 						await this.rebuildChatFromMessages();
+						this.addMessageToChat(
+							createCompactionSummaryMessage(
+								event.result.summary,
+								event.result.tokensBefore,
+								new Date().toISOString(),
+							),
+						);
+						if (event.result.usage) {
+							this.addCompactionCostNotice({
+								type: "compaction_cost",
+								kind: "compaction",
+								usage: event.result.usage,
+							});
+						}
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						this.showError(`Compaction succeeded, but the transcript could not be refreshed: ${message}`);
@@ -6305,6 +6531,20 @@ export class InteractiveMode {
 		);
 	}
 
+	/** Show a managed-tool status update in the chat. */
+	private showManagedToolStatus(status: ToolStatus): void {
+		if (!this.managedToolStatusStarted) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.managedToolStatusStarted = true;
+		}
+		const message = status.type === "warning" ? `Warning: ${status.message}` : status.message;
+		const color = status.type === "warning" ? "warning" : "dim";
+		this.chatContainer.addChild(new Text(theme.fg(color, message), 1, 0));
+		this.lastStatusSpacer = undefined;
+		this.lastStatusText = undefined;
+		this.ui.requestRender();
+	}
+
 	/**
 	 * Show a status message in the chat.
 	 *
@@ -6662,6 +6902,52 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/**
+	 * Render billing usage for a compaction or branch summary. The notice is derived
+	 * from persisted summary usage and is not stored as a separate session entry.
+	 */
+	private addCompactionCostNotice(notice: CompactionCostNotice): void {
+		if (!this.settingsManager.getShowCacheMissNotices()) return;
+
+		const { usage } = notice;
+		const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+		const cost = usage.cost.total >= 0.01 ? ` (~$${usage.cost.total.toFixed(2)})` : "";
+		const label = notice.kind === "compaction" ? "Compaction" : "Branch summary";
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(
+			new Text(theme.fg("warning", `${label}: ${formatTokens(tokens)} tokens billed${cost}`), 1, 0),
+		);
+	}
+
+	/**
+	 * Show a transcript notice when a completed assistant message paid for a
+	 * significant cache miss. Only states observable facts: the miss itself,
+	 * a model switch, or an idle gap past the cache TTL.
+	 */
+	private maybeShowCacheMissNotice(message: AssistantMessage): void {
+		if (!this.settingsManager.getShowCacheMissNotices()) return;
+
+		// Entries don't contain `message` yet: message_end fires before persistence.
+		const miss = detectCacheMiss(this.sessionManager.getEntries(), message, this.modelRuntimePriceSource());
+		if (miss) this.addCacheMissNotice(miss);
+	}
+
+	private addCacheMissNotice(miss: CacheMiss): void {
+		if (miss.missedTokens < 20_000 && miss.missedCost < 0.1) return;
+
+		const cost = miss.missedCost >= 0.01 ? ` (~$${miss.missedCost.toFixed(2)})` : "";
+		const reBilled = `${formatTokens(miss.missedTokens)} tokens re-billed${cost}`;
+		let label = "Cache miss";
+		if (miss.modelChanged) {
+			label = "Cache miss after model switch";
+		} else if (miss.idleMs >= CACHE_TTL_MS) {
+			label = `Cache miss after ${Math.round(miss.idleMs / 60_000)}m idle`;
+		}
+		const text = theme.fg("warning", `${label}: ${reBilled}`);
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(text, 1, 0));
+	}
+
 	async renderInitialMessages(): Promise<void> {
 		const snapshot = await this.agentConnection.getInitialSnapshot();
 		const context = this.getSessionContextFromConnectionSnapshot(snapshot);
@@ -6965,6 +7251,36 @@ export class InteractiveMode {
 		// The terminal is gone. Do not run normal shutdown because TUI and
 		// extension cleanup can write restore sequences and re-trigger EIO.
 		process.exit(129);
+	}
+
+	/**
+	 * Last-resort handler for uncaught exceptions. The TUI puts stdin into raw
+	 * mode and hides the cursor; without this handler, an uncaught throw from
+	 * anywhere (e.g. an extension's async `ChildProcess.on("exit")` callback)
+	 * tears down the process while leaving the terminal in raw mode with no
+	 * cursor, requiring `stty sane && reset` to recover.
+	 *
+	 * Unlike emergencyTerminalExit, the terminal is still alive here, so we
+	 * call ui.stop() to restore cooked mode, the cursor, and disable bracketed
+	 * paste / Kitty / modifyOtherKeys sequences.
+	 */
+	private uncaughtCrash(error: Error): never {
+		if (this.isShuttingDown) {
+			process.exit(1);
+		}
+		this.isShuttingDown = true;
+		try {
+			this.unregisterSignalHandlers();
+		} catch {}
+		try {
+			killTrackedDetachedChildren();
+		} catch {}
+		try {
+			this.ui.stop();
+		} catch {}
+		console.error(`${APP_NAME} exiting due to uncaughtException:`);
+		console.error(error);
+		process.exit(1);
 	}
 
 	/**
@@ -7654,11 +7970,18 @@ export class InteractiveMode {
 			return;
 		}
 		this.showSelector((done) => {
+			const defaultProvider = this.settingsManager.getDefaultProvider();
+			const defaultModelId = this.settingsManager.getDefaultModel();
+			const defaultModel = defaultProvider && defaultModelId ? `${defaultProvider}/${defaultModelId}` : "not set";
 			const selector = new SettingsSelectorComponent(
 				{
 					autoCompact: state.autoCompactionEnabled,
+					defaultModel,
+					currentModel: state.model,
+					availableDefaultModels: this.getCachedModelCandidates(),
 					idleEvictionMinutes: this.settingsManager.getIdleEvictionMinutes(),
 					showImages: this.settingsManager.getShowImages(),
+					imageWidthCells: this.settingsManager.getImageWidthCells(),
 					autoResizeImages: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
 					enableSkillCommands: this.settingsManager.getEnableSkillCommands(),
@@ -7666,19 +7989,31 @@ export class InteractiveMode {
 					steeringMode: state.steeringMode,
 					followUpMode: state.followUpMode,
 					transport: this.settingsManager.getTransport(),
-					thinkingLevel: state.thinkingLevel,
-					availableThinkingLevels: state.availableThinkingLevels,
+					httpIdleTimeoutMs: this.settingsManager.getHttpIdleTimeoutMs(),
+					thinkingLevel: this.settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL,
+					availableThinkingLevels: [...THINKING_LEVEL_OPTIONS],
+					modelThinkingLevels: this.settingsManager.getAllModelThinkingLevels(),
 					currentTheme: this.settingsManager.getTheme() || "prime",
+					terminalTheme: detectTerminalBackgroundFromEnv().theme,
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: this.hideThinkingBlock,
+					mermaidRenderingMode: this.settingsManager.getMermaidRenderingMode(),
+					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
+					collapseChangelog: this.settingsManager.getCollapseChangelog(),
+					enableInstallTelemetry: this.settingsManager.getEnableInstallTelemetry(),
+					doubleEscapeAction: this.settingsManager.getDoubleEscapeAction(),
 					treeFilterMode: this.settingsManager.getTreeFilterMode(),
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
+					outputPad: this.settingsManager.getOutputPad(),
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
 					quietStartup: this.settingsManager.getQuietStartup(),
+					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
-					fullscreen: this.fullscreenEnabled,
+					tuiMode: this.options.tuiMode ?? this.settingsManager.getTuiMode(),
+					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
+					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
 					warnings: this.settingsManager.getWarnings(),
 				},
 				{
@@ -7731,17 +8066,63 @@ export class InteractiveMode {
 							this.showError(error instanceof Error ? error.message : String(error));
 						});
 					},
-					onThinkingLevelChange: (level) => {
-						void this.agentConnection
-							.setThinkingLevel(level)
-							.then(() => {
-								this.patchConnectionState({ thinkingLevel: level });
-								this.footer.invalidate();
-								this.updateEditorBorderColor();
-							})
-							.catch((error) => {
-								this.showError(error instanceof Error ? error.message : String(error));
-							});
+					onHttpIdleTimeoutMsChange: (timeoutMs) => {
+						this.settingsManager.setHttpIdleTimeoutMs(timeoutMs);
+					},
+					onImageWidthCellsChange: (width) => {
+						this.settingsManager.setImageWidthCells(width);
+					},
+					onMermaidRenderingModeChange: (mode) => {
+						this.settingsManager.setMermaidRenderingMode(mode);
+					},
+					onShowCacheMissNoticesChange: (shown) => {
+						this.settingsManager.setShowCacheMissNotices(shown);
+					},
+					onCollapseChangelogChange: (collapsed) => {
+						this.settingsManager.setCollapseChangelog(collapsed);
+					},
+					onEnableInstallTelemetryChange: (enabled) => {
+						this.settingsManager.setEnableInstallTelemetry(enabled);
+					},
+					onDoubleEscapeActionChange: (action) => {
+						this.settingsManager.setDoubleEscapeAction(action);
+					},
+					onOutputPadChange: (padding) => {
+						this.settingsManager.setOutputPad(padding);
+					},
+					onDefaultProjectTrustChange: (trust) => {
+						this.settingsManager.setDefaultProjectTrust(trust);
+					},
+					onModelThinkingLevelChange: (provider, modelId, level) => {
+						this.settingsManager.setModelThinkingLevel(provider, modelId, level);
+						// If the override is for the current model, apply it to the session too
+						const current = this.getCurrentModel();
+						if (current && current.provider === provider && current.id === modelId) {
+							void this.agentConnection
+								.setThinkingLevel(level)
+								.then(() => {
+									this.patchConnectionState({ thinkingLevel: level });
+									this.footer.invalidate();
+									this.updateEditorBorderColor();
+								})
+								.catch(() => undefined);
+						}
+					},
+					onModelThinkingLevelRemove: (provider, modelId) => {
+						this.settingsManager.removeModelThinkingLevel(provider, modelId);
+						// If the override was for the current model, revert to global default
+						const current = this.getCurrentModel();
+						if (current && current.provider === provider && current.id === modelId) {
+							const globalDefault = this.settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
+							void this.agentConnection
+								.setThinkingLevel(globalDefault)
+								.then(() => {
+									this.patchConnectionState({ thinkingLevel: globalDefault });
+									this.footer.invalidate();
+									this.updateEditorBorderColor();
+								})
+								.catch(() => undefined);
+						}
 					},
 					onThemeChange: (themeName) => {
 						const result = setTheme(themeName, true);
@@ -7801,8 +8182,15 @@ export class InteractiveMode {
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
 					},
-					onFullscreenChange: (enabled) => {
-						this.setFullscreenMode(enabled);
+					onTuiModeChange: (mode) => {
+						this.settingsManager.setTuiMode(mode);
+						this.setFullscreenMode(mode === "fullscreen");
+					},
+					onFullscreenExitOutputChange: (output) => {
+						this.settingsManager.setFullscreenExitOutput(output);
+					},
+					onFullscreenScrollbarChange: (mode) => {
+						this.settingsManager.setFullscreenScrollbar(mode);
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
@@ -7815,6 +8203,36 @@ export class InteractiveMode {
 			);
 			return { component: selector, focus: selector.getSettingsList() };
 		});
+	}
+
+	private handleThinkingCommand(searchTerm?: string): void {
+		const availableLevels = this.getAvailableThinkingLevels();
+		if (availableLevels.length === 0) {
+			this.showStatus("Current model does not support thinking");
+			return;
+		}
+		if (!searchTerm) {
+			this.showThinkingSelector(availableLevels);
+			return;
+		}
+
+		const normalized = searchTerm.trim().toLowerCase();
+		const level = availableLevels.find((candidate) => candidate.toLowerCase() === normalized);
+		if (!level) {
+			this.showError(`Unknown thinking level "${searchTerm}". Available levels: ${availableLevels.join(", ")}.`);
+			return;
+		}
+
+		this.applyThinkingLevel(level);
+	}
+
+	private selectThinkingLevel(level: ThinkingLevel, persist: boolean): void {
+		if (persist) {
+			this.settingsManager.setDefaultThinkingLevel(level);
+			this.showStatus(`Default thinking level: ${level}`);
+			return;
+		}
+		this.applyThinkingLevel(level);
 	}
 
 	private async handleModelCommand(searchTerm?: string): Promise<void> {
@@ -7840,11 +8258,13 @@ export class InteractiveMode {
 	}
 
 	private async findExactModelMatch(searchTerm: string): Promise<Model<Api> | undefined> {
-		const cachedMatch = findExactModelReferenceMatch(searchTerm, this.getCachedModelCandidates());
-		if (cachedMatch) {
-			return cachedMatch;
-		}
+		const scopedModels = this.getScopedModelState();
+		const cachedModels =
+			scopedModels.length > 0 ? scopedModels.map((scoped) => scoped.model) : [...this.getCachedModelCandidates()];
+		const cachedMatch = findExactModelReferenceMatch(searchTerm, cachedModels);
+		if (cachedMatch || scopedModels.length > 0) return cachedMatch;
 
+		this.showStatus("Refreshing model catalogs…");
 		const refreshPromise = this.getModelSelectorRefreshPromise({ force: true });
 		if (!refreshPromise) {
 			return undefined;
@@ -7853,6 +8273,7 @@ export class InteractiveMode {
 		try {
 			return findExactModelReferenceMatch(searchTerm, await refreshPromise);
 		} catch {
+			this.showWarning("Could not refresh model catalogs; searching cached models.");
 			return undefined;
 		}
 	}
@@ -8140,22 +8561,34 @@ export class InteractiveMode {
 			});
 	}
 
+	private showTrustSelector(): void {
+		const cwd = this.sessionManager.getCwd();
+		const trustStore = new ProjectTrustStore(getAgentDir());
+		const savedDecision = trustStore.getEntry(cwd);
+		this.showSelector((done) => {
+			const selector = new TrustSelectorComponent({
+				cwd,
+				savedDecision,
+				projectTrusted: this.settingsManager.isProjectTrusted(),
+				onSelect: (selection) => {
+					trustStore.setMany(selection.updates);
+					done();
+					this.showStatus(
+						`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
+					);
+				},
+				onCancel: () => {
+					done();
+					this.ui.requestRender();
+				},
+			});
+			return { component: selector, focus: selector };
+		});
+	}
+
 	private handleEffortCommand(arg: string): void {
-		const levels = this.getAvailableThinkingLevels();
-		if (levels.length === 0) {
-			this.showStatus("Current model does not support thinking");
-			return;
-		}
-		const requested = arg.trim().toLowerCase();
-		if (!requested) {
-			this.showThinkingSelector(levels);
-			return;
-		}
-		if (!levels.includes(requested as ThinkingLevel)) {
-			this.showError(`Unknown thinking level '${requested}'. Available: ${levels.join(", ")}`);
-			return;
-		}
-		this.applyThinkingLevel(requested as ThinkingLevel);
+		// /effort is the fork alias of /thinking; both share one implementation.
+		this.handleThinkingCommand(arg.trim() || undefined);
 	}
 
 	private showThinkingSelector(levels: ThinkingLevel[] = this.getAvailableThinkingLevels()): void {
@@ -8176,6 +8609,11 @@ export class InteractiveMode {
 					done();
 					this.ui.requestRender();
 				},
+				(level) => {
+					done();
+					this.selectThinkingLevel(level, true);
+				},
+				this.settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL,
 			);
 			return { component: selector, focus: selector.getSelectList() };
 		});
@@ -9832,6 +10270,56 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(lines.join("\n"), 1, 0));
 		this.ui.requestRender();
+	}
+
+	/**
+	 * Get changelog entries to display on startup.
+	 * Only shows new entries since last seen version, skips for resumed sessions.
+	 */
+	private getChangelogForDisplay(): string | undefined {
+		// Skip changelog for resumed/continued sessions (already have messages)
+		if (this.sessionHasMessages) {
+			return undefined;
+		}
+
+		const lastVersion = this.settingsManager.getLastChangelogVersion();
+		const changelogPath = getChangelogPath();
+		const entries = parseChangelog(changelogPath);
+
+		if (!lastVersion) {
+			// Fresh install - record the version, send telemetry, don't show changelog
+			this.settingsManager.setLastChangelogVersion(VERSION);
+			this.reportInstallTelemetry(VERSION);
+			return undefined;
+		}
+
+		const newEntries = getNewEntries(entries, lastVersion);
+		if (newEntries.length > 0) {
+			this.settingsManager.setLastChangelogVersion(VERSION);
+			this.reportInstallTelemetry(VERSION);
+			return newEntries.map((e) => normalizeChangelogLinks(e.content, e)).join("\n\n");
+		}
+
+		return undefined;
+	}
+
+	private reportInstallTelemetry(version: string): void {
+		if (process.env.PI_OFFLINE) {
+			return;
+		}
+
+		if (!isInstallTelemetryEnabled(this.settingsManager)) {
+			return;
+		}
+
+		void fetch(`https://pi.dev/api/report-install?version=${encodeURIComponent(version)}`, {
+			headers: {
+				"User-Agent": getPiUserAgent(version),
+			},
+			signal: AbortSignal.timeout(5000),
+		})
+			.then(() => undefined)
+			.catch(() => undefined);
 	}
 
 	private handleChangelogCommand(): void {

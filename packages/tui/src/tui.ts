@@ -672,6 +672,13 @@ export abstract class TuiBase extends Container implements TUI {
 	/** Hook for subclasses, called after the overlay stack or overlay visibility changes. */
 	protected overlayStackChanged(): void {}
 
+	/** Check if the focused component is a visible overlay */
+	protected isOverlayFocused(): boolean {
+		return this.overlayStack.some(
+			(entry) => entry.component === this.focusedComponent && this.isOverlayVisible(entry),
+		);
+	}
+
 	/** Whether any visible overlay matches the predicate on its options. */
 	protected hasVisibleOverlayWith(predicate: (options: OverlayOptions | undefined) => boolean): boolean {
 		return this.overlayStack.some((entry) => predicate(entry.options) && this.isOverlayVisible(entry));

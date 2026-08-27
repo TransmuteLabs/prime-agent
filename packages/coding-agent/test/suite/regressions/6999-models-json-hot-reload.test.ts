@@ -52,7 +52,7 @@ describe("issue #6999 models.json hot reload", () => {
 		const selector = new ModelSelectorComponent(
 			tui,
 			undefined,
-			modelRegistry,
+			modelRuntime,
 			[],
 			() => {},
 			() => {},

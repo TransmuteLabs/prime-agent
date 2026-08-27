@@ -19,6 +19,7 @@ import type {
 	ChatTemplateKwargValue,
 	Context,
 	ImageContent,
+	JsonValue,
 	Message,
 	Model,
 	OpenAICompletionsCompat,
@@ -31,6 +32,7 @@ import type {
 	TextContent,
 	ThinkingBudgets,
 	ThinkingContent,
+	ThinkingTokenBudgetField,
 	Tool,
 	ToolCall,
 	ToolResultMessage,
@@ -40,6 +42,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -54,7 +57,7 @@ import {
 } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { buildBaseOptions, clampReasoning, MIN_ANSWER_TOKENS } from "./simple-options.ts";
+import { buildBaseOptions, clampThinkingBudgetToAnswerRoom, thinkingBudgetForLevel } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -127,24 +130,41 @@ function isImageContentBlock(block: { type: string }): block is ImageContent {
 	return block.type === "image";
 }
 
-function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedReasoningDetail {
-	if (typeof detail !== "object" || detail === null) {
+function isReasoningDetailObject(detail: unknown): detail is Record<string, unknown> {
+	return typeof detail === "object" && detail !== null && !Array.isArray(detail);
+}
+
+function hasValidCommonReasoningDetailFields(candidate: Record<string, unknown>): boolean {
+	return (
+		(candidate.id === undefined || candidate.id === null || typeof candidate.id === "string") &&
+		(candidate.format === undefined || typeof candidate.format === "string") &&
+		(candidate.index === undefined || typeof candidate.index === "number")
+	);
+}
+
+function isOpenAIReasoningDetail(detail: unknown): detail is OpenAIReasoningDetail {
+	if (!isReasoningDetailObject(detail) || !hasValidCommonReasoningDetailFields(detail)) {
 		return false;
 	}
-	const candidate = detail as Record<string, unknown>;
-	return (
-		candidate.type === "reasoning.encrypted" &&
-		typeof candidate.id === "string" &&
-		candidate.id.length > 0 &&
-		typeof candidate.data === "string" &&
-		candidate.data.length > 0
-	);
+	switch (detail.type) {
+		case "reasoning.summary":
+			return typeof detail.summary === "string";
+		case "reasoning.encrypted":
+			return typeof detail.data === "string";
+		case "reasoning.text":
+			return (
+				typeof detail.text === "string" &&
+				(detail.signature === undefined || detail.signature === null || typeof detail.signature === "string")
+			);
+		default:
+			return false;
+	}
 }
 
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption;
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-	/** Token budgets per thinking level. Only used when `compat.supportsThinkingTokenBudget` is set. */
+	/** Token budgets per thinking level. Used when `compat.thinkingTokenBudgetField` or `compat.supportsThinkingTokenBudget` is set, or by `{ "$var": "thinking.budget" }`. */
 	thinkingBudgets?: ThinkingBudgets;
 }
 
@@ -159,11 +179,12 @@ interface OpenAICompatCacheControl {
 
 type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "deferredToolsMode" | "supportsThinkingTokenBudget"
+	"cacheControlFormat" | "deferredToolsMode" | "supportsThinkingTokenBudget" | "thinkingTokenBudgetField"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
+	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
 };
 
 type ResolvedChatTemplateKwargValue = string | number | boolean | null;
@@ -175,11 +196,70 @@ type KimiToolSystemMessageParam = {
 	tools: OpenAI.Chat.Completions.ChatCompletionTool[];
 };
 
-type OpenAIEncryptedReasoningDetail = {
+type OpenAIReasoningDetailBase = Record<string, JsonValue> & {
+	id?: string | null;
+	format?: string;
+	index?: number;
+};
+
+type OpenAIReasoningSummaryDetail = OpenAIReasoningDetailBase & {
+	type: "reasoning.summary";
+	summary: string;
+};
+
+type OpenAIEncryptedReasoningDetail = OpenAIReasoningDetailBase & {
 	type: "reasoning.encrypted";
-	id: string;
 	data: string;
 };
+
+type OpenAIReasoningTextDetail = OpenAIReasoningDetailBase & {
+	type: "reasoning.text";
+	text: string;
+	signature?: string | null;
+};
+
+type OpenAIReasoningDetail = OpenAIReasoningSummaryDetail | OpenAIEncryptedReasoningDetail | OpenAIReasoningTextDetail;
+
+function parseOpenAIReasoningDetails(signature: string | undefined): OpenAIReasoningDetail[] | undefined {
+	if (!signature) return undefined;
+	try {
+		const parsed = JSON.parse(signature) as unknown;
+		return Array.isArray(parsed) && parsed.length > 0 && parsed.every(isOpenAIReasoningDetail) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function parseLegacyEncryptedReasoningDetail(
+	signature: string | undefined,
+): OpenAIEncryptedReasoningDetail | undefined {
+	if (!signature) return undefined;
+	try {
+		const parsed = JSON.parse(signature) as unknown;
+		return isOpenAIReasoningDetail(parsed) &&
+			parsed.type === "reasoning.encrypted" &&
+			typeof parsed.id === "string" &&
+			parsed.id.length > 0 &&
+			parsed.data.length > 0
+			? parsed
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+const OPENAI_COMPLETIONS_REASONING_FIELDS = ["reasoning", "reasoning_content", "reasoning_text"] as const;
+
+type OpenAICompletionsReasoningField = (typeof OPENAI_COMPLETIONS_REASONING_FIELDS)[number];
+
+function isOpenAICompletionsReasoningField(field: string): field is OpenAICompletionsReasoningField {
+	return OPENAI_COMPLETIONS_REASONING_FIELDS.includes(field as OpenAICompletionsReasoningField);
+}
+
+type ChatCompletionAssistantMessageParamWithReasoning = ChatCompletionAssistantMessageParam &
+	Partial<Record<OpenAICompletionsReasoningField, string>> & {
+		reasoning_details?: JsonValue[];
+	};
 
 type ChatCompletionTextPartWithCacheControl = ChatCompletionContentPartText & {
 	cache_control?: OpenAICompatCacheControl;
@@ -287,7 +367,6 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			let hasFinishReason = false;
 			const toolCallBlocksByIndex = new Map<number, StreamingToolCallBlock>();
 			const toolCallBlocksById = new Map<string, StreamingToolCallBlock>();
-			const pendingReasoningDetailsByToolCallId = new Map<string, string>();
 			const blocks = output.content as StreamingBlock[];
 			const getContentIndex = (block: StreamingBlock) => blocks.indexOf(block);
 			const getCustomToolCallInput = (block: StreamingToolCallBlock): string => {
@@ -378,16 +457,6 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 				return thinkingBlock;
 			};
-			const applyPendingReasoningDetail = (block: StreamingToolCallBlock) => {
-				if (!block.id) {
-					return;
-				}
-				const pendingReasoningDetail = pendingReasoningDetailsByToolCallId.get(block.id);
-				if (pendingReasoningDetail) {
-					block.thoughtSignature = pendingReasoningDetail;
-					pendingReasoningDetailsByToolCallId.delete(block.id);
-				}
-			};
 			const ensureToolCallBlock = (toolCall: StreamingToolCallDelta) => {
 				const streamIndex = typeof toolCall.index === "number" ? toolCall.index : undefined;
 				const name = toolCall.function?.name ?? toolCall.custom?.name ?? "";
@@ -444,7 +513,6 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					};
 					delete block.partialArgs;
 				}
-				applyPendingReasoningDetail(block);
 				return block;
 			};
 
@@ -562,15 +630,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					const reasoningDetails = (choice.delta as { reasoning_details?: unknown }).reasoning_details;
 					if (Array.isArray(reasoningDetails)) {
 						for (const detail of reasoningDetails) {
-							if (isEncryptedReasoningDetail(detail)) {
-								const serializedDetail = JSON.stringify(detail);
-								const matchingToolCall = toolCallBlocksById.get(detail.id);
-								if (matchingToolCall) {
-									matchingToolCall.thoughtSignature = serializedDetail;
-								} else {
-									pendingReasoningDetailsByToolCallId.set(detail.id, serializedDetail);
-								}
-							}
+							if (!isOpenAIReasoningDetail(detail)) continue;
+							const block = ensureThinkingBlock("");
+							const preservedDetails = parseOpenAIReasoningDetails(block.thinkingSignature) ?? [];
+							preservedDetails.push(detail);
+							// Keep provider replay data in the existing signature slot. OpenRouter
+							// requires the complete reasoning_details sequence in its original order.
+							block.thinkingSignature = JSON.stringify(preservedDetails);
 						}
 					}
 				}
@@ -631,15 +697,16 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 ): AssistantMessageEventStream => {
 	getClientApiKey(model.provider, options?.apiKey, options?.headers);
 
-	const base = buildBaseOptions(model, context, options, options?.apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, options?.apiKey),
+		toolChoice: options?.toolChoice,
+	} satisfies OpenAICompletionsOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
-	const toolChoice = (options as OpenAICompletionsOptions | undefined)?.toolChoice;
 
 	return stream(model, context, {
 		...base,
 		reasoningEffort,
-		toolChoice,
 		thinkingBudgets: options?.thinkingBudgets,
 	} satisfies OpenAICompletionsOptions);
 };
@@ -654,7 +721,7 @@ function createClient(
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 	env?: ProviderEnv,
 ) {
-	const headers: ProviderHeaders = { ...model.headers };
+	const headers: ProviderHeaders = { "User-Agent": getPiUserAgent(), ...model.headers };
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
 		const copilotHeaders = buildCopilotDynamicHeaders({
@@ -762,6 +829,9 @@ function buildParams(
 		params.tool_choice = options.toolChoice;
 	}
 
+	const thinkingTokenBudgetField = resolveThinkingTokenBudgetField(compat);
+	const thinkingBudget = resolveClampedThinkingBudget(model, options, params);
+
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
 		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
 			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
@@ -789,7 +859,7 @@ function buildParams(
 			preserve_thinking: true,
 		};
 	} else if (compat.thinkingFormat === "chat-template" && model.reasoning) {
-		const chatTemplateKwargs = buildChatTemplateValues(model, options, compat.chatTemplateKwargs);
+		const chatTemplateKwargs = buildChatTemplateValues(model, options, compat.chatTemplateKwargs, thinkingBudget);
 		if (chatTemplateKwargs) {
 			(params as any).chat_template_kwargs = chatTemplateKwargs;
 		}
@@ -798,7 +868,7 @@ function buildParams(
 			chat_template_args?: Record<string, ResolvedChatTemplateKwargValue>;
 			reasoning_effort?: string;
 		};
-		const chatTemplateArgs = buildChatTemplateValues(model, options, compat.chatTemplateArgs);
+		const chatTemplateArgs = buildChatTemplateValues(model, options, compat.chatTemplateArgs, thinkingBudget);
 		if (chatTemplateArgs) {
 			basetenParams.chat_template_args = chatTemplateArgs;
 		}
@@ -861,25 +931,12 @@ function buildParams(
 		}
 	}
 
-	// vLLM caps reasoning with a top-level thinking_token_budget. Independent of
-	// thinkingFormat: the same server can serve zai, qwen or chat-template models.
-	// Reasoning and the answer share max_tokens here, so an uncapped reasoning
-	// phase can consume the whole response and leave no answer and no tool call.
-	if (compat.supportsThinkingTokenBudget && options?.reasoningEffort && model.reasoning) {
-		const level = clampReasoning(options.reasoningEffort)!;
-		const budgets: ThinkingBudgets = {
-			minimal: 1024,
-			low: 2048,
-			medium: 8192,
-			high: 16384,
-			...options.thinkingBudgets,
-		};
-		const ceiling = (params as { max_tokens?: number }).max_tokens ?? params.max_completion_tokens ?? model.maxTokens;
-		// Always leave room for the answer, otherwise the budget recreates the bug it prevents.
-		const budget = Math.min(budgets[level]!, Math.max(0, ceiling - MIN_ANSWER_TOKENS));
-		if (budget > 0) {
-			(params as { thinking_token_budget?: number }).thinking_token_budget = budget;
-		}
+	// Cap reasoning with a top-level budget field. Independent of thinkingFormat: the
+	// same server can serve zai, qwen or chat-template models. Reasoning and the answer
+	// share max_tokens here, so an uncapped reasoning phase can consume the whole
+	// response and leave no answer and no tool call.
+	if (thinkingTokenBudgetField && thinkingBudget !== undefined) {
+		Object.assign(params, { [thinkingTokenBudgetField]: thinkingBudget });
 	}
 
 	// OpenRouter provider routing preferences
@@ -906,15 +963,38 @@ function buildParams(
 	return params;
 }
 
+function resolveThinkingTokenBudgetField(
+	compat: Pick<OpenAICompletionsCompat, "thinkingTokenBudgetField" | "supportsThinkingTokenBudget">,
+): ThinkingTokenBudgetField | undefined {
+	if (compat.thinkingTokenBudgetField) return compat.thinkingTokenBudgetField;
+	if (compat.supportsThinkingTokenBudget) return "thinking_token_budget";
+	return undefined;
+}
+
+function resolveClampedThinkingBudget(
+	model: Model<"openai-completions">,
+	options: OpenAICompletionsOptions | undefined,
+	params: { max_tokens?: number | null; max_completion_tokens?: number | null },
+): number | undefined {
+	if (!options?.reasoningEffort || !model.reasoning) return undefined;
+	const ceiling = params.max_tokens ?? params.max_completion_tokens ?? model.maxTokens;
+	const budget = clampThinkingBudgetToAnswerRoom(
+		thinkingBudgetForLevel(options.reasoningEffort, options.thinkingBudgets),
+		ceiling,
+	);
+	return budget > 0 ? budget : undefined;
+}
+
 function buildChatTemplateValues(
 	model: Model<"openai-completions">,
 	options: OpenAICompletionsOptions | undefined,
 	values: Record<string, ChatTemplateKwargValue>,
+	thinkingBudget?: number,
 ): Record<string, ResolvedChatTemplateKwargValue> | undefined {
 	const resolvedValues: Record<string, ResolvedChatTemplateKwargValue> = {};
 
 	for (const [key, value] of Object.entries(values)) {
-		const resolved = resolveChatTemplateKwargValue(model, options, value);
+		const resolved = resolveChatTemplateKwargValue(model, options, value, thinkingBudget);
 		if (resolved !== undefined) {
 			resolvedValues[key] = resolved;
 		}
@@ -927,6 +1007,7 @@ function resolveChatTemplateKwargValue(
 	model: Model<"openai-completions">,
 	options: OpenAICompletionsOptions | undefined,
 	value: ChatTemplateKwargValue,
+	thinkingBudget?: number,
 ): ResolvedChatTemplateKwargValue | undefined {
 	if (typeof value !== "object" || value === null) {
 		return value;
@@ -938,6 +1019,9 @@ function resolveChatTemplateKwargValue(
 	}
 	if (value.$var === "thinking.enabled") {
 		return !!reasoningEffort;
+	}
+	if (value.$var === "thinking.budget") {
+		return thinkingBudget;
 	}
 
 	const mappedValue = reasoningEffort ? model.thinkingLevelMap?.[reasoningEffort] : model.thinkingLevelMap?.off;
@@ -1145,7 +1229,7 @@ export function convertMessages(
 			}
 		} else if (msg.role === "assistant") {
 			// Some providers don't accept null content, use empty string instead
-			const assistantMsg: ChatCompletionAssistantMessageParam = {
+			const assistantMsg: ChatCompletionAssistantMessageParamWithReasoning = {
 				role: "assistant",
 				content: compat.requiresAssistantAfterToolResult ? "" : null,
 			};
@@ -1162,9 +1246,18 @@ export function convertMessages(
 				);
 			const assistantText = assistantTextParts.map((part) => part.text).join("");
 
-			const nonEmptyThinkingBlocks = msg.content
-				.filter(isThinkingContentBlock)
-				.filter((block) => block.thinking.trim().length > 0);
+			const thinkingBlocks = msg.content.filter(isThinkingContentBlock);
+			const toolCalls = msg.content.filter(isToolCallBlock);
+			const signedReasoningDetails = thinkingBlocks
+				.map((block) => parseOpenAIReasoningDetails(block.thinkingSignature))
+				.find((details) => details !== undefined);
+			const legacyReasoningDetails = toolCalls
+				.map((toolCall) => parseLegacyEncryptedReasoningDetail(toolCall.thoughtSignature))
+				.filter((detail): detail is OpenAIEncryptedReasoningDetail => detail !== undefined);
+			const preservedReasoningDetails =
+				signedReasoningDetails ?? (legacyReasoningDetails.length > 0 ? legacyReasoningDetails : undefined);
+
+			const nonEmptyThinkingBlocks = thinkingBlocks.filter((block) => block.thinking.trim().length > 0);
 			if (nonEmptyThinkingBlocks.length > 0) {
 				if (compat.requiresThinkingAsText) {
 					// Convert thinking blocks to plain text (no tags to avoid model mimicking them)
@@ -1182,13 +1275,16 @@ export function convertMessages(
 						assistantMsg.content = assistantText;
 					}
 
-					// Use the signature from the first thinking block if available (for llama.cpp server + gpt-oss)
-					let signature = nonEmptyThinkingBlocks[0].thinkingSignature;
-					if (model.provider === "opencode-go" && signature === "reasoning") {
-						signature = "reasoning_content";
-					}
-					if (signature && signature.length > 0) {
-						(assistantMsg as any)[signature] = nonEmptyThinkingBlocks.map((block) => block.thinking).join("\n");
+					// reasoning_details is the structured alternative to a raw reasoning field.
+					if (!preservedReasoningDetails) {
+						// Use the signature from the first thinking block if available (for llama.cpp server + gpt-oss)
+						let signature = nonEmptyThinkingBlocks[0].thinkingSignature;
+						if (model.provider === "opencode-go" && signature === "reasoning") {
+							signature = "reasoning_content";
+						}
+						if (signature && isOpenAICompletionsReasoningField(signature)) {
+							assistantMsg[signature] = nonEmptyThinkingBlocks.map((block) => block.thinking).join("\n");
+						}
 					}
 				}
 			} else if (assistantText.length > 0) {
@@ -1200,7 +1296,6 @@ export function convertMessages(
 				assistantMsg.content = assistantText;
 			}
 
-			const toolCalls = msg.content.filter(isToolCallBlock);
 			if (toolCalls.length > 0) {
 				assistantMsg.tool_calls = toolCalls.map((tc): ChatCompletionMessageToolCall => {
 					const customInputProperty = options?.grammarToolInputProperties?.get(tc.name);
@@ -1223,26 +1318,16 @@ export function convertMessages(
 						},
 					};
 				});
-				const reasoningDetails = toolCalls
-					.filter((tc) => tc.thoughtSignature)
-					.map((tc) => {
-						try {
-							return JSON.parse(tc.thoughtSignature!);
-						} catch {
-							return null;
-						}
-					})
-					.filter(Boolean);
-				if (reasoningDetails.length > 0) {
-					(assistantMsg as any).reasoning_details = reasoningDetails;
-				}
+			}
+			if (preservedReasoningDetails) {
+				assistantMsg.reasoning_details = preservedReasoningDetails;
 			}
 			if (
 				compat.requiresReasoningContentOnAssistantMessages &&
 				model.reasoning &&
-				(assistantMsg as { reasoning_content?: string }).reasoning_content === undefined
+				assistantMsg.reasoning_content === undefined
 			) {
-				(assistantMsg as { reasoning_content?: string }).reasoning_content = "";
+				assistantMsg.reasoning_content = "";
 			}
 			// Skip assistant messages that have no content and no tool calls.
 			// Some providers require "either content or tool_calls, but not none".
@@ -1392,6 +1477,7 @@ function parseChunkUsage(
 	rawUsage: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
+		cached_tokens?: number;
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
@@ -1399,11 +1485,15 @@ function parseChunkUsage(
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
 	const promptTokens = rawUsage.prompt_tokens || 0;
-	const cacheReadTokens = rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? 0;
+	const cacheReadTokens =
+		rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? rawUsage.cached_tokens ?? 0;
 	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
 
 	// Follow documented OpenAI/OpenRouter semantics: cached_tokens is cache-read
-	// tokens (hits). OpenAI does not document or emit cache_write_tokens, but
+	// tokens (hits). Providers disagree on placement: OpenAI/OpenRouter use
+	// prompt_tokens_details.cached_tokens, DeepSeek uses prompt_cache_hit_tokens,
+	// and Kimi documents top-level usage.cached_tokens on the final usage chunk.
+	// OpenAI does not document or emit cache_write_tokens, but
 	// OpenRouter-compatible providers can include it as a separate write count.
 	// OpenRouter's own provider/tests affirm the separate mapping:
 	// https://github.com/OpenRouterTeam/ai-sdk-provider/pull/409
@@ -1541,6 +1631,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		chatTemplateArgs: {},
 		zaiToolStream: false,
 		supportsThinkingTokenBudget: false,
+		thinkingTokenBudgetField: undefined,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isPrimeInference,
 		supportsOpenAIGrammarTools: false,
 		cacheControlFormat,
@@ -1586,6 +1677,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		chatTemplateArgs: model.compat.chatTemplateArgs ?? detected.chatTemplateArgs,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
 		supportsThinkingTokenBudget: model.compat.supportsThinkingTokenBudget ?? detected.supportsThinkingTokenBudget,
+		thinkingTokenBudgetField: model.compat.thinkingTokenBudgetField ?? detected.thinkingTokenBudgetField,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,

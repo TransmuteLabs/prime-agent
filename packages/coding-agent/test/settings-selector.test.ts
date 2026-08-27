@@ -1,5 +1,4 @@
-import { resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
-import { beforeAll, describe, expect, test, vi } from "vitest";
+import { beforeAll, describe, expect, it, test, vi } from "vitest";
 import {
 	type SettingsCallbacks,
 	type SettingsConfig,
@@ -11,7 +10,10 @@ import { stripAnsi } from "../src/utils/ansi.ts";
 const config: SettingsConfig = {
 	autoCompact: true,
 	idleEvictionMinutes: 90,
+	defaultModel: "not set",
+	availableDefaultModels: [],
 	showImages: true,
+	imageWidthCells: 80,
 	autoResizeImages: true,
 	blockImages: false,
 	enableSkillCommands: true,
@@ -19,19 +21,31 @@ const config: SettingsConfig = {
 	steeringMode: "one-at-a-time",
 	followUpMode: "one-at-a-time",
 	transport: "sse",
+	httpIdleTimeoutMs: 300_000,
 	thinkingLevel: "off",
 	availableThinkingLevels: ["off"],
+	modelThinkingLevels: {},
 	currentTheme: "dark",
+	terminalTheme: "dark",
 	availableThemes: ["dark"],
 	hideThinkingBlock: false,
+	mermaidRenderingMode: "off",
+	showCacheMissNotices: true,
+	collapseChangelog: true,
+	enableInstallTelemetry: true,
+	doubleEscapeAction: "tree",
 	treeFilterMode: "user-only",
 	showHardwareCursor: false,
 	editorPaddingX: 0,
+	outputPad: 0,
 	autocompleteMaxVisible: 5,
 	quietStartup: false,
+	defaultProjectTrust: "ask",
 	clearOnShrink: false,
 	showTerminalProgress: false,
-	fullscreen: true,
+	tuiMode: "regular",
+	fullscreenExitOutput: "transcript",
+	fullscreenScrollbar: "auto",
 	warnings: {},
 };
 
@@ -39,6 +53,7 @@ const callbacks: SettingsCallbacks = {
 	onAutoCompactChange: () => {},
 	onIdleEvictionMinutesChange: () => {},
 	onShowImagesChange: () => {},
+	onImageWidthCellsChange: () => {},
 	onAutoResizeImagesChange: () => {},
 	onBlockImagesChange: () => {},
 	onEnableSkillCommandsChange: () => {},
@@ -46,17 +61,28 @@ const callbacks: SettingsCallbacks = {
 	onSteeringModeChange: () => {},
 	onFollowUpModeChange: () => {},
 	onTransportChange: () => {},
-	onThinkingLevelChange: () => {},
+	onHttpIdleTimeoutMsChange: () => {},
+	onModelThinkingLevelChange: () => {},
+	onModelThinkingLevelRemove: () => {},
 	onThemeChange: () => {},
 	onHideThinkingBlockChange: () => {},
+	onMermaidRenderingModeChange: () => {},
+	onShowCacheMissNoticesChange: () => {},
+	onCollapseChangelogChange: () => {},
+	onEnableInstallTelemetryChange: () => {},
+	onDoubleEscapeActionChange: () => {},
 	onTreeFilterModeChange: () => {},
 	onShowHardwareCursorChange: () => {},
 	onEditorPaddingXChange: () => {},
+	onOutputPadChange: () => {},
 	onAutocompleteMaxVisibleChange: () => {},
 	onQuietStartupChange: () => {},
+	onDefaultProjectTrustChange: () => {},
 	onClearOnShrinkChange: () => {},
 	onShowTerminalProgressChange: () => {},
-	onFullscreenChange: () => {},
+	onTuiModeChange: () => {},
+	onFullscreenExitOutputChange: () => {},
+	onFullscreenScrollbarChange: () => {},
 	onWarningsChange: () => {},
 	onCancel: () => {},
 };
@@ -66,19 +92,30 @@ describe("SettingsSelectorComponent", () => {
 		initTheme("dark");
 	});
 
-	test("shows the image metadata toggle without a terminal graphics protocol", () => {
-		setCapabilities({ images: null, trueColor: true, hyperlinks: true });
-		try {
-			const component = new SettingsSelectorComponent(config, callbacks);
-			const rendered = stripAnsi(component.render(120).join("\n"));
+	it("cycles through fullscreen settings", () => {
+		const onExitOutputChange = vi.fn();
+		const onScrollbarChange = vi.fn();
+		const fullscreenConfig: SettingsConfig = {
+			...config,
+			fullscreenExitOutput: "transcript",
+			fullscreenScrollbar: "auto",
+		};
+		const fullscreenCallbacks = {
+			...callbacks,
+			onFullscreenExitOutputChange: onExitOutputChange,
+			onFullscreenScrollbarChange: onScrollbarChange,
+		};
 
-			expect(rendered).toContain("Show image metadata");
-			expect(rendered).toContain("Auto-resize images");
-			for (const character of "idle") component.getSettingsList().handleInput(character);
-			expect(stripAnsi(component.render(120).join("\n"))).toContain("Idle worker eviction");
-		} finally {
-			resetCapabilitiesCache();
-		}
+		const cycle = (label: string, count: number) => {
+			const list = new SettingsSelectorComponent(fullscreenConfig, fullscreenCallbacks).getSettingsList();
+			for (const character of label) list.handleInput(character);
+			for (let i = 0; i < count; i++) list.handleInput("\r");
+		};
+
+		cycle("Fullscreen exit output", 2);
+		expect(onExitOutputChange.mock.calls.flat()).toEqual(["resume-hint", "transcript"]);
+		cycle("Fullscreen scrollbar", 3);
+		expect(onScrollbarChange.mock.calls.flat()).toEqual(["always", "hidden", "auto"]);
 	});
 
 	test("cycles a custom idle eviction value to the next numeric option", () => {
@@ -93,6 +130,7 @@ describe("SettingsSelectorComponent", () => {
 		list.handleInput("\r");
 
 		expect(onIdleEvictionMinutesChange).toHaveBeenCalledWith(180);
+		expect(stripAnsi(component.render(120).join("\n"))).toContain("Idle worker eviction");
 	});
 
 	test.each([0.5, 1.5])("round-trips a fractional idle eviction value of %s", (value) => {

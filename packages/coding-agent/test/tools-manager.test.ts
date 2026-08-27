@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,7 +7,6 @@ const toolState = vi.hoisted(() => ({
 	toolsDir: `/tmp/prime-agent-tools-manager-${process.pid}`,
 	platform: "linux",
 	architecture: "x64",
-	extractZip: async (_source: string, _options: { dir: string }): Promise<void> => {},
 }));
 
 vi.mock("../src/config.ts", () => ({
@@ -19,20 +19,41 @@ vi.mock("os", () => ({
 	platform: () => toolState.platform,
 }));
 
-vi.mock("extract-zip", () => ({
-	default: (source: string, options: { dir: string }) => toolState.extractZip(source, options),
-}));
-
 import {
+	ensureTool,
 	ensureToolWithStatus,
 	formatMissingRipgrepMessage,
 	getToolPath,
+	type ToolStatus,
 	type ToolUnavailableResult,
 } from "../src/utils/tools-manager.ts";
 
 const originalPath = process.env.PATH;
 const originalOffline = process.env.PI_OFFLINE;
 const pathDir = join(toolState.toolsDir, "path");
+const systemTar = ["/usr/bin/tar", "/bin/tar"].find((candidate) => existsSync(candidate)) ?? "tar";
+
+// Builds the archive shape the downloader actually consumes, so the extraction
+// path is exercised rather than stubbed out.
+function tarGzWith(binaryName: string, exitCode: number, toolsDir: string): Uint8Array {
+	const stageDir = join(toolsDir, "stage");
+	mkdirSync(stageDir, { recursive: true });
+	writeExecutable(join(stageDir, binaryName), exitCode);
+	const archivePath = join(toolsDir, "fixture.tar.gz");
+	const result = spawnSync(systemTar, ["czf", archivePath, "-C", stageDir, binaryName]);
+	if (result.status !== 0) {
+		throw new Error(`fixture tar failed: ${result.stderr?.toString() ?? result.error?.message}`);
+	}
+	const bytes = readFileSync(archivePath);
+	rmSync(archivePath, { force: true });
+	rmSync(stageDir, { recursive: true, force: true });
+	// The downloader shells out to tar, and this suite deliberately empties PATH to
+	// control tool discovery. Expose that one command instead of reopening PATH,
+	// which would let a real system rg/fd satisfy the lookups under test.
+	writeFileSync(join(pathDir, "tar"), `#!/bin/sh\nexec ${systemTar} "$@"\n`, "utf8");
+	chmodSync(join(pathDir, "tar"), 0o755);
+	return bytes;
+}
 
 function writeExecutable(filePath: string, exitCode = 0): void {
 	writeFileSync(filePath, `#!/bin/sh\nexit ${exitCode}\n`, "utf8");
@@ -54,7 +75,6 @@ describe("tools manager", () => {
 		delete process.env.PI_OFFLINE;
 		toolState.platform = "linux";
 		toolState.architecture = "x64";
-		toolState.extractZip = async () => {};
 	});
 
 	afterEach(() => {
@@ -117,8 +137,9 @@ describe("tools manager", () => {
 	});
 
 	it("validates a downloaded binary before reporting it available", async () => {
-		toolState.platform = "win32";
-		writeExecutable(join(toolState.toolsDir, "rg.exe"), 1);
+		toolState.platform = "linux";
+		writeExecutable(join(toolState.toolsDir, "rg"), 1);
+		const archive = tarGzWith("rg", 0, toolState.toolsDir);
 		const fetchMock = vi
 			.fn()
 			.mockResolvedValueOnce(
@@ -127,37 +148,32 @@ describe("tools manager", () => {
 					headers: { "Content-Type": "application/json" },
 				}),
 			)
-			.mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200 }));
+			.mockResolvedValueOnce(new Response(archive, { status: 200 }));
 		vi.stubGlobal("fetch", fetchMock);
-		toolState.extractZip = async (_source, options) => {
-			writeExecutable(join(options.dir, "rg.exe"));
-		};
 
 		await expect(ensureToolWithStatus("rg")).resolves.toEqual({
 			status: "available",
-			path: join(toolState.toolsDir, "rg.exe"),
+			path: join(toolState.toolsDir, "rg"),
 		});
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
 	it("removes a downloaded binary that fails its version check", async () => {
-		toolState.platform = "win32";
+		toolState.platform = "linux";
+		const archive = tarGzWith("rg", 1, toolState.toolsDir);
 		vi.stubGlobal(
 			"fetch",
 			vi
 				.fn()
 				.mockResolvedValueOnce(new Response(JSON.stringify({ tag_name: "15.1.0" }), { status: 200 }))
-				.mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200 })),
+				.mockResolvedValueOnce(new Response(archive, { status: 200 })),
 		);
-		toolState.extractZip = async (_source, options) => {
-			writeExecutable(join(options.dir, "rg.exe"), 1);
-		};
 
 		await expect(ensureToolWithStatus("rg")).resolves.toMatchObject({
 			status: "unavailable",
 			reason: "download_failed",
 		});
-		expect(existsSync(join(toolState.toolsDir, "rg.exe"))).toBe(false);
+		expect(existsSync(join(toolState.toolsDir, "rg"))).toBe(false);
 	});
 
 	it("formats actionable platform-specific ripgrep warnings", () => {
@@ -172,5 +188,40 @@ describe("tools manager", () => {
 		expect(windows).toContain("winget install BurntSushi.ripgrep.MSVC");
 		expect(termux).toContain("pkg install ripgrep");
 		expect(mac).toContain("Prime Agent and subagents remain available");
+	});
+});
+
+describe("ensureTool", () => {
+	beforeEach(() => {
+		rmSync(toolState.toolsDir, { recursive: true, force: true });
+		mkdirSync(pathDir, { recursive: true });
+		process.env.PATH = pathDir;
+		delete process.env.PI_OFFLINE;
+		toolState.platform = "linux";
+		toolState.architecture = "x64";
+	});
+
+	afterEach(() => {
+		if (originalOffline === undefined) delete process.env.PI_OFFLINE;
+		else process.env.PI_OFFLINE = originalOffline;
+		rmSync(toolState.toolsDir, { recursive: true, force: true });
+	});
+
+	it("reports status through a callback without writing to the console", async () => {
+		process.env.PI_OFFLINE = "1";
+		const statuses: ToolStatus[] = [];
+		const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		const result = await ensureTool("fd", (status) => statuses.push(status));
+
+		expect(result).toBeUndefined();
+		expect(statuses).toEqual([
+			{
+				type: "warning",
+				message: "fd not found. Offline mode enabled, skipping download.",
+			},
+		]);
+		expect(consoleLog).not.toHaveBeenCalled();
+		consoleLog.mockRestore();
 	});
 });

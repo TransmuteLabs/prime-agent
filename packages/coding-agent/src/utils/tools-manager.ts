@@ -1,4 +1,3 @@
-import chalk from "chalk";
 import { type SpawnSyncReturns, spawnSync } from "child_process";
 import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
 import { arch, platform } from "os";
@@ -9,8 +8,14 @@ import { APP_NAME, getBinDir } from "../config.ts";
 import { fetchWithRetry } from "./management-http.ts";
 
 const TOOLS_DIR = getBinDir();
+const COMMAND_TIMEOUT_MS = 5_000;
 const NETWORK_TIMEOUT_MS = 10_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
+const RIPGREP_INSTALL_URL = "https://github.com/BurntSushi/ripgrep#installation";
+
+// A target with no published asset is not a failed download: callers must be able
+// to tell the two apart to choose between "install it by hand" and "retry".
+class UnsupportedToolPlatformError extends Error {}
 
 function isOfflineModeEnabled(): boolean {
 	const value = process.env.PI_OFFLINE;
@@ -72,11 +77,10 @@ const TOOLS: Record<string, ToolConfig> = {
 };
 
 // Check if a command exists in PATH by trying to run it
-function commandExists(cmd: string): boolean {
+function commandWorks(cmd: string): boolean {
 	try {
-		const result = spawnSync(cmd, ["--version"], { stdio: "pipe" });
-		// Check for ENOENT error (command not found)
-		return result.error === undefined || result.error === null;
+		const result = spawnSync(cmd, ["--version"], { stdio: "pipe", timeout: COMMAND_TIMEOUT_MS });
+		return !result.error && result.status === 0;
 	} catch {
 		return false;
 	}
@@ -89,14 +93,14 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 
 	// Check our tools directory first
 	const localPath = join(TOOLS_DIR, config.binaryName + (platform() === "win32" ? ".exe" : ""));
-	if (existsSync(localPath)) {
+	if (existsSync(localPath) && commandWorks(localPath)) {
 		return localPath;
 	}
 
 	// Check system PATH - if found, just return the command name (it's in PATH)
 	const systemBinaryNames = config.systemBinaryNames ?? [config.binaryName];
 	for (const systemBinaryName of systemBinaryNames) {
-		if (commandExists(systemBinaryName)) {
+		if (commandWorks(systemBinaryName)) {
 			return systemBinaryName;
 		}
 	}
@@ -247,6 +251,10 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 	const plat = platform();
 	const architecture = arch();
 
+	if (!config.getAssetName("VERSION", plat, architecture)) {
+		throw new UnsupportedToolPlatformError(`Unsupported platform: ${plat}/${architecture}`);
+	}
+
 	// Get latest version
 	let version = await getLatestVersion(config.repo);
 	if (tool === "fd" && plat === "darwin" && architecture === "x64") {
@@ -256,7 +264,7 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 	// Get asset name for this platform
 	const assetName = config.getAssetName(version, plat, architecture);
 	if (!assetName) {
-		throw new Error(`Unsupported platform: ${plat}/${architecture}`);
+		throw new UnsupportedToolPlatformError(`Unsupported platform: ${plat}/${architecture}`);
 	}
 
 	// Create tools directory
@@ -308,6 +316,13 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 		if (plat !== "win32") {
 			chmodSync(binaryPath, 0o755);
 		}
+		// A download can succeed and still yield a binary this machine cannot run
+		// (wrong ABI, truncated archive). Leaving it in place would strand the tool:
+		// every later lookup finds the file and never retries.
+		if (!commandWorks(binaryPath)) {
+			rmSync(binaryPath, { force: true });
+			throw new Error(`Installed ${config.name} binary failed its version check`);
+		}
 	} finally {
 		// Cleanup
 		rmSync(archivePath, { force: true });
@@ -323,8 +338,10 @@ const TERMUX_PACKAGES: Record<string, string> = {
 	rg: "ripgrep",
 };
 
-// Ensure a tool is available, downloading if necessary
-// Returns the path to the tool, or null if unavailable
+export interface ToolStatus {
+	type: "info" | "warning";
+	message: string;
+}
 
 export type ManagedTool = "fd" | "rg";
 
@@ -345,35 +362,108 @@ export interface ToolUnavailableResult {
 
 export type ToolEnsureResult = ToolAvailableResult | ToolUnavailableResult;
 
-export async function ensureToolWithStatus(tool: ManagedTool, silent: boolean = true): Promise<ToolEnsureResult> {
-	try {
-		const toolPath = await ensureTool(tool, silent);
-		if (toolPath) {
-			return { status: "available", path: toolPath };
-		}
-		return {
-			status: "unavailable",
-			reason: "download_failed",
-			platform: process.platform,
-			architecture: process.arch,
-		};
-	} catch (error) {
-		return {
-			status: "unavailable",
-			reason: "download_failed",
-			platform: process.platform,
-			architecture: process.arch,
-			detail: error instanceof Error ? error.message : String(error),
-		};
+function getRipgrepInstallHint(platformName: string): string {
+	switch (platformName) {
+		case "darwin":
+			return "Install it with: brew install ripgrep";
+		case "linux":
+			return `Install it with your package manager (for example, sudo apt install ripgrep or sudo dnf install ripgrep). See ${RIPGREP_INSTALL_URL}`;
+		case "win32":
+			return "Install it with: winget install BurntSushi.ripgrep.MSVC";
+		case "android":
+			return "Install it with: pkg install ripgrep";
+		default:
+			return `Install ripgrep manually: ${RIPGREP_INSTALL_URL}`;
 	}
 }
 
 export function formatMissingRipgrepMessage(result: ToolUnavailableResult): string {
-	const detail = result.detail ? ` (${result.detail})` : "";
-	return `ripgrep (rg) is unavailable${detail}. Install it for faster search, or continue without it.`;
+	let reason: string;
+	switch (result.reason) {
+		case "offline":
+			reason = "Automatic installation was skipped because PI_OFFLINE is enabled.";
+			break;
+		case "manual_install_required":
+			reason = "Prime Agent cannot install this helper automatically in Termux.";
+			break;
+		case "unsupported_platform":
+			reason = `Automatic installation is unavailable for ${result.platform}/${result.architecture}.`;
+			break;
+		case "download_failed": {
+			const detail = result.detail?.replace(/\s+/g, " ").trim();
+			reason = detail
+				? `Prime Agent could not install it automatically: ${detail}`
+				: "Prime Agent could not install it automatically.";
+			break;
+		}
+	}
+
+	return [
+		"ripgrep (rg) is an optional search helper. Without it, model-run file searches may be slower or fail; Prime Agent and subagents remain available.",
+		reason,
+		getRipgrepInstallHint(result.platform),
+	].join("\n");
 }
 
-export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Promise<string | undefined> {
+// Retains WHY provisioning failed. `ensureTool` collapses every failure to
+// `undefined`, which cannot distinguish an offline skip from a platform that must
+// be installed by hand; callers that surface guidance need that distinction.
+export async function ensureToolWithStatus(
+	tool: ManagedTool,
+	onStatus?: (status: ToolStatus) => void,
+): Promise<ToolEnsureResult> {
+	const existingPath = getToolPath(tool);
+	if (existingPath) {
+		return { status: "available", path: existingPath };
+	}
+
+	const config = TOOLS[tool];
+	const platformName = platform();
+	const architecture = arch();
+
+	if (isOfflineModeEnabled()) {
+		onStatus?.({ type: "warning", message: `${config.name} not found. Offline mode enabled, skipping download.` });
+		return { status: "unavailable", reason: "offline", platform: platformName, architecture };
+	}
+
+	// On Android/Termux, Linux binaries don't work due to Bionic libc incompatibility.
+	// Users must install via pkg.
+	if (platformName === "android") {
+		const pkgName = TERMUX_PACKAGES[tool] ?? tool;
+		onStatus?.({ type: "warning", message: `${config.name} not found. Install with: pkg install ${pkgName}` });
+		return { status: "unavailable", reason: "manual_install_required", platform: platformName, architecture };
+	}
+
+	onStatus?.({ type: "info", message: `${config.name} not found. Downloading...` });
+
+	try {
+		const path = await downloadTool(tool);
+		onStatus?.({ type: "info", message: `${config.name} installed to ${path}` });
+		return { status: "available", path };
+	} catch (e) {
+		onStatus?.({
+			type: "warning",
+			message: `Failed to download ${config.name}: ${e instanceof Error ? e.message : e}`,
+		});
+		return {
+			status: "unavailable",
+			reason: e instanceof UnsupportedToolPlatformError ? "unsupported_platform" : "download_failed",
+			platform: platformName,
+			architecture,
+			detail: e instanceof Error ? e.message : String(e),
+		};
+	}
+}
+
+/**
+ * Ensure a tool is available, downloading if necessary.
+ * Reports progress through `onStatus`; status messages are otherwise silent.
+ * Returns the tool path, or undefined if unavailable.
+ */
+export async function ensureTool(
+	tool: "fd" | "rg",
+	onStatus?: (status: ToolStatus) => void,
+): Promise<string | undefined> {
 	const existingPath = getToolPath(tool);
 	if (existingPath) {
 		return existingPath;
@@ -383,9 +473,7 @@ export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Pr
 	if (!config) return undefined;
 
 	if (isOfflineModeEnabled()) {
-		if (!silent) {
-			console.log(chalk.yellow(`${config.name} not found. Offline mode enabled, skipping download.`));
-		}
+		onStatus?.({ type: "warning", message: `${config.name} not found. Offline mode enabled, skipping download.` });
 		return undefined;
 	}
 
@@ -393,27 +481,22 @@ export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Pr
 	// Users must install via pkg.
 	if (platform() === "android") {
 		const pkgName = TERMUX_PACKAGES[tool] ?? tool;
-		if (!silent) {
-			console.log(chalk.yellow(`${config.name} not found. Install with: pkg install ${pkgName}`));
-		}
+		onStatus?.({ type: "warning", message: `${config.name} not found. Install with: pkg install ${pkgName}` });
 		return undefined;
 	}
 
 	// Tool not found - download it
-	if (!silent) {
-		console.log(chalk.dim(`${config.name} not found. Downloading...`));
-	}
+	onStatus?.({ type: "info", message: `${config.name} not found. Downloading...` });
 
 	try {
 		const path = await downloadTool(tool);
-		if (!silent) {
-			console.log(chalk.dim(`${config.name} installed to ${path}`));
-		}
+		onStatus?.({ type: "info", message: `${config.name} installed to ${path}` });
 		return path;
 	} catch (e) {
-		if (!silent) {
-			console.log(chalk.yellow(`Failed to download ${config.name}: ${e instanceof Error ? e.message : e}`));
-		}
+		onStatus?.({
+			type: "warning",
+			message: `Failed to download ${config.name}: ${e instanceof Error ? e.message : e}`,
+		});
 		return undefined;
 	}
 }
