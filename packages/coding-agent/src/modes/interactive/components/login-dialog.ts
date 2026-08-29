@@ -1,4 +1,3 @@
-import { win32 } from "node:path";
 import {
 	type Component,
 	Container,
@@ -11,10 +10,10 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { execFile } from "child_process";
 import { getOAuthProviderInfos } from "../../../core/auth-storage.ts";
 import { PRIME_BUTTERFLY_LOGO } from "../../../themes/prime-logo.ts";
 import { copyToClipboard } from "../../../utils/clipboard.ts";
+import { openBrowser } from "../../../utils/open-browser.ts";
 import { theme } from "../theme/theme.ts";
 import { formatKeyText, keyHint } from "./keybinding-hints.ts";
 import { MenuPanel, MenuSearchInput } from "./menu-panel.ts";
@@ -183,18 +182,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 			this.addInstructions(instructions);
 		}
 
-		// Try to open browser
-		const [command, ...args] =
-			process.platform === "darwin"
-				? ["open", url]
-				: process.platform === "win32"
-					? [
-							win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "rundll32.exe"),
-							"url.dll,FileProtocolHandler",
-							url,
-						]
-					: ["xdg-open", url];
-		execFile(command, args, () => {});
+		openBrowser(url);
 
 		this.tui.requestRender();
 	}

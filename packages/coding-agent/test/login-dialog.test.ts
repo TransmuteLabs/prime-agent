@@ -14,11 +14,11 @@ import { stripAnsi } from "../src/utils/ansi.ts";
 
 const mocks = vi.hoisted(() => ({
 	copyToClipboard: vi.fn(),
-	execFile: vi.fn(),
+	openBrowser: vi.fn(),
 }));
 
-vi.mock("child_process", () => ({
-	execFile: mocks.execFile,
+vi.mock("../src/utils/open-browser.ts", () => ({
+	openBrowser: mocks.openBrowser,
 }));
 
 vi.mock("../src/utils/clipboard.js", () => ({
@@ -40,7 +40,7 @@ describe("LoginDialogComponent", () => {
 		setKeybindings(new KeybindingsManager());
 		mocks.copyToClipboard.mockReset();
 		mocks.copyToClipboard.mockResolvedValue(undefined);
-		mocks.execFile.mockClear();
+		mocks.openBrowser.mockClear();
 	});
 
 	afterEach(() => {
@@ -90,28 +90,15 @@ describe("LoginDialogComponent", () => {
 		await vi.waitFor(() => expect(mocks.copyToClipboard).toHaveBeenCalledWith(url));
 	});
 
-	it.each([
-		["darwin", []],
-		["linux", []],
-		["win32", ["url.dll,FileProtocolHandler"]],
-	] as const)("passes hostile URLs as a single argument on %s", (platform, prefixArgs) => {
-		const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue(platform);
-		try {
-			const dialog = new LoginDialogComponent(createFakeTui(), "anthropic", () => {}, "Anthropic");
-			const url = "https://example.com/oauth?state=$(touch /tmp/pwned);whoami&pipe=|id";
-			const command =
-				platform === "darwin"
-					? "open"
-					: platform === "linux"
-						? "xdg-open"
-						: `${process.env.SystemRoot ?? String.raw`C:\Windows`}\\System32\\rundll32.exe`;
+	it("hands the sign-in URL to the single browser opener", () => {
+		const dialog = new LoginDialogComponent(createFakeTui(), "anthropic", () => {}, "Anthropic");
+		const url = "https://example.com/oauth?state=$(touch /tmp/pwned);whoami&pipe=|id";
 
-			dialog.showAuth(url);
+		dialog.showAuth(url);
 
-			expect(mocks.execFile).toHaveBeenCalledWith(command, [...prefixArgs, url], expect.any(Function));
-		} finally {
-			platformSpy.mockRestore();
-		}
+		// The per-platform argv matrix that keeps a hostile URL out of a shell lives with the
+		// opener itself (test/open-browser.test.ts); the dialog owes only the delegation.
+		expect(mocks.openBrowser).toHaveBeenCalledWith(url);
 	});
 
 	it("renders sign-in URLs as OSC 8 hyperlinks when supported", () => {

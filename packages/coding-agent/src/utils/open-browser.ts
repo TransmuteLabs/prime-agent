@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { win32 } from "node:path";
 
 /**
  * Open a URL or file in the platform browser/default handler.
@@ -12,7 +13,11 @@ export function openBrowser(target: string): void {
 		process.platform === "darwin"
 			? ["open", [target]]
 			: process.platform === "win32"
-				? ["rundll32", ["url.dll,FileProtocolHandler", target]]
+				? [
+						// Absolute path, so a rundll32.exe planted earlier on PATH cannot answer instead.
+						win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "rundll32.exe"),
+						["url.dll,FileProtocolHandler", target],
+					]
 				: ["xdg-open", [target]];
 
 	// spawn reports launcher failures (for example, missing xdg-open) via an

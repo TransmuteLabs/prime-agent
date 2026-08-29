@@ -5,8 +5,12 @@ import { LoginDialogComponent } from "../../../src/modes/interactive/components/
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
 
+const mocks = vi.hoisted(() => ({ openBrowser: vi.fn() }));
+
+// Not decoration: showAuth really launches a browser, so a mock that misses the module
+// under test turns every full-suite run into a real tab opened on the developer's desktop.
 vi.mock("../../../src/utils/open-browser.ts", () => ({
-	openBrowser: vi.fn(),
+	openBrowser: mocks.openBrowser,
 }));
 
 function createDialog(): LoginDialogComponent {
@@ -37,6 +41,7 @@ describe("LoginDialogComponent OAuth prompts", () => {
 
 	beforeEach(() => {
 		setKeybindings(new KeybindingsManager());
+		mocks.openBrowser.mockClear();
 	});
 
 	test("keeps previous prompt input stable when a later prompt is active", async () => {
@@ -70,6 +75,7 @@ describe("LoginDialogComponent OAuth prompts", () => {
 		expect(output).toContain("https://example.invalid/login");
 		expect(output).toContain("Authorize the extension");
 		expect(output).toContain("First prompt:");
+		expect(mocks.openBrowser).toHaveBeenCalledWith("https://example.invalid/login");
 	});
 
 	test("preserves neutral information and links when showing a prompt", () => {
