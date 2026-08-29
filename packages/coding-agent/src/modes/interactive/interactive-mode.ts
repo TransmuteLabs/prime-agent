@@ -5837,9 +5837,6 @@ export class InteractiveMode {
 				this.featureHintRunPending = this.getRetryAttempt() === 0;
 				this.resetPendingToolState();
 				this.renderRecap();
-				if (this.settingsManager.getShowTerminalProgress()) {
-					this.ui.terminal.setProgress(true);
-				}
 				if (this.retryCountdown) {
 					this.retryCountdown.dispose();
 					this.retryCountdown = undefined;
@@ -5849,8 +5846,22 @@ export class InteractiveMode {
 					this.retryLoader = undefined;
 				}
 				this.stopWorkingLoader();
+				this.ui.requestRender();
+				break;
+
+			// Progress and the loader belong to the turn, not the run: a run that resumes after
+			// threshold compaction emits turn_start with no second agent_start, and would
+			// otherwise sit with no working indicator until it ends.
+			case "turn_start":
+				if (this.settingsManager.getShowTerminalProgress()) {
+					this.ui.terminal.setProgress(true);
+				}
 				if (this.workingVisible) {
-					this.startWorkingLoader();
+					if (!this.loadingAnimation) {
+						this.startWorkingLoader();
+					}
+				} else {
+					this.stopWorkingLoader();
 				}
 				this.ui.requestRender();
 				break;

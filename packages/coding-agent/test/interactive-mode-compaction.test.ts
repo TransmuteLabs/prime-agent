@@ -198,6 +198,43 @@ describe("InteractiveMode compaction events", () => {
 		}
 	});
 
+	test("restarts the working loader when the same agent run resumes after compaction", async () => {
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			updateConnectionStateFromEvent: vi.fn(),
+			activityTracker: new AgentActivityTracker(),
+			updateWorkingLoaderMessage: vi.fn(),
+			workingVisible: true,
+			loadingAnimation: undefined as unknown,
+			startWorkingLoader: vi.fn(function (this: { loadingAnimation: unknown }) {
+				this.loadingAnimation = {};
+			}),
+			stopWorkingLoader: vi.fn(function (this: { loadingAnimation: unknown }) {
+				this.loadingAnimation = undefined;
+			}),
+			settingsManager: { getShowTerminalProgress: () => true },
+			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
+		};
+
+		await handleEvent.call(fakeThis, { type: "turn_start" });
+
+		expect(fakeThis.ui.terminal.setProgress).toHaveBeenCalledWith(true);
+		expect(fakeThis.startWorkingLoader).toHaveBeenCalledTimes(1);
+		expect(fakeThis.stopWorkingLoader).not.toHaveBeenCalled();
+
+		// A second turn of the same run must not restart the loader and reset its elapsed time.
+		await handleEvent.call(fakeThis, { type: "turn_start" });
+		expect(fakeThis.startWorkingLoader).toHaveBeenCalledTimes(1);
+
+		fakeThis.workingVisible = false;
+		await handleEvent.call(fakeThis, { type: "turn_start" });
+
+		expect(fakeThis.startWorkingLoader).toHaveBeenCalledTimes(1);
+		expect(fakeThis.stopWorkingLoader).toHaveBeenCalledTimes(1);
+		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(3);
+	});
+
 	test("shows manual warning-severity outcomes as warnings, not errors", async () => {
 		const fakeThis = createFakeThis();
 

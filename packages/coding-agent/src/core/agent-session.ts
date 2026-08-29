@@ -1134,6 +1134,9 @@ export class AgentSession {
 
 	/** Session-owned actions. Items are never fed into Agent.steer/followUp. */
 	private readonly _actionStore = new ActionStore<QueuedSessionAction>();
+	// Actions handed to the agent's steering queue mid-run: still undelivered, so an abort has to be
+	// able to take them back before the loop polls them.
+	private readonly _steeredIntoActiveRun = new Set<QueuedSessionAction>();
 	private _sessionInputPump: Promise<void> = Promise.resolve();
 	private _sessionInputPumpRequested = false;
 	// Invalidates preparation when a branch pause starts and finishes before its next await resumes.
@@ -1675,8 +1678,9 @@ export class AgentSession {
 				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
-			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
-			const previousContext = previousSnapshot?.context ?? turn.context;
+			const context = await this._compactBeforeNextAssistantResponse(turn);
+			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
+			const previousContext = previousSnapshot?.context ?? context;
 			return {
 				...previousSnapshot,
 				context: {
@@ -2487,24 +2491,43 @@ export class AgentSession {
 			await this._agentEventQueue;
 			await this._runSerializedRefineCheckpoint();
 		}
-		if (await this._shouldStopForThresholdCompaction(context)) {
-			return true;
-		}
-		// Steering stops continuation only after mandatory serialized checkpoints.
-		// Returning true here still prevents the agent loop from starting another turn.
+		// Steering rides the run it was aimed at: the loop polls its steering queue immediately
+		// after this hook, so handing the queued turns over here delivers them into the current run
+		// instead of stopping it and starting a second one. Whatever the handover cannot take -
+		// an action another dispatch already owns - still stops the loop, as before.
+		await this._deliverQueuedSteeringIntoActiveRun();
 		return this._steeringStopPending;
 	}
 
-	private async _shouldStopForThresholdCompaction(context: ShouldStopAfterTurnContext): Promise<boolean> {
+	/**
+	 * Threshold compaction runs where the loop is about to issue the next provider request, not
+	 * by stopping the loop and resuming it: the agent loop calls this only when another turn
+	 * actually happens, so a tool batch that terminates the run is never compacted here (the
+	 * run-end path owns that case), and a compaction mid tool loop keeps the same run.
+	 */
+	private async _compactBeforeNextAssistantResponse(turn: PrepareNextTurnContext): Promise<AgentContext> {
 		this._continueAfterThresholdCompaction = false;
-		if (this._pendingRequestedCompaction === undefined && !(await this._thresholdCompactionNeeded(context))) {
-			return false;
+		if (this._pendingRequestedCompaction === undefined && !(await this._thresholdCompactionNeeded(turn))) {
+			return turn.context;
 		}
 
 		const lastMessage = this.agent.state.messages[this.agent.state.messages.length - 1];
 		// A queued continuation disproves the assistant-last "task finished" heuristic, so preserve a true set above.
 		this._continueAfterThresholdCompaction ||= lastMessage !== undefined && lastMessage.role !== "assistant";
-		return true;
+		// A model-requested compaction keeps its own reason here: the run-end path is no longer the
+		// only place it can be serviced, and its instructions, events and messages differ.
+		const reason = this._pendingRequestedCompaction !== undefined ? "requested" : "threshold";
+		// The loop owns the next turn, so no post-compaction continuation may be scheduled on top
+		// of it; the queued goal/autonomous messages still travel with the compaction.
+		await this._runAutoCompaction(reason, false, false);
+		// The loop re-polls steering as soon as this hook returns, so anything admitted while
+		// compaction ran has to reach the agent's queue before that: deliver it here rather than
+		// through the pump chain, whose current link owns this very run and cannot be awaited.
+		await this._deliverQueuedSteeringIntoActiveRun();
+		return {
+			...turn.context,
+			messages: this.agent.state.messages.slice(),
+		};
 	}
 
 	/**
@@ -3736,6 +3759,13 @@ export class AgentSession {
 						state: "running",
 						execution: "agent_turn",
 					});
+					// A steered action owns the delivery, not the run that consumes it, so the run's own
+					// dispatch cannot close it: it finishes here, where its message became durable.
+					if (this._steeredIntoActiveRun.delete(action)) {
+						transitionSessionAction(action, { state: "completed" });
+						this._actionStore.ticketFor(action).settleCompleted();
+						this._settleAgentMessage(action.agentMessageId, "completion");
+					}
 					this._notifySessionInputCheckpointChange();
 					this._emitQueueUpdate();
 				}
@@ -5691,6 +5721,86 @@ export class AgentSession {
 		return messages;
 	}
 
+	/**
+	 * Deliver queued steering into the run that is currently executing: the loop re-polls its
+	 * steering queue after every turn and again after next-turn preparation, so the message rides
+	 * that run instead of waiting for it to end. The pump cannot drive this from inside the run -
+	 * its chain is serial and the link that started the run only settles when the run ends - so
+	 * selection and preparation happen here. Steering admitted while the run is idle keeps the
+	 * prompt path.
+	 */
+	private async _deliverQueuedSteeringIntoActiveRun(): Promise<void> {
+		while (this._canSteerIntoActiveRun()) {
+			const action = this._actionStore.selectFirst();
+			if (!action) return;
+			if (action.delivery !== "next_turn_boundary" || action.payload.kind !== "turn") {
+				this._actionStore.rollback(action);
+				return;
+			}
+			transitionSessionAction(action, { state: "preparing" });
+			this._notifySessionInputCheckpointChange();
+			this._emitQueueUpdate();
+			try {
+				await this._startPreparedTurnActions([action], this._sessionInputPumpEpoch);
+			} catch {
+				// A refused or deferred handoff leaves the action for the pump to retry; the loop
+				// must keep going either way.
+				return;
+			}
+			// A handed-over action finishes on its own message events, not here: it is delivered when
+			// the loop starts its message, and only then is it beyond recall. Anything that reached
+			// the transcript by another route still has to be closed, and anything that reached
+			// neither goes back to the queue.
+			if (!this._steeredIntoActiveRun.has(action) && action.lifecycle.state === "committing") {
+				const primary = primaryDeliveryRecord(action);
+				if (primary.durable || this.agent.state.messages.includes(primary.message)) {
+					primary.durable = true;
+					transitionSessionAction(action, { state: "running", execution: "agent_turn" });
+					transitionSessionAction(action, { state: "completed" });
+					this._actionStore.ticketFor(action).settleCompleted();
+					this._settleAgentMessage(action.agentMessageId, "completion");
+				} else {
+					this._actionStore.rollback(action, { dispatchSettled: true, transcript: this.agent.state.messages });
+				}
+			}
+			this._emitQueueUpdate();
+		}
+	}
+
+	/**
+	 * Take back messages handed to the agent's steering queue that the loop never started. Without
+	 * this an abort leaves them invisible to the queue and delivers them to a later run.
+	 */
+	private _reclaimSteeredActionsNotYetStarted(): void {
+		const reclaimed = [...this._steeredIntoActiveRun].filter(
+			(action) => action.lifecycle.state === "committing" && !primaryDeliveryRecord(action).started,
+		);
+		if (reclaimed.length === 0) return;
+		const messages = new Set<AgentMessage>(
+			reclaimed
+				.flatMap((action) => (action.payload.kind === "turn" ? action.payload.records : []))
+				.map((record) => record.message),
+		);
+		this._removeQueuedMessages((message) => messages.has(message));
+		const transcript = this.agent.state.messages;
+		for (const action of reclaimed) {
+			this._steeredIntoActiveRun.delete(action);
+			this._actionStore.rollback(action, { dispatchSettled: true, transcript });
+		}
+		this._emitQueueUpdate();
+	}
+
+	private _canSteerIntoActiveRun(): boolean {
+		if (!this.agent.isRunning) return false;
+		// The active run is the only blocker this delivery overrides. Everything else that stops the
+		// pump from selecting an action stops the handover too - above all a scheduler suspended by
+		// an abort, which must leave the queued steering visible for the next run instead of
+		// handing it to a loop that is already unwinding.
+		if (!canSelectSessionAction({ ...this._runtimeActivity(), lowerAgentRun: false })) return false;
+		const next = this._actionStore.queuedActions("next_turn_boundary")[0];
+		return next?.payload.kind === "turn";
+	}
+
 	private _deliveryPolicy(schedule: SessionInputSchedule): DeliveryPolicy {
 		return schedule === "steer" ? "next_turn_boundary" : "when_run_idle";
 	}
@@ -5940,7 +6050,7 @@ export class AgentSession {
 			!options.restore &&
 			options.wake !== false &&
 			(disposition === "starts_when_admitted" ||
-				(action.delivery === "next_turn_boundary" && this.isStreaming) ||
+				(action.delivery === "next_turn_boundary" && this.agent.isRunning) ||
 				action.payload.kind === "session_command" ||
 				action.wake === "immediate")
 		) {
@@ -6034,7 +6144,7 @@ export class AgentSession {
 		let blocked = false;
 		try {
 			while (!this._disposed && !this._disposing && this._hasSelectableSessionInput()) {
-				await this.agent.waitForIdle();
+				if (!this._canSteerIntoActiveRun()) await this.agent.waitForIdle();
 				const preselected = this._actionStore
 					.activeActions()
 					.find((action) => action.lifecycle.state === "selected");
@@ -6092,7 +6202,7 @@ export class AgentSession {
 					for (const action of actions) {
 						if (action.lifecycle.state === "committing") {
 							const primary = primaryDeliveryRecord(action);
-							if (this.agent.state.messages.includes(primary.message)) {
+							if (primary.durable || this.agent.state.messages.includes(primary.message)) {
 								primary.durable = true;
 								transitionSessionAction(action, {
 									state: "running",
@@ -6291,6 +6401,7 @@ export class AgentSession {
 			);
 		const firstTurn = activeTurns()[0];
 		if (!firstTurn) return;
+		let steeredIntoActiveRun = false;
 		const executionPolicy = firstTurn.payload.executionPolicy;
 		const restoreNextTurnContext = () => {
 			this._pendingNextTurnMessages.unshift(...nextTurnMessages);
@@ -6349,9 +6460,11 @@ export class AgentSession {
 			let promptPromise: Promise<void>;
 			try {
 				promptPromise = this._sessionActionCommitContext.run(commitFence.owner, () => {
+					const steerIntoActiveRun =
+						this.agent.isRunning && turns.every((action) => action.delivery === "next_turn_boundary");
 					if (
 						this._isSessionInputHandoffDeferred(epoch) ||
-						this.isStreaming ||
+						((this.isStreaming || this.agent.isRunning) && !steerIntoActiveRun) ||
 						turns.some((action) => action.lifecycle.state !== "preparing")
 					) {
 						throw new DeferredSessionInputError("Agent became active before session input handoff");
@@ -6382,6 +6495,17 @@ export class AgentSession {
 					for (const action of turns) transitionSessionAction(action, { state: "committing" });
 					this._notifySessionInputCheckpointChange();
 					this._emitQueueUpdate();
+					if (steerIntoActiveRun) {
+						steeredIntoActiveRun = true;
+						// The run belongs to the loop, not to this dispatch. Waiting for it here would
+						// deadlock a caller that is inside that run, so the dispatch settles on the
+						// enqueue: once the message is in the steering queue the loop owns its delivery.
+						this.agent.steer(preparedMessages);
+						// The action stays committing until the loop actually starts the message, which is
+						// what lets an abort roll it back into the queue instead of stranding it.
+						for (const action of turns) this._steeredIntoActiveRun.add(action);
+						return Promise.resolve();
+					}
 					return this._agentRunContext.run(true, () =>
 						turns.some((action) => action.suppressAutonomousContinuation)
 							? this._runWithAutonomousContinuationSuppressed(() => this.agent.prompt(preparedMessages))
@@ -6392,6 +6516,9 @@ export class AgentSession {
 				commitFence.release();
 			}
 			await promptPromise;
+			// The steered message is in the agent's queue by design; the transcript checks below
+			// belong to the prompt path, which owns the run it started.
+			if (steeredIntoActiveRun) return;
 			if (executionPolicy.completionIncludesRetryChain) await this.waitForRetry();
 			if (!this._hasCancelledDispatchCapture()) await this._agentEventQueue;
 			if (
@@ -7286,6 +7413,7 @@ export class AgentSession {
 		this._sessionInputPumpSuspended = true;
 		this._sessionInputSuspendedForUpdateRestart = false;
 		this._demoteRlmTerminalNoticeActions();
+		this._reclaimSteeredActionsNotYetStarted();
 		this._cancelSessionActions(
 			(action) =>
 				action.payload.kind === "turn" &&

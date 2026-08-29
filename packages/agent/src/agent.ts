@@ -348,6 +348,11 @@ export class Agent {
 		return this.activeRun?.promise ?? Promise.resolve();
 	}
 
+	/** Whether a run is active, including inside the turn-boundary hooks where no request is in flight. */
+	get isRunning(): boolean {
+		return this.activeRun !== undefined;
+	}
+
 	reset(): void {
 		if (this.activeRun) {
 			throw new Error("Agent is already processing. Wait for completion before resetting.");

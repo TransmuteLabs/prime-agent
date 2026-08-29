@@ -319,15 +319,17 @@ describe("Serialized agent-callable refine", () => {
 		internals._admitSessionInput(internals._createPreparedTurnAction("steer", "steer", undefined, {}));
 		const compactionSpy = vi
 			.spyOn(
-				internals as unknown as { _shouldStopForThresholdCompaction: (ctx: unknown) => Promise<boolean> },
-				"_shouldStopForThresholdCompaction",
+				internals as unknown as { _runAutoCompaction: (...args: unknown[]) => Promise<boolean> },
+				"_runAutoCompaction",
 			)
 			.mockResolvedValue(false);
 
 		const shouldStop = await internals._shouldStopAfterTurn(makeCtx("turn"));
 
 		expect(applyRefine).toHaveBeenCalledTimes(1);
-		expect(compactionSpy).toHaveBeenCalledTimes(1);
+		// Compaction moved to the later next-turn hook, so no compaction model call can reach this
+		// boundary at all - the refine checkpoint owns it alone.
+		expect(compactionSpy).not.toHaveBeenCalled();
 		expect(shouldStop).toBe(true);
 	});
 
@@ -1728,17 +1730,23 @@ describe("P0 concurrency regressions", () => {
 			return emptyRefinementResult();
 		});
 
-		// Spy on _shouldStopForThresholdCompaction: assert apply finished
-		// when compaction check runs, return true to simulate compaction firing.
+		// Assert the apply finished by the time the compaction decision runs, and report a needed
+		// compaction so the next-turn hook proceeds to _runAutoCompaction.
 		const compactionSpy = vi
 			.spyOn(
-				internals as unknown as { _shouldStopForThresholdCompaction: (ctx: unknown) => Promise<boolean> },
-				"_shouldStopForThresholdCompaction",
+				internals as unknown as { _thresholdCompactionNeeded: (ctx: unknown) => Promise<boolean> },
+				"_thresholdCompactionNeeded",
 			)
 			.mockImplementation(async () => {
 				expect(applyFinished).toBe(true);
 				return true;
 			});
+		const runCompactionSpy = vi
+			.spyOn(
+				internals as unknown as { _runAutoCompaction: (...args: unknown[]) => Promise<boolean> },
+				"_runAutoCompaction",
+			)
+			.mockResolvedValue(false);
 
 		// Start background planning at message_end
 		internals._assistantTurnsSinceAutoRefine++;
@@ -1749,11 +1757,16 @@ describe("P0 concurrency regressions", () => {
 		// Wait for plan to start but not finish
 		await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
-		// _shouldStopAfterTurn: serialized checkpoint runs BEFORE compaction.
-		// Checkpoint awaits background plan, applies it. Then compaction fires.
+		// _shouldStopAfterTurn: the serialized checkpoint awaits the background plan and applies it.
+		// Compaction happens in the next-turn hook that follows, never inside the checkpoint.
 		const result = await internals._shouldStopAfterTurn(makeCtx("turn"));
+		expect(compactionSpy).not.toHaveBeenCalled();
+		await (
+			internals as unknown as { _compactBeforeNextAssistantResponse: (turn: unknown) => Promise<unknown> }
+		)._compactBeforeNextAssistantResponse(makeCtx("turn"));
 
 		expect(compactionSpy).toHaveBeenCalledTimes(1);
+		expect(runCompactionSpy).toHaveBeenCalledTimes(1);
 		expect(result).toBe(true);
 		expect(internals._assistantTurnsSinceAutoRefine).toBe(0);
 	});

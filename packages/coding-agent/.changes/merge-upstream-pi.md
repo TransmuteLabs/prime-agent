@@ -5,6 +5,9 @@
 - Added RPC `clear_queue` to retrieve and remove queued steering and follow-up messages ([#8432](https://github.com/earendil-works/pi/issues/8432)).
 - Added environment variables and advanced settings for overriding auto-detected terminal hyperlink, image, and truecolor capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
 - Added `fullscreenCopyOnSelect` to disable automatic fullscreen selection copy; when disabled, `Ctrl+X` copies the active text selection before falling back to the last assistant message, while `/tree` still copies the selected message ([#7720](https://github.com/earendil-works/pi/issues/7720)).
+- Changed threshold compaction to run inside the agent run, just before the next assistant response, instead of stopping the run and resuming it afterwards.
+- Changed queued steering to be delivered into the turn the agent is already running, instead of stopping that run and starting a second one for the steered message.
+- Fixed the login dialog opening its browser through a private copy of the opener, which bypassed the hardened Windows launch path.
 - Fixed implicit project trust persistence after `/reload` when a project config dir appears mid-session.
 - Fixed toggling thinking visibility clearing partial output from running Bash tools ([#8611](https://github.com/earendil-works/pi/issues/8611)).
 - Fixed Windows shell aborts crashing the agent when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).

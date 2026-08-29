@@ -82,6 +82,8 @@
 
 ## [0.2.0] - 2026-06-23
 
+## [0.84.4] - 2026-08-28
+
 ### Added
 
 - Added an optional `commandColor` to the editor theme so a leading slash command stays highlighted while its argument is being typed.

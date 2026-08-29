@@ -1,10 +1,11 @@
 /**
  * Regression tests: the agent must keep working after an auto-compaction that interrupted
- * unfinished work. BUG A: a skipped/failed threshold compaction that stopped a tool loop must
- * resume it. BUG B: an assistant-text-turn threshold stop reads as "task finished", so an
- * active goal queues its continuation as a session input before compaction.
+ * unfinished work. BUG A: a skipped/failed threshold compaction must not strand the work it
+ * interrupted - in the loop the loop itself owns the next turn, at run end a queued continuation
+ * has to restart it. BUG B: an assistant-text-turn threshold compaction reads as "task finished",
+ * so an active goal queues its continuation as a session input before compaction.
  */
-import type { AgentMessage, ShouldStopAfterTurnContext } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, PrepareNextTurnContext, ShouldStopAfterTurnContext } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
 	fauxAssistantMessage,
@@ -18,8 +19,13 @@ import type { AgentSession } from "../../src/core/agent-session.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 type SessionInternals = {
-	_shouldStopAfterTurn: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
-	_runAutoCompaction: (reason: "overflow" | "threshold" | "requested", willRetry: boolean) => Promise<boolean>;
+	_thresholdCompactionNeeded: (context: ShouldStopAfterTurnContext) => Promise<boolean>;
+	_compactBeforeNextAssistantResponse: (turn: PrepareNextTurnContext) => Promise<unknown>;
+	_runAutoCompaction: (
+		reason: "overflow" | "threshold" | "requested",
+		willRetry: boolean,
+		queueAutonomousContinuation?: boolean,
+	) => Promise<boolean>;
 	_performCompaction: (options: {
 		model: unknown;
 		apiKey: string;
@@ -116,7 +122,7 @@ describe("compaction continuation", () => {
 		};
 	}
 
-	it("resumes the interrupted tool loop when a threshold compaction is skipped", async () => {
+	it("keeps the tool loop for itself when an in-loop threshold compaction is skipped", async () => {
 		vi.useFakeTimers();
 		const harness = await createHarness({
 			settings: { compaction: { enabled: true, reserveTokens: 1000 } },
@@ -124,16 +130,39 @@ describe("compaction continuation", () => {
 		});
 		harnesses.push(harness);
 		const internals = harness.session as unknown as SessionInternals;
-		const context = midToolLoopContext(harness);
-
-		// toolResult-last makes the session stop the loop for compaction AND continue afterwards.
-		const shouldStop = await internals._shouldStopAfterTurn(context);
-		expect(shouldStop).toBe(true);
-		expect(internals._continueAfterThresholdCompaction).toBe(true);
+		const turn = midToolLoopContext(harness);
 
 		const continueSpy = vi.spyOn(harness.session.agent, "continue").mockResolvedValue();
 
 		// The in-memory session has no persisted entries, so _performCompaction throws CompactionSkippedError.
+		await internals._compactBeforeNextAssistantResponse(turn);
+		await vi.advanceTimersByTimeAsync(500);
+
+		const endEvents = harness.eventsOfType("compaction_end");
+		expect(endEvents).toHaveLength(1);
+		expect(endEvents[0].errorMessage).toContain("skipped");
+
+		// toolResult-last still marks the work unfinished, but this hook runs inside the turn the
+		// loop is already preparing: resuming here would run that turn twice.
+		expect(internals._continueAfterThresholdCompaction).toBe(false);
+		expect(continueSpy).not.toHaveBeenCalled();
+	});
+
+	it("resumes from the run-end route when a threshold compaction is skipped", async () => {
+		vi.useFakeTimers();
+		const harness = await createHarness({
+			settings: { compaction: { enabled: true, reserveTokens: 1000 } },
+			models: [{ id: "faux-1", contextWindow: 200_000 }],
+		});
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionInternals;
+		midToolLoopContext(harness);
+		// The agent_end route compacts after the loop has already stopped, so the queued
+		// continuation is the only thing that can restart the interrupted work.
+		internals._continueAfterThresholdCompaction = true;
+
+		const continueSpy = vi.spyOn(harness.session.agent, "continue").mockResolvedValue();
+
 		await internals._runAutoCompaction("threshold", false);
 		await vi.advanceTimersByTimeAsync(500);
 
@@ -334,8 +363,8 @@ describe("compaction continuation", () => {
 		const internals = harness.session as unknown as SessionInternals;
 		const context = midToolLoopContext(harness);
 
-		const shouldStop = await internals._shouldStopAfterTurn(context);
-		expect(shouldStop).toBe(true);
+		const needsCompaction = await internals._thresholdCompactionNeeded(context);
+		expect(needsCompaction).toBe(true);
 		expect(internals._continueAfterThresholdCompaction).toBe(true);
 
 		expect(harness.session.queuedActionCount).toBe(1);
@@ -357,13 +386,13 @@ describe("compaction continuation", () => {
 		const internals = harness.session as unknown as SessionInternals;
 		const context = midToolLoopContext(harness);
 
-		const shouldStop = await internals._shouldStopAfterTurn(context);
-		expect(shouldStop).toBe(true);
+		const needsCompaction = await internals._thresholdCompactionNeeded(context);
+		expect(needsCompaction).toBe(true);
 		expect(harness.session.queuedActionCount).toBe(1);
 		expect(harness.session.goalState.continuationsUsed).toBe(1);
 
 		vi.spyOn(internals, "_performCompaction").mockRejectedValue(new Error("Compaction cancelled"));
-		await internals._runAutoCompaction("threshold", false);
+		await internals._runAutoCompaction("threshold", false, false);
 
 		const endEvents = harness.eventsOfType("compaction_end");
 		expect(endEvents).toHaveLength(1);
@@ -371,9 +400,9 @@ describe("compaction continuation", () => {
 		expect(harness.session.queuedActionCount).toBe(0);
 		expect(harness.session.goalState.continuationsUsed).toBe(0);
 
-		// The cancellation must not consume the continuation: the next natural threshold stop re-queues it.
-		const shouldStopAgain = await internals._shouldStopAfterTurn(context);
-		expect(shouldStopAgain).toBe(true);
+		// The cancellation must not consume the continuation: the next threshold compaction re-queues it.
+		const needsCompactionAgain = await internals._thresholdCompactionNeeded(context);
+		expect(needsCompactionAgain).toBe(true);
 		expect(harness.session.queuedActionCount).toBe(1);
 		expect(harness.session.goalState.continuationsUsed).toBe(1);
 	});
@@ -392,17 +421,17 @@ describe("compaction continuation", () => {
 		const internals = harness.session as unknown as SessionInternals;
 		const context = midToolLoopContext(harness);
 
-		await internals._shouldStopAfterTurn(context);
+		await internals._thresholdCompactionNeeded(context);
 		expect(harness.session.goalState.continuationsUsed).toBe(1);
 
 		// Completing the goal clears the queued continuation but leaves the marker stale.
 		harness.session.handleGoalHostRequest("goal.complete");
 		expect(harness.session.queuedActionCount).toBe(0);
 
-		const shouldStop = await internals._shouldStopAfterTurn(context);
-		expect(shouldStop).toBe(true);
+		const needsCompaction = await internals._thresholdCompactionNeeded(context);
+		expect(needsCompaction).toBe(true);
 		vi.spyOn(internals, "_performCompaction").mockRejectedValue(new Error("Compaction cancelled"));
-		await internals._runAutoCompaction("threshold", false);
+		await internals._runAutoCompaction("threshold", false, false);
 
 		expect(harness.session.goalState.status).toBe("complete");
 		expect(harness.session.goalState.continuationsUsed).toBe(1);

@@ -1,11 +1,11 @@
-import type { ShouldStopAfterTurnContext } from "@earendil-works/pi-agent-core";
+import type { PrepareNextTurnContext } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
 
 type SessionInternals = {
 	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
-	_shouldStopAfterTurn: (context: ShouldStopAfterTurnContext) => Promise<boolean>;
+	_compactBeforeNextAssistantResponse: (turn: PrepareNextTurnContext) => Promise<unknown>;
 	_createKernelHostHandlers: () => Record<string, unknown>;
 };
 
@@ -109,13 +109,24 @@ describe("AgentSession compact skill host requests", () => {
 		setStreaming(harness, false);
 
 		const internals = harness.session as unknown as SessionInternals;
-		await expect(
-			internals._shouldStopAfterTurn({ message: createAssistant(harness) } as ShouldStopAfterTurnContext),
-		).resolves.toBe(true);
+		// The loop reaches the requested compaction before the run ends, and it keeps its own
+		// reason there; the run-end check must then find it already consumed.
+		await internals._compactBeforeNextAssistantResponse({
+			message: createAssistant(harness),
+			toolResults: [],
+			hasMoreToolCalls: false,
+			newMessages: [],
+			context: {
+				systemPrompt: harness.session.systemPrompt,
+				messages: harness.session.agent.state.messages,
+				tools: [],
+			},
+		});
 		await internals._checkCompaction(createAssistant(harness));
 
 		const compactionEntries = harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction");
 		expect(compactionEntries).toHaveLength(1);
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({ reason: "requested" });
 	});
 
 	it("drops a pending requested compaction when the turn is aborted", async () => {
