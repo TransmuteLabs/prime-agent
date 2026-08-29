@@ -496,11 +496,16 @@ describe("AgentSession compaction characterization", () => {
 		await harness.session.prompt("seed old history");
 		await harness.session.prompt("seed recent history");
 		const agentStartsBefore = harness.eventsOfType("agent_start").length;
+		const compactionStartsBefore = harness.eventsOfType("compaction_start").length;
 		await harness.session.prompt("run the large tool");
 
-		expect(order).toEqual(["compaction", "provider"]);
+		// Only the in-run compaction is characterized here. The compacted context still
+		// carries the 6.8k tool result, so the turn's own response can cross the limit
+		// again and a further compaction may follow at the next boundary - assert the
+		// run's first compaction by index rather than whichever one happens to be last.
+		expect(order.slice(0, 2)).toEqual(["compaction", "provider"]);
 		expect(harness.eventsOfType("agent_start")).toHaveLength(agentStartsBefore + 1);
-		expect(harness.eventsOfType("compaction_start").at(-1)).toEqual({
+		expect(harness.eventsOfType("compaction_start")[compactionStartsBefore]).toEqual({
 			type: "compaction_start",
 			reason: "threshold",
 		});
