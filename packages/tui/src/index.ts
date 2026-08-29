@@ -75,6 +75,11 @@ export {
 // LaTeX rendering
 export { type RenderLatexOptions, renderLatex } from "./latex.ts";
 export { VersionedRenderCache } from "./render-cache.ts";
+export type {
+	TableCellPosition,
+	TableCellRange,
+	TableCellSelectionRegion,
+} from "./selection-metadata.ts";
 export { getSlashCommandContext, type SlashCommandContext } from "./slash-command-context.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";

@@ -16,6 +16,14 @@ import {
 	renderLayoutFrame,
 	type ScrollbarGeometry,
 } from "./layout.ts";
+import {
+	closestTableCell,
+	type TableCellPosition,
+	type TableCellRange,
+	type TableCellSelectionRegion,
+	tableAtPoint,
+	tableCellRange,
+} from "./selection-metadata.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	deleteAllKittyImages,
@@ -106,6 +114,37 @@ interface SelectionRange {
 }
 
 type SelectionGranularity = "character" | "word" | "line";
+
+/** A half-open column range of one rendered line. */
+interface ColumnSpan {
+	start: number;
+	end: number;
+}
+
+/**
+ * A drag that began inside a rendered markdown table selects whole cells of that table instead of
+ * raw screen text, so the copied text is the table's own content rather than what wrapping and
+ * borders made of it.
+ */
+interface ActiveTableSelection {
+	table: object;
+	anchor: TableCellPosition;
+	/**
+	 * Content of the anchor cell at press time. Table identity is positional within its component,
+	 * so it survives appended and growing tables but would re-bind if a table were inserted above;
+	 * re-validating the anchor drops the selection instead of copying a different table.
+	 */
+	anchorContent: string;
+	scrollView: ScrollView;
+}
+
+/** The shape of a table drag: which cells it covers, and whether it stays inside one rendered line. */
+interface TableSelectionShape {
+	regions: ReadonlyArray<TableCellSelectionRegion>;
+	range: TableCellRange;
+	/** A drag inside a single cell that never crosses that cell's own wrap: selected by column. */
+	partial: boolean;
+}
 
 interface ClickTarget {
 	timestamp: number;
@@ -201,6 +240,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private selectionFocus?: SelectionPoint;
 	private selectionGranularity: SelectionGranularity = "character";
 	private selectionInitialRange?: SelectionRange;
+	private activeTableSelection?: ActiveTableSelection;
 	private lastClick?: ClickTarget;
 	private selectionDragPointer?: { x: number; y: number };
 	private selectionAutoScrollDirection: -1 | 0 | 1 = 0;
@@ -234,6 +274,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			invalidate: () => {
 				for (const child of this.children) child.invalidate();
 			},
+			getSelectionRegions: () => super.getSelectionRegions(),
 		};
 		this.implicitScrollView = new ScrollView(this.implicitDocument, { follow: "end", primary: true });
 		this.flashes = new AltScreenFlashContainer(() => this.requestRender());
@@ -315,6 +356,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.selectionFocus = undefined;
 		this.selectionGranularity = "character";
 		this.selectionInitialRange = undefined;
+		this.activeTableSelection = undefined;
 		this.lastClick = undefined;
 		this.pressedUrl = undefined;
 		this.selectionDragged = false;
@@ -610,6 +652,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				this.selectionFocus = undefined;
 				this.selectionGranularity = "character";
 				this.selectionInitialRange = undefined;
+				this.activeTableSelection = undefined;
 				if (hadNonEmptyActiveSelection) this.requestRender();
 			}
 			this.lastClick = undefined;
@@ -838,6 +881,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.selectionFocus = undefined;
 		this.selectionGranularity = "character";
 		this.selectionInitialRange = undefined;
+		this.activeTableSelection = undefined;
 		this.lastClick = undefined;
 		this.pressedUrl = undefined;
 		this.selectionDragged = false;
@@ -1059,6 +1103,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (clickedUrl && this.openUrl) {
 				this.selectionAnchor = undefined;
 				this.selectionFocus = undefined;
+				this.activeTableSelection = undefined;
 				try {
 					this.openUrl(clickedUrl);
 				} catch {
@@ -1095,6 +1140,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.selectionInitialRange = range;
 		this.selectionAnchor = range?.start ?? anchor;
 		this.selectionFocus = range?.end ?? anchor;
+		this.activeTableSelection = range ? undefined : this.tableSelectionAt(anchor);
 		this.selectionDragged = false;
 		this.pressedUrl = range
 			? undefined
@@ -1103,6 +1149,187 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 					Math.max(0, Math.min(this.terminal.columns - 1, event.x)),
 				);
 		this.requestRender();
+	}
+
+	private getTableSelectionRegions(
+		scrollView: ScrollView | undefined,
+		layout = this.currentLayout,
+	): ReadonlyArray<TableCellSelectionRegion> {
+		if (!scrollView || !layout) return [];
+		return getScrollViewBox(layout, scrollView)?.scrollSelectionRegions ?? [];
+	}
+
+	private getScrollContentLines(scrollView: ScrollView, layout = this.currentLayout): readonly string[] {
+		if (!layout) return [];
+		return getScrollViewBox(layout, scrollView)?.scrollContentLines ?? [];
+	}
+
+	/** The table selection a press at `point` starts, if the point lies inside a rendered table. */
+	private tableSelectionAt(point: SelectionPoint): ActiveTableSelection | undefined {
+		if (!point.scrollView) return undefined;
+		const regions = this.getTableSelectionRegions(point.scrollView);
+		if (regions.length === 0) return undefined;
+		const table = tableAtPoint(regions, point);
+		if (!table) return undefined;
+		const anchor = closestTableCell(regions, table, point);
+		if (!anchor) return undefined;
+		const anchorContent = regions.find(
+			(region) => region.table === table && region.row === anchor.row && region.column === anchor.column,
+		)?.content;
+		return anchorContent === undefined ? undefined : { table, anchor, anchorContent, scrollView: point.scrollView };
+	}
+
+	/** The active table selection, when the given bounds still belong to it. */
+	private getActiveTableSelection(selection: {
+		start: SelectionPoint;
+		end: SelectionPoint;
+	}): ActiveTableSelection | undefined {
+		const active = this.activeTableSelection;
+		return active && selection.start.scrollView === active.scrollView ? active : undefined;
+	}
+
+	/** The cell rectangle spanned by the anchor cell and the cell nearest the drag head. */
+	private getTableCellRange(
+		active: ActiveTableSelection,
+		regions: ReadonlyArray<TableCellSelectionRegion>,
+	): TableCellRange | undefined {
+		const head = this.selectionFocus;
+		if (!head) return undefined;
+		const anchorStillThere = regions.some(
+			(region) =>
+				region.table === active.table &&
+				region.row === active.anchor.row &&
+				region.column === active.anchor.column &&
+				region.content === active.anchorContent,
+		);
+		if (!anchorStillThere) return undefined;
+		const headCell = closestTableCell(regions, active.table, head);
+		return headCell ? tableCellRange(active.anchor, headCell) : undefined;
+	}
+
+	/**
+	 * Rendered runs of one logical cell that the drag actually touches. A cell wrapped over several
+	 * lines is only ever copied whole, so a drag crossing its wrap must not be sliced by column.
+	 */
+	private touchedCellRegions(
+		regions: ReadonlyArray<TableCellSelectionRegion>,
+		active: ActiveTableSelection,
+		cell: TableCellPosition,
+		selection: { start: SelectionPoint; end: SelectionPoint },
+	): TableCellSelectionRegion[] {
+		return regions.filter(
+			(region) =>
+				region.table === active.table &&
+				region.row === cell.row &&
+				region.column === cell.column &&
+				region.line >= selection.start.row &&
+				region.line <= selection.end.row,
+		);
+	}
+
+	private getTableSelectionShape(
+		selection: { start: SelectionPoint; end: SelectionPoint },
+		active: ActiveTableSelection,
+		layout = this.currentLayout,
+	): TableSelectionShape | undefined {
+		const regions = this.getTableSelectionRegions(active.scrollView, layout);
+		const range = this.getTableCellRange(active, regions);
+		if (!range) return undefined;
+		const singleCell = range.fromRow === range.toRow && range.fromColumn === range.toColumn;
+		const touched = singleCell
+			? this.touchedCellRegions(regions, active, { row: range.fromRow, column: range.fromColumn }, selection)
+			: [];
+		return { regions, range, partial: touched.length === 1 };
+	}
+
+	/**
+	 * Selected column spans per content line of the table, keyed by content row. Spans cover whole
+	 * cells unless the drag is confined to one rendered line of one cell, where it keeps character
+	 * granularity.
+	 */
+	private getTableSelectionSpans(
+		selection: { start: SelectionPoint; end: SelectionPoint },
+		active: ActiveTableSelection,
+		shape: TableSelectionShape,
+		layout = this.currentLayout,
+	): Map<number, ColumnSpan[]> {
+		const { regions, range, partial } = shape;
+		const contentLines = partial ? this.getScrollContentLines(active.scrollView, layout) : [];
+		const spans = new Map<number, ColumnSpan[]>();
+		for (const region of regions) {
+			if (
+				region.table !== active.table ||
+				region.row < range.fromRow ||
+				region.row > range.toRow ||
+				region.column < range.fromColumn ||
+				region.column > range.toColumn
+			) {
+				continue;
+			}
+			let start = region.col;
+			let end = region.col + region.width;
+			if (partial) {
+				if (region.line < selection.start.row || region.line > selection.end.row) continue;
+				const columns = this.getSelectionColumns(contentLines[region.line] ?? "", region.line, selection);
+				start = Math.max(start, columns.start);
+				end = Math.min(end, columns.end);
+			}
+			if (end <= start) continue;
+			const lineSpans = spans.get(region.line);
+			if (lineSpans) lineSpans.push({ start, end });
+			else spans.set(region.line, [{ start, end }]);
+		}
+		for (const lineSpans of spans.values()) lineSpans.sort((a, b) => a.start - b.start);
+		return spans;
+	}
+
+	/** Copy text for a table selection: cells joined by tabs and rows by newlines, without borders. */
+	private getTableSelectionText(
+		selection: { start: SelectionPoint; end: SelectionPoint },
+		active: ActiveTableSelection,
+		shape: TableSelectionShape,
+	): string | undefined {
+		const { regions, range, partial } = shape;
+		const tableRegions = regions.filter((region) => region.table === active.table);
+
+		if (range.fromRow !== range.toRow || range.fromColumn !== range.toColumn) {
+			const contents = new Map<string, string>();
+			for (const region of tableRegions) contents.set(`${region.row}:${region.column}`, region.content);
+			const rows: string[] = [];
+			for (let row = range.fromRow; row <= range.toRow; row++) {
+				const cells: string[] = [];
+				for (let column = range.fromColumn; column <= range.toColumn; column++) {
+					cells.push(contents.get(`${row}:${column}`) ?? "");
+				}
+				rows.push(cells.join("\t"));
+			}
+			const text = rows.join("\n");
+			return text.trim().length > 0 ? text : undefined;
+		}
+
+		// A drag that crosses the cell's own wrap copies the cell, not the wrapping: only a drag
+		// confined to one rendered line is answered with the columns it covered.
+		if (!partial) {
+			const content =
+				tableRegions.find((region) => region.row === range.fromRow && region.column === range.fromColumn)
+					?.content ?? "";
+			return content.trim().length > 0 ? content : undefined;
+		}
+
+		const spans = this.getTableSelectionSpans(selection, active, shape);
+		const contentLines = this.getScrollContentLines(active.scrollView);
+		const lines: string[] = [];
+		for (const line of [...spans.keys()].sort((a, b) => a - b)) {
+			const source = contentLines[line] ?? "";
+			const parts = spans
+				.get(line)!
+				.map((span) =>
+					stripTerminalSequences(sliceByColumn(source, span.start, Math.max(0, span.end - span.start), true)),
+				);
+			lines.push(parts.join("").trimEnd());
+		}
+		const text = lines.join("\n");
+		return text.trim().length > 0 ? text : undefined;
 	}
 
 	private getSelectionBounds(): { start: SelectionPoint; end: SelectionPoint } | undefined {
@@ -1146,6 +1373,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private getActiveSelectionText(): string | undefined {
 		const selection = this.getSelectionBounds();
 		if (!selection) return undefined;
+		const activeTable = this.getActiveTableSelection(selection);
+		if (activeTable) {
+			const shape = this.getTableSelectionShape(selection, activeTable);
+			return shape ? this.getTableSelectionText(selection, activeTable, shape) : undefined;
+		}
 		let sourceLines: readonly string[] = this.previousScreen;
 		if (selection.start.scrollView) {
 			if (!this.currentLayout) return undefined;
@@ -1275,6 +1507,22 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return `${result}\x1b[27m`;
 	}
 
+	/** Reverse-video the given spans of one line. Applied right to left so earlier spans keep their columns. */
+	private highlightSpans(line: string, spans: ReadonlyArray<ColumnSpan>): string {
+		let result = line;
+		for (let index = spans.length - 1; index >= 0; index--) {
+			const lineWidth = visibleWidth(result);
+			const start = Math.min(spans[index].start, lineWidth);
+			const end = Math.min(spans[index].end, lineWidth);
+			if (end <= start) continue;
+			const before = sliceByColumn(result, 0, start, true);
+			const selected = sliceByColumn(result, start, end - start, true);
+			const after = sliceByColumn(result, end, Math.max(0, lineWidth - end), true);
+			result = `${before}${this.applySelectionHighlight(selected)}${after}`;
+		}
+		return result;
+	}
+
 	private applySelection(screen: string[], layout = this.currentLayout): string[] {
 		const selection = this.getSelectionBounds();
 		if (!selection) return screen;
@@ -1283,6 +1531,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		let maxRow = screen.length - 1;
 		let minColumn = 0;
 		let maxColumn = this.terminal.columns;
+		let rowOffset = 0;
+		let columnOffset = 0;
 		if (selection.start.scrollView) {
 			if (!layout) return screen;
 			const box = getScrollViewBox(layout, selection.start.scrollView);
@@ -1291,36 +1541,53 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			maxRow = Math.min(screen.length - 1, box.rect.y + box.rect.height - 1, box.clip.y + box.clip.height - 1);
 			minColumn = Math.max(0, box.rect.x, box.clip.x);
 			maxColumn = Math.min(this.terminal.columns, box.rect.x + box.rect.width, box.clip.x + box.clip.width);
+			rowOffset = box.rect.y - selection.start.scrollView.scrollTop;
+			columnOffset = box.rect.x;
 			screenSelection = {
 				start: {
 					...selection.start,
-					row: box.rect.y + selection.start.row - selection.start.scrollView.scrollTop,
-					col: box.rect.x + selection.start.col,
+					row: selection.start.row + rowOffset,
+					col: selection.start.col + columnOffset,
 				},
 				end: {
 					...selection.end,
-					row: box.rect.y + selection.end.row - selection.start.scrollView.scrollTop,
-					col: box.rect.x + selection.end.col,
+					row: selection.end.row + rowOffset,
+					col: selection.end.col + columnOffset,
 				},
 			};
 		}
+		const activeTable = this.getActiveTableSelection(selection);
+		const tableShape = activeTable ? this.getTableSelectionShape(selection, activeTable, layout) : undefined;
+		if (activeTable && !tableShape) return screen;
+		const tableSpans =
+			activeTable && tableShape
+				? this.getTableSelectionSpans(selection, activeTable, tableShape, layout)
+				: undefined;
+		let screenTableSpans: Map<number, ColumnSpan[]> | undefined;
+		if (tableSpans) {
+			screenTableSpans = new Map<number, ColumnSpan[]>();
+			for (const [line, spans] of tableSpans) {
+				const row = line + rowOffset;
+				if (row < minRow || row > maxRow) continue;
+				const clamped = spans
+					.map((span) => ({
+						start: Math.max(minColumn, span.start + columnOffset),
+						end: Math.min(maxColumn, span.end + columnOffset),
+					}))
+					.filter((span) => span.end > span.start);
+				if (clamped.length > 0) screenTableSpans.set(row, clamped);
+			}
+		}
 		return screen.map((line, row) => {
-			if (
-				row < minRow ||
-				row > maxRow ||
-				row < screenSelection.start.row ||
-				row > screenSelection.end.row ||
-				isImageLine(line)
-			) {
+			if (isImageLine(line)) return line;
+			if (screenTableSpans) {
+				const spans = screenTableSpans.get(row);
+				return spans ? this.highlightSpans(line, spans) : line;
+			}
+			if (row < minRow || row > maxRow || row < screenSelection.start.row || row > screenSelection.end.row) {
 				return line;
 			}
-			const lineWidth = visibleWidth(line);
-			const columns = this.getSelectionColumns(line, row, screenSelection, minColumn, maxColumn);
-			if (columns.end <= columns.start) return line;
-			const before = sliceByColumn(line, 0, columns.start, true);
-			const selected = sliceByColumn(line, columns.start, columns.end - columns.start, true);
-			const after = sliceByColumn(line, columns.end, Math.max(0, lineWidth - columns.end), true);
-			return `${before}${this.applySelectionHighlight(selected)}${after}`;
+			return this.highlightSpans(line, [this.getSelectionColumns(line, row, screenSelection, minColumn, maxColumn)]);
 		});
 	}
 

@@ -6,6 +6,7 @@ import { Markdown, type MarkdownTheme } from "../src/components/markdown.ts";
 import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import type { Component, TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
+import { visibleWidth } from "../src/utils.ts";
 import { defaultMarkdownTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -628,6 +629,135 @@ describe("Markdown component", () => {
 			const extracted = plainLines.join("").replace(/[│├┤─\s]/g, "");
 			assert.ok(extracted.includes("prefix"), "Should preserve 'prefix'");
 			assert.ok(extracted.includes(url), "Should preserve URL");
+		});
+
+		it("should expose wrapped table cell boundaries without changing rendered text", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+			const url = "https://example.com/this/is/a/long/path";
+			const markdown = new Markdown(
+				`| URL | Status |
+| --- | --- |
+| ${url} | ready |`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(32);
+			resetCapabilitiesCache();
+			const regions = markdown.getSelectionRegions();
+			const urlRegions = regions.filter((region) => region.row === 1 && region.column === 0);
+			const statusRegions = regions.filter((region) => region.row === 1 && region.column === 1);
+
+			assert.ok(urlRegions.length > 1, "URL cell should wrap across physical lines");
+			assert.strictEqual(statusRegions.length, urlRegions.length);
+			assert.ok(
+				lines.every((line) => !line.includes("\x1b_pi:table:")),
+				"metadata markers must be stripped",
+			);
+			assert.ok(urlRegions.every((region) => region.table === urlRegions[0].table));
+			assert.ok(urlRegions.every((region) => region.content === url));
+			for (let i = 0; i < urlRegions.length; i++) {
+				assert.strictEqual(urlRegions[i].line, statusRegions[i].line);
+				assert.ok(urlRegions[i].col + urlRegions[i].width < statusRegions[i].col);
+			}
+		});
+
+		it("should keep table identity and cell content stable across re-renders", () => {
+			const markdown = new Markdown(
+				`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			markdown.render(30);
+			const first = markdown.getSelectionRegions()[0];
+			markdown.invalidate();
+			markdown.render(30);
+			const second = markdown.getSelectionRegions()[0];
+
+			assert.ok(first && second);
+			assert.strictEqual(first.table, second.table, "re-rendering the same document keeps table identity");
+			assert.strictEqual(second.content, "Name");
+			assert.strictEqual(second.row, 0);
+			assert.strictEqual(second.column, 0);
+		});
+
+		it("should give each table of a document its own identity and bounds", () => {
+			const markdown = new Markdown(
+				`| Name | Score |
+| --- | --- |
+| Avery | 87 |
+
+Between the tables.
+
+| City | Code |
+| --- | --- |
+| Austin | TX |`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(40);
+			const regions = markdown.getSelectionRegions();
+			const tables = [...new Set(regions.map((region) => region.table))];
+			assert.strictEqual(tables.length, 2, "two tables must not share one identity");
+
+			const [first, second] = tables.map((table) => regions.filter((region) => region.table === table));
+			assert.deepStrictEqual(
+				first.map((region) => region.content).sort(),
+				["87", "Avery", "Name", "Score"],
+				"the first table's cells belong to the first table",
+			);
+			assert.deepStrictEqual(
+				second.map((region) => region.content).sort(),
+				["Austin", "City", "Code", "TX"],
+				"the second table's cells belong to the second table",
+			);
+			for (const group of [first, second]) {
+				const { tableTop, tableBottom } = group[0];
+				assert.ok(
+					group.every((region) => region.tableTop === tableTop && region.tableBottom === tableBottom),
+					"a table's cells all report that table's bounds",
+				);
+				assert.strictEqual(stripAnsi(lines[tableTop]).trimStart()[0], "\u250c");
+				assert.strictEqual(stripAnsi(lines[tableBottom]).trimStart()[0], "\u2514");
+				assert.ok(
+					group.every((region) => region.line > tableTop && region.line < tableBottom),
+					"a table's cells lie inside its own borders",
+				);
+			}
+			assert.ok(first[0].tableBottom < second[0].tableTop, "the tables must not overlap");
+		});
+
+		it("should report table bounds that cover the rendered borders", () => {
+			const markdown = new Markdown(
+				`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+				1,
+				2,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(30);
+			const regions = markdown.getSelectionRegions();
+			assert.ok(regions.length > 0);
+			const { tableTop, tableBottom, tableLeft, tableRight } = regions[0];
+			// paddingY empty lines precede the top border; paddingX shifts every border column.
+			assert.strictEqual(tableTop, 2);
+			assert.strictEqual(tableLeft, 1);
+			assert.strictEqual(lines[tableTop].trimStart()[0], "\u250c");
+			assert.strictEqual(lines[tableBottom].trimStart()[0], "\u2514");
+			assert.strictEqual(tableRight, visibleWidth(lines[tableBottom].trimEnd()));
+			for (const region of regions) {
+				assert.ok(region.line > tableTop && region.line < tableBottom);
+				assert.ok(region.col >= tableLeft && region.col + region.width <= tableRight);
+			}
 		});
 
 		it("should wrap styled inline code inside table cells without breaking borders", () => {

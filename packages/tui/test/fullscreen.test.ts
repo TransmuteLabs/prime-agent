@@ -1,9 +1,14 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { ScrollView } from "../src/components/scroll-view.ts";
+import type { Terminal as XtermTerminalType } from "@xterm/headless";
+import { Box } from "../src/components/box.ts";
+import { Markdown } from "../src/components/markdown.ts";
+import { ScrollView, type ScrollViewScrollbar } from "../src/components/scroll-view.ts";
 import { VStack } from "../src/components/v-stack.ts";
-import type { Component } from "../src/tui.ts";
+import { type Component, Container } from "../src/tui.ts";
 import { TuiAltScreen, type TuiAltScreenOptions } from "../src/tui-alt-screen.ts";
+import { sliceByColumn, stripTerminalSequences, visibleWidth } from "../src/utils.ts";
+import { defaultMarkdownTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class TestComponent implements Component {
@@ -56,6 +61,10 @@ class LoggingVirtualTerminal extends VirtualTerminal {
 	}
 }
 
+function stripAnsi(line: string): string {
+	return line.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 const WHEEL_UP = "\x1b[<64;5;5M";
 const WHEEL_DOWN = "\x1b[<65;5;5M";
 const PAGE_UP = "\x1b[5~";
@@ -86,6 +95,85 @@ function setup(transcriptLines: string[], cols = 40, rows = 10, options: TuiAltS
 	);
 	tui.start();
 	return { terminal, tui, chat, dock, scrollView };
+}
+
+interface TableSetup extends Omit<Setup, "chat"> {
+	chat: Container;
+	markdown: Markdown;
+}
+
+interface TableSetupOptions {
+	cols?: number;
+	rows?: number;
+	tui?: TuiAltScreenOptions;
+	leadingLines?: string[];
+	boxPaddingY?: number;
+	scrollbar?: ScrollViewScrollbar;
+}
+
+/** Columns of one screen row the terminal is showing in reverse video. */
+function inverseColumns(terminal: VirtualTerminal, row: number): number[] {
+	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
+	const buffer = xterm.buffer.active;
+	const line = buffer.getLine(buffer.viewportY + row);
+	if (!line) return [];
+	const columns: number[] = [];
+	for (let col = 0; col < line.length; col++) {
+		if (line.getCell(col)?.isInverse()) columns.push(col);
+	}
+	return columns;
+}
+
+/** The columns a set of cells occupies, as the terminal should show them highlighted. */
+function cellColumns(regions: ReadonlyArray<{ col: number; width: number }>): number[] {
+	const columns = new Set<number>();
+	for (const region of regions) {
+		for (let col = region.col; col < region.col + region.width; col++) columns.add(col);
+	}
+	return [...columns].sort((a, b) => a - b);
+}
+
+/** The single contiguous inverse run of a screen row, as a half-open column range. */
+function inverseRange(terminal: VirtualTerminal, row: number): { start: number; end: number } | undefined {
+	const columns = inverseColumns(terminal, row);
+	if (columns.length === 0) return undefined;
+	const start = columns[0];
+	const end = columns[columns.length - 1] + 1;
+	assert.strictEqual(columns.length, end - start, `row ${row} highlight is not contiguous: ${columns.join(",")}`);
+	return { start, end };
+}
+
+/** A transcript holding a single markdown table, nested the way message components nest one. */
+function setupTable(markdownText: string, options: TableSetupOptions = {}): TableSetup {
+	const cols = options.cols ?? 40;
+	const rows = options.rows ?? 12;
+	const terminal = new LoggingVirtualTerminal(cols, rows);
+	const tui = new TuiAltScreen(terminal, undefined, undefined, options.tui ?? {});
+	const markdown = new Markdown(markdownText, 0, 0, defaultMarkdownTheme);
+	const box = new Box(1, options.boxPaddingY ?? 0);
+	box.addChild(markdown);
+	const chat = new Container();
+	for (const line of options.leadingLines ?? []) {
+		const leading = new TestComponent();
+		leading.lines = [line];
+		chat.addChild(leading);
+	}
+	chat.addChild(box);
+	const dock = new TestComponent();
+	dock.lines = ["> prompt", "footer"];
+	const scrollView = new ScrollView(chat, {
+		follow: "end",
+		primary: true,
+		...(options.scrollbar ? { scrollbar: options.scrollbar } : {}),
+	});
+	tui.setLayoutRoot(
+		new VStack([
+			{ component: scrollView, basis: 0, grow: 1, minSize: 1 },
+			{ component: dock, basis: "auto", minSize: 1 },
+		]),
+	);
+	tui.start();
+	return { terminal, tui, chat, dock, scrollView, markdown };
 }
 
 function copyOptions(copies: string[]): TuiAltScreenOptions {
@@ -133,14 +221,6 @@ describe("TUI fullscreen mode", () => {
 	// TODO(prime-port): "does not select text from an unfocused visible overlay" requires focus-aware overlay selection exclusion.
 	// TuiAltScreen selects visible composited text without overlay focus metadata.
 	// Restore when selection can exclude unfocused overlay regions.
-
-	// TODO(prime-port): "keeps wrapped table-cell selection inside the originating cell" requires table-aware selection regions.
-	// Component selection regions and the selection-metadata marker chain are not available.
-	// Restore when wrapped table cells can constrain drag selection.
-
-	// TODO(prime-port): "copies table selections as tab-separated content without borders" requires structured table selection metadata.
-	// TuiAltScreen copies the painted rectangle and cannot reconstruct table cells.
-	// Restore when table selections expose semantic cell content.
 
 	// TODO(prime-port): "does not auto-scroll a horizontal selection on the top row" requires horizontal-drag-aware edge handling.
 	// TuiAltScreen derives auto-scroll direction from pointer row alone.
@@ -692,6 +772,400 @@ describe("TUI fullscreen mode", () => {
 		terminal.sendInput(`\x1b[<0;${x};${y}m`);
 		await terminal.waitForRender();
 		assert.deepStrictEqual(opened, ["https://example.com/login"]);
+
+		tui.stop();
+	});
+
+	it("copies a wrapped table cell unwrapped, whichever of its lines the drag ends on", async () => {
+		const copies: string[] = [];
+		const url = "https://example.com/this/is/a/very/long/path";
+		const { terminal, tui, chat } = setupTable(
+			`| URL | Status |
+| --- | --- |
+| ${url} | should-not-copy |`,
+			{ rows: 12, tui: copyOptions(copies) },
+		);
+		await terminal.waitForRender();
+
+		const contentLines = chat.render(40);
+		const regions = chat
+			.getSelectionRegions()
+			.filter((region) => region.row === 1 && region.column === 0)
+			.sort((a, b) => a.segment - b.segment);
+		assert.ok(regions.length > 1, "URL cell should wrap across physical lines");
+		assert.ok(contentLines.length <= 10, "table should fit without scrolling");
+
+		const first = regions[0];
+		const last = regions.at(-1)!;
+		// Release on the cell's own last character, not past its padding: the drag crossed the
+		// wrap, so the cell is copied unwrapped rather than sliced along the rendered lines.
+		const lastCellText = stripTerminalSequences(
+			sliceByColumn(contentLines[last.line], last.col, last.width, true),
+		).trimEnd();
+		const lastVisibleCol = last.col + visibleWidth(lastCellText) - 1;
+		assert.ok(lastVisibleCol < last.col + last.width, "probe must end inside the cell, not on its padding");
+		terminal.sendInput(`\x1b[<0;${first.col + 1};${first.line + 1}M`);
+		terminal.sendInput(`\x1b[<32;${lastVisibleCol + 1};${last.line + 1}M`);
+		await terminal.waitForRender();
+
+		for (const region of regions) {
+			assert.deepStrictEqual(
+				inverseRange(terminal, region.line),
+				{ start: region.col, end: region.col + region.width },
+				`line ${region.line} should highlight exactly the cell`,
+			);
+		}
+
+		terminal.sendInput(`\x1b[<0;${lastVisibleCol + 1};${last.line + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, [url]);
+
+		tui.stop();
+	});
+
+	it("copies only the covered columns while a drag stays on one line of a cell", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat } = setupTable(
+			`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+			{ tui: copyOptions(copies) },
+		);
+		await terminal.waitForRender();
+
+		chat.render(40);
+		const cell = chat.getSelectionRegions().find((region) => region.row === 1 && region.column === 0)!;
+		terminal.sendInput(`\x1b[<0;${cell.col + 2};${cell.line + 1}M`);
+		terminal.sendInput(`\x1b[<32;${cell.col + 4};${cell.line + 1}M`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(inverseRange(terminal, cell.line), { start: cell.col + 1, end: cell.col + 4 });
+
+		terminal.sendInput(`\x1b[<0;${cell.col + 4};${cell.line + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["ver"]);
+
+		tui.stop();
+	});
+
+	it("copies table selections as tab-separated content without borders", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat } = setupTable(
+			`| Name | Score | City |
+| --- | --- | --- |
+| Avery | 87 | Seattle |
+| Jordan | 92 | Austin |
+| Morgan | 74 | Boston |`,
+			{ rows: 14, tui: copyOptions(copies) },
+		);
+		await terminal.waitForRender();
+
+		const contentLines = chat.render(40);
+		const regions = chat.getSelectionRegions();
+		const { tableTop: top, tableBottom: bottom, tableLeft: left, tableRight: right } = regions[0];
+		terminal.sendInput(`\x1b[<0;${left};${top + 1}M`);
+		terminal.sendInput(`\x1b[<32;${right};${bottom + 1}M`);
+		await terminal.waitForRender();
+
+		// Every cell of the table is highlighted and nothing else is: borders and the gaps
+		// between columns stay untouched.
+		for (const region of regions) {
+			const highlighted = new Set(inverseColumns(terminal, region.line));
+			for (let col = region.col; col < region.col + region.width; col++) {
+				assert.ok(highlighted.has(col), `cell column ${col} of line ${region.line} should be highlighted`);
+			}
+		}
+		for (let line = top; line <= bottom; line++) {
+			const borderColumns = [...stripAnsi(contentLines[line])]
+				.map((char, index) => (/[\u2502\u250c\u2510\u2514\u2518\u251c\u2524]/.test(char) ? index : -1))
+				.filter((index) => index >= 0);
+			const highlighted = new Set(inverseColumns(terminal, line));
+			for (const col of borderColumns) {
+				assert.ok(!highlighted.has(col), `border column ${col} of line ${line} must not be highlighted`);
+			}
+		}
+
+		terminal.sendInput(`\x1b[<0;${right};${bottom + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["Name\tScore\tCity\nAvery\t87\tSeattle\nJordan\t92\tAustin\nMorgan\t74\tBoston"]);
+		assert.ok(!/[\u250c\u252c\u2510\u251c\u253c\u2524\u2514\u2534\u2518\u2502\u2500]/.test(copies[0]));
+
+		tui.stop();
+	});
+
+	it("selects a single table column without the neighbouring column", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat } = setupTable(
+			`| Name | Score |
+| --- | --- |
+| Avery | 87 |
+| Jordan | 92 |`,
+			{ tui: copyOptions(copies) },
+		);
+		await terminal.waitForRender();
+
+		chat.render(40);
+		const regions = chat.getSelectionRegions();
+		const header = regions.find((region) => region.row === 0 && region.column === 1)!;
+		const lastRow = regions.find((region) => region.row === 2 && region.column === 1)!;
+		terminal.sendInput(`\x1b[<0;${header.col + 1};${header.line + 1}M`);
+		terminal.sendInput(`\x1b[<32;${lastRow.col + 1};${lastRow.line + 1}M`);
+		await terminal.waitForRender();
+		const firstColumn = regions.find((region) => region.row === 0 && region.column === 0)!;
+		assert.deepStrictEqual(inverseRange(terminal, header.line), {
+			start: header.col,
+			end: header.col + header.width,
+		});
+		assert.ok(
+			!new Set(inverseColumns(terminal, firstColumn.line)).has(firstColumn.col),
+			"the neighbouring column must stay unhighlighted",
+		);
+
+		terminal.sendInput(`\x1b[<0;${lastRow.col + 1};${lastRow.line + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["Score\n87\n92"]);
+
+		tui.stop();
+	});
+
+	it("selects the same cells when the drag runs backwards", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat } = setupTable(
+			`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+			{ tui: copyOptions(copies) },
+		);
+		await terminal.waitForRender();
+
+		chat.render(40);
+		const regions = chat.getSelectionRegions();
+		const header = regions.find((region) => region.row === 0 && region.column === 0)!;
+		const lastCell = regions.find((region) => region.row === 1 && region.column === 1)!;
+		terminal.sendInput(`\x1b[<0;${lastCell.col + 1};${lastCell.line + 1}M`);
+		terminal.sendInput(`\x1b[<32;${header.col + 1};${header.line + 1}M`);
+		await terminal.waitForRender();
+		terminal.sendInput(`\x1b[<0;${header.col + 1};${header.line + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["Name\tScore\nAvery\t87"]);
+
+		tui.stop();
+	});
+
+	it("offsets table cells by the transcript components and padding rendered above them", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat } = setupTable(
+			`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+			{
+				rows: 16,
+				tui: copyOptions(copies),
+				leadingLines: ["header one", "header two", "header three"],
+				boxPaddingY: 1,
+			},
+		);
+		await terminal.waitForRender();
+
+		const contentLines = chat.render(40);
+		const regions = chat.getSelectionRegions();
+		const cell = regions.find((region) => region.row === 1 && region.column === 0)!;
+		const renderedRow = contentLines.findIndex((line) => line.includes("Avery"));
+		const borderRow = contentLines.findIndex((line) => stripAnsi(line).includes("\u250c"));
+		assert.ok(renderedRow >= 4, "the table must render below the preceding components and the box padding");
+		assert.strictEqual(cell.line, renderedRow, "cell lines are transcript lines, not component-local ones");
+		assert.strictEqual(regions[0].tableTop, borderRow, "table bounds must be offset with the cells");
+
+		const scoreCell = regions.find((region) => region.row === 1 && region.column === 1)!;
+		terminal.sendInput(`\x1b[<0;${cell.col + 1};${cell.line + 1}M`);
+		terminal.sendInput(`\x1b[<32;${scoreCell.col + 1};${scoreCell.line + 1}M`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(
+			inverseColumns(terminal, cell.line),
+			cellColumns([cell, scoreCell]),
+			"both cells are highlighted and the border between them is not",
+		);
+
+		terminal.sendInput(`\x1b[<0;${scoreCell.col + 1};${scoreCell.line + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["Avery\t87"]);
+
+		tui.stop();
+	});
+
+	it("selects table cells when the scrollbar reserves a content column", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat } = setupTable(
+			`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+			{ tui: copyOptions(copies), scrollbar: "always" },
+		);
+		await terminal.waitForRender();
+
+		const regions = chat.render(39) && chat.getSelectionRegions();
+		const header = regions.find((region) => region.row === 0 && region.column === 0)!;
+		const cell = regions.find((region) => region.row === 1 && region.column === 1)!;
+		terminal.sendInput(`\x1b[<0;${header.col + 1};${header.line + 1}M`);
+		terminal.sendInput(`\x1b[<32;${cell.col + 1};${cell.line + 1}M`);
+		await terminal.waitForRender();
+		terminal.sendInput(`\x1b[<0;${cell.col + 1};${cell.line + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["Name\tScore\nAvery\t87"]);
+
+		tui.stop();
+	});
+
+	it("selects table cells in a scrolled transcript", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat, scrollView } = setupTable(
+			`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+			{ rows: 10, tui: copyOptions(copies), leadingLines: lines(20, "Filler") },
+		);
+		await terminal.waitForRender();
+		assert.ok(scrollView.scrollTop > 0, "transcript must be scrolled for this to mean anything");
+
+		chat.render(40);
+		const regions = chat.getSelectionRegions();
+		const header = regions.find((region) => region.row === 0 && region.column === 0)!;
+		const cell = regions.find((region) => region.row === 1 && region.column === 1)!;
+		const screenRow = (line: number) => line - scrollView.scrollTop;
+		terminal.sendInput(`\x1b[<0;${header.col + 1};${screenRow(header.line) + 1}M`);
+		terminal.sendInput(`\x1b[<32;${cell.col + 1};${screenRow(cell.line) + 1}M`);
+		await terminal.waitForRender();
+		const headerRow = regions.filter((region) => region.line === header.line);
+		assert.deepStrictEqual(
+			inverseColumns(terminal, screenRow(header.line)),
+			cellColumns(headerRow),
+			"the whole header row of the table is highlighted on its screen row",
+		);
+
+		terminal.sendInput(`\x1b[<0;${cell.col + 1};${screenRow(cell.line) + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["Name\tScore\nAvery\t87"]);
+
+		tui.stop();
+	});
+
+	it("drops a table selection when the anchor cell is replaced mid-drag", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat, markdown } = setupTable(
+			`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+			{ tui: copyOptions(copies) },
+		);
+		await terminal.waitForRender();
+
+		chat.render(40);
+		const cell = chat.getSelectionRegions().find((region) => region.row === 1 && region.column === 0)!;
+		const scoreCell = chat.getSelectionRegions().find((region) => region.row === 1 && region.column === 1)!;
+		terminal.sendInput(`\x1b[<0;${cell.col + 1};${cell.line + 1}M`);
+		terminal.sendInput(`\x1b[<32;${scoreCell.col + 1};${scoreCell.line + 1}M`);
+		await terminal.waitForRender();
+		assert.ok(inverseColumns(terminal, cell.line).length > 0, "the drag is highlighting cells");
+
+		// Table identity is positional, so a rewrite that puts a different table in the same slot
+		// must not hand the drag a stranger's cells.
+		markdown.setText(`| Other | Table |
+| --- | --- |
+| 111 | 222 |`);
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(inverseColumns(terminal, cell.line), [], "the stale selection stops highlighting");
+
+		terminal.sendInput(`\x1b[<0;${scoreCell.col + 1};${scoreCell.line + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, [], "nothing is copied from the table that replaced it");
+
+		tui.stop();
+	});
+
+	it("selects table cells in the implicit document when no layout root is set", async () => {
+		const copies: string[] = [];
+		const terminal = new LoggingVirtualTerminal(40, 12);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, copyOptions(copies));
+		const markdown = new Markdown(
+			`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+			0,
+			0,
+			defaultMarkdownTheme,
+		);
+		const box = new Box(1, 0);
+		box.addChild(markdown);
+		tui.addChild(box);
+		tui.start();
+		await terminal.waitForRender();
+
+		const regions = box.getSelectionRegions();
+		const header = regions.find((region) => region.row === 0 && region.column === 0)!;
+		const cell = regions.find((region) => region.row === 1 && region.column === 1)!;
+		terminal.sendInput(`\x1b[<0;${header.col + 1};${header.line + 1}M`);
+		terminal.sendInput(`\x1b[<32;${cell.col + 1};${cell.line + 1}M`);
+		await terminal.waitForRender();
+		terminal.sendInput(`\x1b[<0;${cell.col + 1};${cell.line + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["Name\tScore\nAvery\t87"]);
+
+		tui.stop();
+	});
+
+	it("selects transcript text normally outside a table", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat } = setupTable(
+			`Intro line
+
+| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+			{ tui: copyOptions(copies) },
+		);
+		await terminal.waitForRender();
+
+		const contentLines = chat.render(40);
+		const introRow = contentLines.findIndex((line) => line.includes("Intro line"));
+		assert.ok(introRow >= 0, "intro paragraph should render above the table");
+		terminal.sendInput(`\x1b[<0;2;${introRow + 1}M`);
+		terminal.sendInput(`\x1b[<32;12;${introRow + 1}M`);
+		await terminal.waitForRender();
+
+		terminal.sendInput(`\x1b[<0;12;${introRow + 1}m`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["Intro line"]);
+
+		tui.stop();
+	});
+
+	it("keeps word and line selection inside a table", async () => {
+		const copies: string[] = [];
+		const { terminal, tui, chat } = setupTable(
+			`| Name | Score |
+| --- | --- |
+| Avery | 87 |`,
+			{ tui: copyOptions(copies) },
+		);
+		await terminal.waitForRender();
+
+		chat.render(40);
+		const cell = chat.getSelectionRegions().find((region) => region.row === 1 && region.column === 0)!;
+		const column = cell.col + 1;
+		const row = cell.line + 1;
+		const click = () => {
+			terminal.sendInput(`\x1b[<0;${column};${row}M`);
+			terminal.sendInput(`\x1b[<0;${column};${row}m`);
+		};
+		click();
+		click();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copies, ["Avery"], "double click selects the word under the pointer");
+
+		click();
+		await terminal.waitForRender();
+		assert.strictEqual(copies.length, 2);
+		assert.match(copies[1], /^\s*\u2502 Avery/, "triple click selects the rendered line, borders included");
 
 		tui.stop();
 	});

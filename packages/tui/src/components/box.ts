@@ -1,3 +1,4 @@
+import { offsetTableCellSelectionRegions, type TableCellSelectionRegion } from "../selection-metadata.ts";
 import type { Component } from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth } from "../utils.ts";
 
@@ -19,6 +20,7 @@ export class Box implements Component {
 
 	// Cache for rendered output
 	private cache?: RenderCache;
+	private selectionRegions: TableCellSelectionRegion[] = [];
 
 	constructor(paddingX = 1, paddingY = 1, bgFn?: (text: string) => string) {
 		this.paddingX = paddingX;
@@ -72,6 +74,7 @@ export class Box implements Component {
 	}
 
 	render(width: number): string[] {
+		this.selectionRegions = [];
 		if (this.children.length === 0) {
 			return [];
 		}
@@ -81,12 +84,20 @@ export class Box implements Component {
 
 		// Render all children
 		const childLines: string[] = [];
+		const regions: TableCellSelectionRegion[] = [];
 		for (const child of this.children) {
 			const lines = child.render(contentWidth);
+			const childRegions = child.getSelectionRegions?.();
+			if (childRegions?.length) {
+				regions.push(
+					...offsetTableCellSelectionRegions(childRegions, childLines.length + this.paddingY, this.paddingX),
+				);
+			}
 			for (const line of lines) {
 				childLines.push(leftPad + line);
 			}
 		}
+		this.selectionRegions = regions;
 
 		if (childLines.length === 0) {
 			return [];
@@ -122,6 +133,10 @@ export class Box implements Component {
 		this.cache = { childLines, width, bgSample, lines: result };
 
 		return result;
+	}
+
+	getSelectionRegions(): ReadonlyArray<TableCellSelectionRegion> {
+		return this.selectionRegions;
 	}
 
 	private applyBg(line: string, width: number): string {

@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
+import { offsetTableCellSelectionRegions, type TableCellSelectionRegion } from "./selection-metadata.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	getDefaultTerminalColors,
@@ -46,6 +47,12 @@ export interface Component {
 	 * Called when theme changes or when component needs to re-render from scratch.
 	 */
 	invalidate(): void;
+
+	/**
+	 * Selectable table cells of the most recent render, in the coordinate space of the lines that
+	 * render returned. A component that lays out children must offset and forward theirs.
+	 */
+	getSelectionRegions?(): ReadonlyArray<TableCellSelectionRegion>;
 }
 
 export type TuiInputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -214,23 +221,28 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  */
 export class Container implements Component {
 	children: Component[] = [];
+	private selectionRegions: TableCellSelectionRegion[] = [];
 
 	addChild(component: Component): void {
 		this.children.push(component);
+		this.selectionRegions = [];
 	}
 
 	removeChild(component: Component): void {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			this.selectionRegions = [];
 		}
 	}
 
 	clear(): void {
 		this.children = [];
+		this.selectionRegions = [];
 	}
 
 	invalidate(): void {
+		this.selectionRegions = [];
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
@@ -238,13 +250,23 @@ export class Container implements Component {
 
 	render(width: number): string[] {
 		const lines: string[] = [];
+		const regions: TableCellSelectionRegion[] = [];
 		for (const child of this.children) {
 			const childLines = child.render(width);
+			const childRegions = child.getSelectionRegions?.();
+			if (childRegions?.length) {
+				regions.push(...offsetTableCellSelectionRegions(childRegions, lines.length, 0));
+			}
 			for (const line of childLines) {
 				lines.push(line);
 			}
 		}
+		this.selectionRegions = regions;
 		return lines;
+	}
+
+	getSelectionRegions(): ReadonlyArray<TableCellSelectionRegion> {
+		return this.selectionRegions;
 	}
 }
 

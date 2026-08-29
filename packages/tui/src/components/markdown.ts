@@ -1,8 +1,15 @@
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
 import { renderLatex } from "../latex.ts";
+import {
+	extractTableCellSelectionRegions,
+	markTableCell,
+	markTableEnd,
+	markTableStart,
+	type TableCellSelectionRegion,
+} from "../selection-metadata.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, stripTerminalSequences, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
@@ -246,6 +253,10 @@ export class Markdown implements Component {
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private selectionRegions: TableCellSelectionRegion[] = [];
+	// One identity object per table of the document, kept across renders so an active
+	// selection survives re-rendering of the same content.
+	private tableIdentities: object[] = [];
 
 	constructor(
 		text: string,
@@ -272,6 +283,7 @@ export class Markdown implements Component {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.selectionRegions = [];
 	}
 
 	render(width: number): string[] {
@@ -291,6 +303,7 @@ export class Markdown implements Component {
 			this.cachedText = this.text;
 			this.cachedWidth = width;
 			this.cachedLines = result;
+			this.selectionRegions = [];
 			return result;
 		}
 
@@ -358,7 +371,14 @@ export class Markdown implements Component {
 		}
 
 		// Combine top padding, content, and bottom padding
-		const result = emptyLines.concat(contentLines, emptyLines);
+		const markedResult = emptyLines.concat(contentLines, emptyLines);
+		// Table markers are extracted from the final, padded lines so the regions carry this
+		// component's own coordinates, margins included.
+		const { lines: result, regions } = extractTableCellSelectionRegions(markedResult, (index) => {
+			this.tableIdentities[index] ??= {};
+			return this.tableIdentities[index];
+		});
+		this.selectionRegions = regions;
 
 		// Update cache
 		this.cachedText = this.text;
@@ -366,6 +386,10 @@ export class Markdown implements Component {
 		this.cachedLines = result;
 
 		return result.length > 0 ? result : [""];
+	}
+
+	getSelectionRegions(): ReadonlyArray<TableCellSelectionRegion> {
+		return this.selectionRegions;
 	}
 
 	/**
@@ -958,11 +982,13 @@ export class Markdown implements Component {
 
 		// Render top border
 		const topBorderCells = columnWidths.map((w) => "─".repeat(w));
-		lines.push(`┌─${topBorderCells.join("─┬─")}─┐`);
+		lines.push(markTableStart(`┌─${topBorderCells.join("─┬─")}─┐`));
 
 		// Render header with wrapping
+		const headerCellContents: string[] = [];
 		const headerCellLines: string[][] = token.header.map((cell, i) => {
 			const text = this.renderInlineTokens(cell.tokens || [], styleContext);
+			headerCellContents[i] = stripTerminalSequences(text);
 			return this.wrapCellText(text, columnWidths[i], styleContext?.stylePrefix);
 		});
 		const headerLineCount = Math.max(...headerCellLines.map((c) => c.length));
@@ -971,7 +997,7 @@ export class Markdown implements Component {
 			const rowParts = headerCellLines.map((cellLines, colIdx) => {
 				const text = cellLines[lineIdx] || "";
 				const padded = text + " ".repeat(Math.max(0, columnWidths[colIdx] - visibleWidth(text)));
-				return this.theme.bold(padded);
+				return markTableCell(this.theme.bold(padded), 0, colIdx, lineIdx, headerCellContents[colIdx] ?? "");
 			});
 			lines.push(`│ ${rowParts.join(" │ ")} │`);
 		}
@@ -984,8 +1010,10 @@ export class Markdown implements Component {
 		// Render rows with wrapping
 		for (let rowIndex = 0; rowIndex < token.rows.length; rowIndex++) {
 			const row = token.rows[rowIndex];
+			const rowCellContents: string[] = [];
 			const rowCellLines: string[][] = row.map((cell, i) => {
 				const text = this.renderInlineTokens(cell.tokens || [], styleContext);
+				rowCellContents[i] = stripTerminalSequences(text);
 				return this.wrapCellText(text, columnWidths[i], styleContext?.stylePrefix);
 			});
 			const rowLineCount = Math.max(...rowCellLines.map((c) => c.length));
@@ -993,7 +1021,8 @@ export class Markdown implements Component {
 			for (let lineIdx = 0; lineIdx < rowLineCount; lineIdx++) {
 				const rowParts = rowCellLines.map((cellLines, colIdx) => {
 					const text = cellLines[lineIdx] || "";
-					return text + " ".repeat(Math.max(0, columnWidths[colIdx] - visibleWidth(text)));
+					const padded = text + " ".repeat(Math.max(0, columnWidths[colIdx] - visibleWidth(text)));
+					return markTableCell(padded, rowIndex + 1, colIdx, lineIdx, rowCellContents[colIdx] ?? "");
 				});
 				lines.push(`│ ${rowParts.join(" │ ")} │`);
 			}
@@ -1005,7 +1034,7 @@ export class Markdown implements Component {
 
 		// Render bottom border
 		const bottomBorderCells = columnWidths.map((w) => "─".repeat(w));
-		lines.push(`└─${bottomBorderCells.join("─┴─")}─┘`);
+		lines.push(markTableEnd(`└─${bottomBorderCells.join("─┴─")}─┘`));
 
 		if (nextTokenType && nextTokenType !== "space") {
 			lines.push(""); // Add spacing after table

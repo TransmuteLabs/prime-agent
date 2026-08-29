@@ -1,6 +1,7 @@
 import type { ScrollView } from "./components/scroll-view.ts";
 import { allocateStackSizes, visibleStackEntries } from "./components/stack.ts";
 import { getLayoutNode } from "./layout-node.ts";
+import type { TableCellSelectionRegion } from "./selection-metadata.ts";
 import { cropKittyImageLine, getKittyImageMetadata, isImageLine } from "./terminal-image.ts";
 import { type Component, CURSOR_MARKER, compositeTuiLine } from "./tui.ts";
 import { extractAnsiCode, getGraphemeCellRange, sliceByColumn, visibleWidth } from "./utils.ts";
@@ -24,6 +25,8 @@ export interface LayoutBox {
 	lineOffset?: number;
 	scrollView?: ScrollView;
 	scrollContentLines?: readonly string[];
+	/** Selectable table cells of the scrolled content, in content-line coordinates. */
+	scrollSelectionRegions?: ReadonlyArray<TableCellSelectionRegion>;
 	layer: number;
 }
 
@@ -47,6 +50,9 @@ export interface ScrollbarGeometry {
 interface LayoutContext {
 	viewport: { width: number; height: number };
 	renderCache: Map<Component, Map<number, string[]>>;
+	// Regions are captured next to the lines they were extracted from: a component reports the
+	// regions of its last render, which a later render at another width would have replaced.
+	selectionRegionCache: Map<Component, Map<number, ReadonlyArray<TableCellSelectionRegion>>>;
 	requestRender: () => void;
 	primaryScrollView: ScrollView | undefined;
 }
@@ -70,6 +76,15 @@ function renderCached(context: LayoutContext, component: Component, width: numbe
 	if (!lines) {
 		lines = component.render(safeWidth);
 		widths.set(safeWidth, lines);
+		const regions = component.getSelectionRegions?.();
+		if (regions?.length) {
+			let regionWidths = context.selectionRegionCache.get(component);
+			if (!regionWidths) {
+				regionWidths = new Map<number, ReadonlyArray<TableCellSelectionRegion>>();
+				context.selectionRegionCache.set(component, regionWidths);
+			}
+			regionWidths.set(safeWidth, regions);
+		}
 	}
 	return lines;
 }
@@ -147,13 +162,16 @@ function layoutComponent(
 		if (node.state.primary || !context.primaryScrollView) context.primaryScrollView = scrollView;
 		const rect = { x, y, width: safeWidth, height: viewportHeight };
 		const childClip = intersect(clip, rect);
+		const scrollContentLines = renderCached(context, node.component, contentWidth);
 		const box: LayoutBox = {
 			component,
 			rect,
 			clip: childClip,
 			children: [childBox],
 			scrollView,
-			scrollContentLines: renderCached(context, node.component, contentWidth),
+			scrollContentLines,
+			scrollSelectionRegions:
+				context.selectionRegionCache.get(node.component)?.get(Math.max(1, Math.floor(contentWidth))) ?? [],
 			layer: 0,
 		};
 		childBox.parent = box;
@@ -361,6 +379,7 @@ export function renderLayoutFrame(
 	const context: LayoutContext = {
 		viewport: { width: safeWidth, height: safeHeight },
 		renderCache: new Map(),
+		selectionRegionCache: new Map(),
 		requestRender,
 		primaryScrollView: undefined,
 	};
