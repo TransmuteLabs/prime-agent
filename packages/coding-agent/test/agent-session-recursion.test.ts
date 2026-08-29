@@ -18,7 +18,7 @@ import {
 	createAgentSessionMessage,
 	isAgentSessionMessage,
 } from "../src/core/agent-messages.ts";
-import { AgentSession } from "../src/core/agent-session.ts";
+import { AgentSession, type RlmChildAgentSnapshot } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { LoadExtensionsResult } from "../src/core/extensions/index.ts";
 import { type HostRequestHandlers, ReplKernelManager } from "../src/core/kernel/index.ts";
@@ -121,7 +121,7 @@ interface InspectableRlmSession {
 		}
 	>;
 	_rlmChildCleanupFailures: Map<string, Awaited<ReturnType<AgentSession["listRlmSubagents"]>>["subagents"][number]>;
-	_rlmChildSessions: Map<string, AgentSession>;
+	_rlmChildSessions: Map<string, { session: AgentSession; run?: InspectableRlmRun }>;
 	_rlmChildUnsubscribes: Map<string, () => void>;
 	_deletedRlmChildIds: Set<string>;
 	_rlmQuiescenceWaitAborts: Set<AbortController>;
@@ -530,6 +530,10 @@ describe("AgentSession rlm recursion", () => {
 		mkdirSync(childDir, { recursive: true });
 		const child = createSession({ rlmSessionDir: childDir });
 		child.setSessionName("restored-worker");
+		const restoredAnswer = assistantMessage("restored answer", usage(7, 3));
+		restoredAnswer.content.push({ type: "toolCall", id: "tool-1", name: "ipython", arguments: {} });
+		child.agent.state.messages.push(restoredAnswer);
+		child.setCurrentRecap("restored recap");
 		const disposeChild = vi.spyOn(child, "disposeAsync");
 		const root = createSession();
 		const childStatuses: string[] = [];
@@ -540,6 +544,15 @@ describe("AgentSession rlm recursion", () => {
 		});
 
 		expect(root.registerRlmChildSession(childId, child)).toBe(true);
+		expect(root.getRlmChildSnapshots()).toEqual([
+			expect.objectContaining({
+				id: childId,
+				answerPreview: "restored answer",
+				toolUseCount: 1,
+				tokenCount: 10,
+				recap: "restored recap",
+			}),
+		]);
 		expect((await root.listRlmSubagents()).subagents).toEqual([
 			expect.objectContaining({
 				rlm_child_id: childId,
@@ -554,6 +567,40 @@ describe("AgentSession rlm recursion", () => {
 		expect(disposeChild).toHaveBeenCalledOnce();
 		expect(await root.listRlmSubagents()).toEqual({ subagents: [] });
 		expect(childStatuses).toEqual(["cancelled"]);
+	});
+
+	it("projects live follow-up activity for a restored session-only child", async () => {
+		const childId = "restored-followup-child";
+		const childDir = join(tempDir, childId);
+		mkdirSync(childDir, { recursive: true });
+		const followUpGate = deferred<void>();
+		let followUpStarted = false;
+		const child = createSession({
+			rlmSessionDir: childDir,
+			streamFn: () => {
+				const stream = createAssistantMessageEventStream();
+				followUpStarted = true;
+				void followUpGate.promise.then(() => {
+					stream.push({ type: "done", reason: "stop", message: assistantMessage("follow-up answer") });
+				});
+				return stream;
+			},
+		});
+		const root = createSession();
+		expect(root.registerRlmChildSession(childId, child)).toBe(true);
+
+		const followUp = child.prompt("follow-up work");
+		await waitFor(() => followUpStarted);
+		const busy = root.getRlmChildSnapshots();
+		expect(busy).toEqual([expect.objectContaining({ id: childId, status: "done" })]);
+		expect(busy[0]?.activity).toBeDefined();
+
+		followUpGate.resolve();
+		await followUp;
+		await child.waitForIdle();
+		const idle = root.getRlmChildSnapshots();
+		expect(idle).toEqual([expect.objectContaining({ id: childId, status: "done" })]);
+		expect(idle[0]?.activity).toBeUndefined();
 	});
 
 	it("retries and releases failed retained child cleanup on the next compaction", async () => {
@@ -658,9 +705,9 @@ describe("AgentSession rlm recursion", () => {
 				});
 				// The same child can be visible in both lifecycle registries while
 				// deletion settles; it must be traversed exactly once and remain hidden.
-				rootInternals._rlmChildSessions.set(id, parent);
+				rootInternals._rlmChildSessions.set(id, { session: parent });
 			} else {
-				rootInternals._rlmChildSessions.set(id, parent);
+				rootInternals._rlmChildSessions.set(id, { session: parent });
 				if (hiding === "deleted") {
 					rootInternals._deletedRlmChildIds.add(id);
 				} else {
@@ -752,6 +799,14 @@ describe("AgentSession rlm recursion", () => {
 		await waitFor(() => childUpdates.some((update) => update.status === "done"));
 		const doneUpdate = [...childUpdates].reverse().find((update) => update.status === "done");
 		expect(doneUpdate?.answerPreview).toBe("child answer: summarize shard 1");
+		expect(root.getRlmChildSnapshots()).toEqual([
+			expect.objectContaining({
+				id: result.rlm_child_id,
+				status: "done",
+				answerPreview: doneUpdate?.answerPreview,
+				durationMs: expect.any(Number),
+			}),
+		]);
 		const child = root.getRlmChildSession(result.rlm_child_id);
 		expect(child?.messages[0]).toMatchObject({
 			role: "custom",
@@ -849,6 +904,9 @@ describe("AgentSession rlm recursion", () => {
 			},
 		});
 		const spawned = await root.runRlmChild("pending task", { name: "pending-child" });
+		expect(root.getRlmChildSnapshots()).toEqual([
+			expect.objectContaining({ id: spawned.rlm_child_id, status: "queued" }),
+		]);
 		const handlers = (root as unknown as InspectableRlmSession)._createKernelHostHandlers();
 		const send = handlers["agent_message.send"];
 		if (!send) throw new Error("Missing agent_message.send host handler");
@@ -1433,7 +1491,7 @@ describe("AgentSession rlm recursion", () => {
 		});
 	});
 
-	it("strong quiescence yields to a real gated child bash while interactive idle remains resolved", async () => {
+	it("strong quiescence waits for a gated child bash activity change", async () => {
 		const child = createSession({ rlmSessionDir: join(tempDir, "bash-active-child") });
 		const bashStarted = deferred<void>();
 		const bashCompletion = deferred<void>();
@@ -1453,7 +1511,7 @@ describe("AgentSession rlm recursion", () => {
 		const originalHeadlessIdle = child.waitForHeadlessIdle.bind(child);
 		let headlessIdleCalls = 0;
 		vi.spyOn(child, "waitForHeadlessIdle").mockImplementation(async () => {
-			if (++headlessIdleCalls > 100) throw new Error("RLM quiescence spun without yielding a macrotask");
+			headlessIdleCalls++;
 			await originalHeadlessIdle();
 		});
 
@@ -1466,11 +1524,12 @@ describe("AgentSession rlm recursion", () => {
 			sleep(20).then(() => "timer" as const),
 		]);
 		expect(firstBoundary).toBe("timer");
+		expect(headlessIdleCalls).toBe(1);
 
 		bashCompletion.resolve();
 		await bash;
 		await expect(quiescence).resolves.toBeUndefined();
-		expect(headlessIdleCalls).toBeLessThan(100);
+		expect(headlessIdleCalls).toBe(2);
 	});
 
 	it("rechecks parent self-activity after a child quiescence boundary", async () => {
@@ -2203,14 +2262,33 @@ describe("AgentSession rlm recursion", () => {
 		if (!child) {
 			throw new Error("Missing retained child session");
 		}
+		const rootInternals = root as unknown as InspectableRlmSession;
+		await waitFor(() => !rootInternals._activeRlmChildRuns.has(childId));
+		const completeRelease = root.releaseRlmChildSession(childId, child);
+		if (!completeRelease) throw new Error("Failed to release retained child");
 
+		child.setCurrentRecap("retained recap");
 		child.setSessionName("renamed-worker");
 
 		const childUpdates = events.filter(
-			(event): event is { type: "rlm_child_update"; child: { sessionName?: string } } =>
+			(event): event is { type: "rlm_child_update"; child: RlmChildAgentSnapshot } =>
 				typeof event === "object" && event !== null && (event as { type?: string }).type === "rlm_child_update",
 		);
-		expect(childUpdates.at(-1)?.child.sessionName).toBe("renamed-worker");
+		expect(childUpdates.at(-1)?.child).toMatchObject({
+			sessionName: "renamed-worker",
+			durationMs: expect.any(Number),
+			tokenCount: 10,
+			recap: "retained recap",
+			repliedSinceTask: false,
+		});
+		expect(root.getRlmChildSnapshots()).toEqual([
+			expect.objectContaining({
+				sessionName: "renamed-worker",
+				durationMs: expect.any(Number),
+				tokenCount: 10,
+				recap: "retained recap",
+			}),
+		]);
 	});
 
 	it("surfaces a child's recap on its snapshot once the summarizer sets it", async () => {
@@ -3913,7 +3991,7 @@ print(_result.name)
 			expect(finished.status).toBe("ok");
 			expect(finished.stdout.trim()).toBe("detached-worker");
 		} finally {
-			await manager.dispose();
+			await manager.shutdown({ snapshot: true, drainHostRequests: true });
 		}
 	});
 });

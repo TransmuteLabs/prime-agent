@@ -30,9 +30,10 @@ describe("createAgentSessionFromServices", () => {
 	});
 
 	it("shows the telemetry disclosure independently of the Herdr reporter", async () => {
-		// Tests run offline by default, and offline disables telemetry outright,
-		// which would make the assertions below pass without exercising anything.
+		// Tests run with telemetry off by default, which would make the assertions below pass
+		// without exercising anything: offline disables it outright and DO_NOT_TRACK opts out.
 		vi.stubEnv("PI_OFFLINE", undefined);
+		vi.stubEnv("DO_NOT_TRACK", "0");
 		vi.stubEnv("PRIME_AGENT_TELEMETRY", "1");
 		const tempDir = join(tmpdir(), `pi-session-telemetry-notice-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
@@ -54,9 +55,10 @@ describe("createAgentSessionFromServices", () => {
 	});
 
 	it("honors an explicit daemon-carried telemetry opt-out", async () => {
-		// Tests run offline by default, and offline disables telemetry outright,
-		// which would make the assertions below pass without exercising anything.
+		// Tests run with telemetry off by default, which would make the assertions below pass
+		// without exercising anything: offline disables it outright and DO_NOT_TRACK opts out.
 		vi.stubEnv("PI_OFFLINE", undefined);
+		vi.stubEnv("DO_NOT_TRACK", "0");
 		vi.stubEnv("PRIME_AGENT_TELEMETRY", "1");
 		const tempDir = join(tmpdir(), `pi-session-daemon-telemetry-opt-out-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
@@ -88,9 +90,10 @@ describe("createAgentSessionFromServices", () => {
 	});
 
 	it("does not install top-level telemetry for a resumed child session", async () => {
-		// Tests run offline by default, and offline disables telemetry outright,
-		// which would make the assertions below pass without exercising anything.
+		// Tests run with telemetry off by default, which would make the assertions below pass
+		// without exercising anything: offline disables it outright and DO_NOT_TRACK opts out.
 		vi.stubEnv("PI_OFFLINE", undefined);
+		vi.stubEnv("DO_NOT_TRACK", "0");
 		vi.stubEnv("PRIME_AGENT_TELEMETRY", "1");
 		const tempDir = join(tmpdir(), `pi-session-child-telemetry-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });

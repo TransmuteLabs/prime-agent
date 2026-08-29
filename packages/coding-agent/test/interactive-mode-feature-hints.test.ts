@@ -33,7 +33,10 @@ function createMode() {
 		featureHintContainer,
 		loadingAnimation: loader,
 		workingVisible: true,
-		connectionState: { isStreaming: true },
+		connectionState: {
+			isStreaming: true,
+			sessionActions: { queuedCount: 0, steering: [], followUps: [] },
+		},
 		workingTimer: undefined,
 		workingStartedAt: 0,
 		featureHintDeck,
@@ -43,7 +46,6 @@ function createMode() {
 		featureHintAnimationTimer: undefined,
 		featureHintComponent: undefined,
 		featureHintRunPending: false,
-		connectionQueue: { steering: [], followUp: [] },
 		compactionQueuedMessages: [],
 		options: { returnToAgentsView: true, tuiMode: "normal" },
 		ui: { requestRender, getClearOnShrink: () => false },
@@ -54,7 +56,7 @@ function createMode() {
 
 describe("feature hint deck", () => {
 	it("shows every available hint before repeating and avoids a boundary repeat", () => {
-		const deck = new FeatureHintDeck(() => 0);
+		const deck = new FeatureHintDeck();
 		const context = { getKeybinding: (action: string) => `Custom ${action}`, isResidentSession: true };
 		const firstCycle = FEATURE_HINTS.map(() => deck.next(context));
 
@@ -64,7 +66,6 @@ describe("feature hint deck", () => {
 	});
 
 	it("uses configured shortcuts in keybinding-based hints", () => {
-		const deck = new FeatureHintDeck(() => 0);
 		const context = {
 			getKeybinding: (action: string) => {
 				if (action === "app.prompt.stash") return "Meta+S";
@@ -73,17 +74,16 @@ describe("feature hint deck", () => {
 			},
 			isResidentSession: true,
 		};
-		const hints = FEATURE_HINTS.map(() => deck.next(context));
+		const textById = new Map(FEATURE_HINTS.map((hint) => [hint.id, hint.getText(context)]));
 
-		expect(hints.find((hint) => hint?.id === "prompt-stash")?.text).toContain("Meta+S");
-		expect(hints.find((hint) => hint?.id === "follow-up")?.text).toContain("Meta+Enter");
-		expect(hints.find((hint) => hint?.id === "agents-view")?.text).toContain("Meta+Left");
+		expect(textById.get("prompt-stash")).toContain("Meta+S");
+		expect(textById.get("follow-up")).toContain("Meta+Enter");
+		expect(textById.get("agents-view")).toContain("Meta+Left");
 	});
 
 	it("covers Prime Agent workflows with capability-focused copy", () => {
-		const deck = new FeatureHintDeck(() => 0);
-		const hints = FEATURE_HINTS.map(() => deck.next({ getKeybinding: () => "Meta+A", isResidentSession: true }));
-		const textById = new Map(hints.map((hint) => [hint?.id, hint?.text]));
+		const context = { getKeybinding: () => "Meta+A", isResidentSession: true };
+		const textById = new Map(FEATURE_HINTS.map((hint) => [hint.id, hint.getText(context)]));
 
 		expect(textById.get("subagents")).toBe("Prime Agent can delegate tasks to subagents and run them in parallel.");
 		expect(textById.get("agents-view")).toContain("Session View");
@@ -102,10 +102,10 @@ describe("feature hint deck", () => {
 	});
 
 	it("keeps every hint concise", () => {
-		const deck = new FeatureHintDeck(() => 0);
-		const hints = FEATURE_HINTS.map(() => deck.next({ getKeybinding: () => "Ctrl+Key", isResidentSession: true }));
+		const context = { getKeybinding: () => "Ctrl+Key", isResidentSession: true };
+		const texts = FEATURE_HINTS.map((hint) => hint.getText(context));
 
-		expect(hints.every((hint) => hint !== undefined && hint.text.length <= 80)).toBe(true);
+		expect(texts.every((text) => text !== undefined && text.length <= 80)).toBe(true);
 	});
 
 	it("hides resident-only hints in ephemeral sessions", () => {

@@ -1,0 +1,1 @@
+- Simplified feature hint shuffling internals.

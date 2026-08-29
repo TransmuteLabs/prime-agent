@@ -3,9 +3,12 @@ import { Container, Text } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { ExtensionUIContext } from "../../../src/core/extensions/index.ts";
+import type { SessionActionSnapshot } from "../../../src/core/session-action-store.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme, type Theme, theme } from "../../../src/modes/interactive/theme/theme.ts";
 import { createHarness } from "../harness.ts";
+
+const EMPTY_SESSION_ACTIONS: SessionActionSnapshot = { queuedCount: 0, steering: [], followUps: [] };
 
 function createUiContext(
 	onNotify: (message: string, type: "info" | "warning" | "error" | undefined) => void,
@@ -84,7 +87,10 @@ type RebindContext = {
 	renderSessionStateNow: () => Promise<void>;
 	bindCurrentSessionExtensions: () => Promise<void>;
 	subscribeToAgent: () => void;
-	refreshConnectionQueue: () => Promise<void>;
+	agentConnection: { getState: () => Promise<{ sessionActions: SessionActionSnapshot }> };
+	patchConnectionState: (patch: { sessionActions: SessionActionSnapshot }) => void;
+	refreshQueueSelectionFromState: () => void;
+	updatePendingMessagesDisplay: () => void;
 	refreshHeartbeatCatalog: () => Promise<void>;
 	updateAvailableProviderCount: () => Promise<void>;
 	updateEditorBorderColor: () => void;
@@ -103,7 +109,10 @@ function rebindScaffolding(): Omit<
 	return {
 		toolDefinitionCache: { clear: () => {} },
 		bindLocalSessionExtensions: true,
-		refreshConnectionQueue: async () => {},
+		agentConnection: { getState: async () => ({ sessionActions: EMPTY_SESSION_ACTIONS }) },
+		patchConnectionState: () => {},
+		refreshQueueSelectionFromState: () => {},
+		updatePendingMessagesDisplay: () => {},
 		refreshHeartbeatCatalog: async () => {},
 		updateAvailableProviderCount: async () => {},
 		updateEditorBorderColor: () => {},

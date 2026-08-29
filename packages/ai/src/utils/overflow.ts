@@ -169,10 +169,3 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 export function isRecoverableLength(message: AssistantMessage, desiredMaxOutput: number): boolean {
 	return message.stopReason === "length" && desiredMaxOutput > 0 && message.usage.output < desiredMaxOutput;
 }
-
-/**
- * Get the overflow patterns for testing purposes.
- */
-export function getOverflowPatterns(): RegExp[] {
-	return [...OVERFLOW_PATTERNS];
-}

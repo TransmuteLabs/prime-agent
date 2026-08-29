@@ -14,6 +14,7 @@ import {
 	parseModelPattern,
 	resolveCliModel,
 	resolveModelScope,
+	resolveModelScopeFromModels,
 	resolveModelScopeWithDiagnostics,
 } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -78,6 +79,86 @@ const mockOpenRouterModels: Model<"anthropic-messages">[] = [
 ];
 
 const allModels = [...mockModels, ...mockOpenRouterModels];
+
+describe("resolveModelScopeFromModels", () => {
+	test("resolves scope patterns against the supplied model list", () => {
+		const daemonModel: Model<"anthropic-messages"> = {
+			id: "daemon-only-model",
+			name: "Daemon Only Model",
+			api: "anthropic-messages",
+			provider: "prime-inference",
+			baseUrl: "https://api.pinference.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		};
+
+		const { scopedModels, diagnostics } = resolveModelScopeFromModels(
+			["prime-inference/daemon-only-model:high", "openai/gpt-4o"],
+			[...allModels, daemonModel],
+		);
+
+		expect(scopedModels).toHaveLength(2);
+		expect(scopedModels[0]?.model).toBe(daemonModel);
+		expect(scopedModels[0]?.thinkingLevel).toBe("high");
+		expect(scopedModels[1]?.model.provider).toBe("openai");
+		expect(scopedModels[1]?.model.id).toBe("gpt-4o");
+		expect(diagnostics).toEqual([]);
+	});
+
+	test("resolves a thinking level after a colon-bearing model id", () => {
+		const result = resolveModelScopeFromModels(["openrouter/qwen/qwen3-coder:exacto:high"], allModels);
+
+		expect(result.scopedModels).toEqual([{ model: mockOpenRouterModels[0], thinkingLevel: "high" }]);
+		expect(result.diagnostics).toEqual([]);
+	});
+
+	test("keeps the model and reports a diagnostic for an invalid thinking suffix", () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const result = resolveModelScopeFromModels(["sonnet:random"], allModels);
+
+			expect(result.scopedModels).toEqual([{ model: mockModels[0], thinkingLevel: undefined }]);
+			expect(result.diagnostics).toEqual([
+				{
+					type: "warning",
+					message: 'Invalid thinking level "random" in pattern "sonnet:random". Using default instead.',
+					code: "invalid-thinking-level",
+					pattern: "sonnet:random",
+				},
+			]);
+			expect(warn).not.toHaveBeenCalled();
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	test("preserves provider-qualified selections when model names overlap", () => {
+		const primeInferenceModel: Model<"anthropic-messages"> = {
+			...mockModels[0]!,
+			id: "z-ai/glm-5.2",
+			name: "GLM 5.2",
+			provider: "prime-inference",
+			baseUrl: "https://api.pinference.ai/api/v1",
+		};
+		const huggingFaceModel: Model<"anthropic-messages"> = {
+			...primeInferenceModel,
+			id: "zai-org/GLM-5.2",
+			provider: "huggingface",
+			baseUrl: "https://router.huggingface.co/v1",
+		};
+
+		const result = resolveModelScopeFromModels(
+			["huggingface/zai-org/GLM-5.2"],
+			[primeInferenceModel, huggingFaceModel],
+		);
+
+		expect(result.scopedModels).toEqual([{ model: huggingFaceModel, thinkingLevel: undefined }]);
+		expect(result.diagnostics).toEqual([]);
+	});
+});
 
 describe("parseModelPattern", () => {
 	describe("simple patterns without colons", () => {

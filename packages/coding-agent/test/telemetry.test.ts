@@ -242,7 +242,7 @@ describe("telemetry controls", () => {
 	it("honors settings and environment opt-outs", () => {
 		const settings = SettingsManager.inMemory({ telemetry: { enabled: true } });
 
-		vi.stubEnv("NODE_ENV", "production");
+		vi.stubEnv("DO_NOT_TRACK", "0");
 		expect(isTelemetryEnabled(settings)).toBe(true);
 
 		vi.stubEnv("DO_NOT_TRACK", "1");
@@ -255,14 +255,6 @@ describe("telemetry controls", () => {
 		vi.stubEnv("PRIME_AGENT_TELEMETRY", "1");
 		vi.stubEnv("PI_OFFLINE", "true");
 		expect(isTelemetryEnabled(settings)).toBe(false);
-	});
-
-	it("is disabled by default in tests unless explicitly enabled", () => {
-		const settings = SettingsManager.inMemory({ telemetry: { enabled: true } });
-		vi.stubEnv("NODE_ENV", "test");
-		expect(isTelemetryEnabled(settings)).toBe(false);
-		vi.stubEnv("PRIME_AGENT_TELEMETRY", "1");
-		expect(isTelemetryEnabled(settings)).toBe(true);
 	});
 
 	it("normalizes malformed telemetry settings before updating them", async () => {
@@ -282,6 +274,10 @@ describe("telemetry controls", () => {
 });
 
 describe("agent telemetry aggregation", () => {
+	beforeEach(() => {
+		vi.stubEnv("DO_NOT_TRACK", "0");
+	});
+
 	it("captures only allowlisted built-in command names", async () => {
 		vi.stubEnv("PRIME_AGENT_TELEMETRY", "1");
 		const sink = new FakeTelemetrySink();

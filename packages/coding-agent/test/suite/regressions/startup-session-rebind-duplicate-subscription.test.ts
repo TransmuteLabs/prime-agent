@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import type { SessionActionSnapshot } from "../../../src/core/session-action-store.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+
+const EMPTY_SESSION_ACTIONS: SessionActionSnapshot = { queuedCount: 0, steering: [], followUps: [] };
 
 type RebindContext = {
 	sessionEventGeneration: number;
@@ -10,7 +13,10 @@ type RebindContext = {
 	renderSessionStateNow: () => Promise<void>;
 	bindCurrentSessionExtensions: () => Promise<void>;
 	subscribeToAgent: () => void;
-	refreshConnectionQueue: () => Promise<void>;
+	agentConnection: { getState: () => Promise<{ sessionActions: SessionActionSnapshot }> };
+	patchConnectionState: (patch: { sessionActions: SessionActionSnapshot }) => void;
+	refreshQueueSelectionFromState: () => void;
+	updatePendingMessagesDisplay: () => void;
 	refreshHeartbeatCatalog: () => Promise<void>;
 	updateAvailableProviderCount: () => Promise<void>;
 	updateEditorBorderColor: () => void;
@@ -61,7 +67,10 @@ describe("overlapping startup and replacement session rebinds", () => {
 				return bindCount === 1 ? startupBind : replacementBind;
 			},
 			subscribeToAgent,
-			refreshConnectionQueue: async () => {},
+			agentConnection: { getState: async () => ({ sessionActions: EMPTY_SESSION_ACTIONS }) },
+			patchConnectionState: () => {},
+			refreshQueueSelectionFromState: () => {},
+			updatePendingMessagesDisplay: () => {},
 			refreshHeartbeatCatalog: async () => {},
 			updateAvailableProviderCount: async () => {},
 			updateEditorBorderColor: () => {},

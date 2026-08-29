@@ -53,7 +53,6 @@ type HandleEventThis = {
 	checkShutdownRequested(): Promise<void>;
 	applyOptimisticContextUsage(): void;
 	refreshConnectionContextUsage(): Promise<void>;
-	setSessionHasMessages(hasMessages: boolean): void;
 	clearShortcutGuide(): void;
 	addMessageToChat(): void;
 };
@@ -106,7 +105,6 @@ function createFakeInteractiveModeThis(): HandleEventThis {
 		checkShutdownRequested: vi.fn(async () => {}),
 		applyOptimisticContextUsage: vi.fn(),
 		refreshConnectionContextUsage: vi.fn(async () => {}),
-		setSessionHasMessages: vi.fn(),
 		clearShortcutGuide: vi.fn(),
 		addMessageToChat: vi.fn(),
 	};

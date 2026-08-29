@@ -108,11 +108,6 @@ export const FEATURE_HINTS: readonly FeatureHintDefinition[] = [
 export class FeatureHintDeck {
 	private remaining: FeatureHint[] = [];
 	private previousId: string | undefined;
-	private readonly random: () => number;
-
-	constructor(random: () => number = Math.random) {
-		this.random = random;
-	}
 
 	next(context: FeatureHintContext): FeatureHint | undefined {
 		if (this.remaining.length === 0) {
@@ -131,8 +126,7 @@ export class FeatureHintDeck {
 			return text ? [{ id: hint.id, text }] : [];
 		});
 		for (let index = hints.length - 1; index > 0; index--) {
-			const random = Math.min(0.999999999, Math.max(0, this.random()));
-			const target = Math.floor(random * (index + 1));
+			const target = Math.floor(Math.random() * (index + 1));
 			[hints[index], hints[target]] = [hints[target]!, hints[index]!];
 		}
 		if (hints.length > 1 && hints[hints.length - 1]?.id === this.previousId) {

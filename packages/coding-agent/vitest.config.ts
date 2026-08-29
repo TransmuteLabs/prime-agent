@@ -24,7 +24,7 @@ export default mergeConfig(
 			// rely on the 30s default timeout. `test:kernel` runs them on their own.
 			tagsFilter: ["!process-stress", "!kernel-heavy"],
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
-			env: { PI_OFFLINE: "1" },
+			env: { PI_OFFLINE: "1", DO_NOT_TRACK: "1" },
 			unstubEnvs: true,
 			reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 			silent: "passed-only",
