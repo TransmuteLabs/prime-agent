@@ -1,3 +1,44 @@
-// TODO(prime-port): 4537-nonblocking-onboarding.test.ts dropped in the prime-agent -> pi 0.84.1 migration:
-// it tests 0.7-era behavior/APIs that changed or were not ported in pi 0.84.
-// Restore against the pi 0.84 APIs when the corresponding feature is reconciled.
+import { afterEach, describe, expect, test } from "vitest";
+import { shouldRunOnboarding } from "../../../src/modes/interactive/onboarding.ts";
+import { createHarness, type Harness } from "../harness.ts";
+
+describe("ENG-4537 non-blocking onboarding", () => {
+	const harnesses: Harness[] = [];
+	afterEach(() => {
+		for (const harness of harnesses.splice(0)) {
+			harness.cleanup();
+		}
+	});
+
+	test("never reopens shown onboarding for a client-local auth mismatch", async () => {
+		const harness = await createHarness({
+			settings: { onboardingShown: true },
+			withConfiguredAuth: false,
+		});
+		harnesses.push(harness);
+
+		expect(
+			shouldRunOnboarding({
+				settingsManager: harness.settingsManager,
+				modelRegistry: harness.session.modelRegistry,
+				model: harness.session.model,
+			}),
+		).toBe(false);
+	});
+
+	test("never reopens shown onboarding when the daemon session has no model", async () => {
+		const harness = await createHarness({
+			settings: { onboardingShown: true },
+			withConfiguredAuth: false,
+		});
+		harnesses.push(harness);
+
+		expect(
+			shouldRunOnboarding({
+				settingsManager: harness.settingsManager,
+				modelRegistry: harness.session.modelRegistry,
+				model: undefined,
+			}),
+		).toBe(false);
+	});
+});

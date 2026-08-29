@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { deleteSessionFile } from "../src/core/session-file-actions.ts";
+import { deleteSessionArtifacts, deleteSessionFile } from "../src/core/session-file-actions.ts";
 
 let root = "";
 
@@ -59,6 +59,36 @@ describe("deleteSessionFile removes the session artifact directory", () => {
 		expect(result.ok).toBe(true);
 		expect(wasSessionRemovedBeforeCallback).toBe(true);
 		expect(wereArtifactsPresentDuringCallback).toBe(true);
+		expect(existsSync(artifactDir)).toBe(false);
+	});
+
+	it("never removes the artifacts root for a degenerate session file name", async () => {
+		const sessionsDir = join(root, "sessions");
+		mkdirSync(sessionsDir, { recursive: true });
+		const artifactsRoot = join(root, "session-artifacts");
+		mkdirSync(join(artifactsRoot, "live-session"), { recursive: true });
+
+		// Both strip to an empty id, which would resolve to the root.
+		await deleteSessionArtifacts(join(sessionsDir, ".jsonl"));
+		await deleteSessionArtifacts(join(sessionsDir, "2026-08-29T02-45-06-324Z_.jsonl"));
+
+		expect(existsSync(join(artifactsRoot, "live-session"))).toBe(true);
+	});
+
+	it("deletes artifacts for a timestamp-prefixed session file name", async () => {
+		const sessionId = "01a04b68-1094-713c-90bd-6199e9d74f32";
+		const sessionsDir = join(root, "sessions");
+		mkdirSync(sessionsDir, { recursive: true });
+		const sessionPath = join(sessionsDir, `2026-08-29T02-45-06-324Z_${sessionId}.jsonl`);
+		writeFileSync(sessionPath, '{"type":"session"}\n');
+
+		const artifactDir = join(root, "session-artifacts", sessionId);
+		mkdirSync(artifactDir, { recursive: true });
+		writeFileSync(join(artifactDir, "kernel-state.json"), "{}");
+
+		const result = await deleteSessionFile(sessionPath);
+
+		expect(result.ok).toBe(true);
 		expect(existsSync(artifactDir)).toBe(false);
 	});
 

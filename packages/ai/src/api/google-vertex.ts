@@ -29,6 +29,7 @@ import { providerHeadersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { recordStreamFailure, streamFailureFromStopReason } from "../utils/stream-failure.ts";
 import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
@@ -289,7 +290,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				const errorMessage = output.rawStopReason
 					? `Provider stopped with: ${output.rawStopReason}`
 					: "An unknown error occurred";
-				throw new Error(errorMessage);
+				throw streamFailureFromStopReason(output.rawStopReason, { message: errorMessage });
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -303,6 +304,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			recordStreamFailure(model, output, error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -320,7 +322,7 @@ export const streamSimple: StreamFunction<"google-vertex", SimpleStreamOptions> 
 		...buildBaseOptions(model, context, options, undefined),
 		toolChoice: options?.toolChoice,
 	} satisfies GoogleVertexOptions;
-	if (!options?.reasoning) {
+	if (!options?.reasoning || options.reasoning === "off") {
 		return stream(model, context, {
 			...base,
 			thinking: { enabled: false },
@@ -580,6 +582,18 @@ function getGoogleBudget(
 			low: 2048,
 			medium: 8192,
 			high: 32768,
+		};
+		return budgets[level];
+	}
+
+	// Flash-Lite's smallest accepted budget is 512; it must be matched before the broader
+	// "2.5-flash" test, which its id also satisfies.
+	if (model.id.includes("2.5-flash-lite")) {
+		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
+			minimal: 512,
+			low: 2048,
+			medium: 8192,
+			high: 24576,
 		};
 		return budgets[level];
 	}

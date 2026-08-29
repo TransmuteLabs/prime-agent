@@ -130,6 +130,13 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	private hardwareCursorRow = 0;
 	private maxLinesRendered = 0;
 	private previousViewportTop = 0;
+	/** One-shot: repaint the visible viewport in place instead of replaying scrollback. */
+	private preserveViewportOnNextRender = false;
+
+	override requestRenderPreservingViewport(): void {
+		this.preserveViewportOnNextRender = true;
+		this.requestRender();
+	}
 
 	captureRenderState(): TuiMainScreenRenderState {
 		return {
@@ -245,6 +252,9 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 	protected doRender(): void {
 		if (this.stopped) return;
+		// Consumed here so a request can never leak into a later render.
+		const preserveViewport = this.preserveViewportOnNextRender;
+		this.preserveViewportOnNextRender = false;
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
@@ -273,10 +283,56 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		newLines = this.applyLineResets(newLines);
 
 		// Helper to clear scrollback and viewport and render all new lines
-		const fullRender = (clear: boolean): void => {
+		const fullRender = (clear: boolean, preserveViewportRepaint = false): void => {
 			this.fullRedrawCount += 1;
 			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
 			output.append("\x1b[?2026h"); // Begin synchronized output
+			// Rewrite only the visible viewport in place, leaving scrollback untouched, so a
+			// deliberate toggle keeps the user anchored instead of replaying the transcript
+			// from the top. Needs a previous frame on screen to paint over.
+			if (preserveViewportRepaint && this.previousLines.length > 0) {
+				const windowStart = Math.max(0, newLines.length - height);
+				const visibleCount = newLines.length - windowStart;
+				const prevScreenRows = Math.min(height, this.previousLines.length);
+				// Images living in scrollback above the repainted slice are never redrawn
+				// here, so deleting them would leave broken history when scrolling up.
+				output.append(this.deleteChangedKittyImages(prevViewportTop, prevViewportTop + prevScreenRows - 1));
+				const screenRow = Math.max(0, Math.min(prevScreenRows - 1, this.hardwareCursorRow - prevViewportTop));
+				if (screenRow > 0) output.append(`\x1b[${screenRow}A`);
+				output.append("\r");
+				// With no content the loop below never runs, and the leftover clear moves
+				// down before clearing, which would leave row 0 stale.
+				if (visibleCount === 0) output.append("\x1b[2K");
+				for (let i = 0; i < visibleCount; i++) {
+					if (i > 0) output.append("\r\n");
+					output.append("\x1b[2K"); // Clear current line
+					output.append(newLines[windowStart + i]);
+				}
+				if (visibleCount < prevScreenRows) {
+					// Row 0 is already occupied, so clamping with max(visibleCount, 1) avoids
+					// emitting a newline past the last screen row, which would scroll.
+					const leftover = prevScreenRows - Math.max(visibleCount, 1);
+					for (let i = 0; i < leftover; i++) {
+						output.append("\r\n\x1b[2K");
+					}
+					if (leftover > 0) output.append(`\x1b[${leftover}A`);
+				}
+				output.append("\x1b[?2026l"); // End synchronized output
+				output.flush();
+				this.cursorRow = Math.max(0, newLines.length - 1);
+				this.hardwareCursorRow = this.cursorRow;
+				// Reset rather than grow the high-water mark, mirroring the full-redraw
+				// path: otherwise a preserving collapse leaves it inflated and the next
+				// plain render re-triggers clearOnShrink.
+				this.maxLinesRendered = newLines.length;
+				this.previousViewportTop = windowStart;
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousLines = newLines;
+				this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+				this.previousWidth = width;
+				this.previousHeight = height;
+				return;
+			}
 			if (clear) {
 				output.append(this.deleteKittyImages(this.previousKittyImageIds));
 				output.append("\x1b[2J\x1b[H\x1b[3J"); // Clear screen, home, then clear scrollback
@@ -354,7 +410,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Configurable via setClearOnShrink() or PI_CLEAR_ON_SHRINK=0 env var
 		if (this.getClearOnShrink() && newLines.length < this.maxLinesRendered && !this.hasOverlayEntries) {
 			logRedraw(`clearOnShrink (maxLinesRendered=${this.maxLinesRendered})`);
-			fullRender(true);
+			fullRender(true, preserveViewport);
 			return;
 		}
 
@@ -405,7 +461,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				const targetRow = Math.max(0, newLines.length - 1);
 				if (targetRow < prevViewportTop) {
 					logRedraw(`deleted lines moved viewport up (${targetRow} < ${prevViewportTop})`);
-					fullRender(true);
+					fullRender(true, preserveViewport);
 					return;
 				}
 				const lineDiff = computeLineDiff(targetRow);
@@ -416,7 +472,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				const extraLines = this.previousLines.length - newLines.length;
 				if (extraLines > height) {
 					logRedraw(`extraLines > height (${extraLines} > ${height})`);
-					fullRender(true);
+					fullRender(true, preserveViewport);
 					return;
 				}
 				const clearStartOffset = newLines.length === 0 ? 0 : 1;
@@ -445,11 +501,20 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			return;
 		}
 
-		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// Differential rendering can only touch what was actually visible. When the
+		// first changed line is above the previous viewport, the rows on screen no
+		// longer correspond to newLines, so the frame has to be repainted.
+		//
+		// While the transcript is GROWING past the viewport (streaming, or attaching to
+		// a long session whose off-screen tool results keep resolving), replaying it in
+		// full on every such change is what makes the screen scroll to the top and
+		// flicker; repainting only the visible window leaves scrollback intact. A shrink
+		// (rebuild or compaction) would leave removed lines stale above the window, so it
+		// still takes the full redraw — a one-time event with no recurring flicker.
 		if (firstChanged < prevViewportTop) {
 			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
+			const preserveScrollback = newLines.length > height && newLines.length >= this.previousLines.length;
+			fullRender(true, preserveScrollback || preserveViewport);
 			return;
 		}
 

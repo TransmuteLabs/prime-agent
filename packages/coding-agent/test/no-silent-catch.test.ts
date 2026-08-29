@@ -2,14 +2,87 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
-/**
- * Guardrail for ENG-4422: errors must never be swallowed without a trace.
- * An empty `catch {}` is only acceptable with a comment explaining why the
- * swallow is intentional (which this scan permits), or better, a log call.
- */
-
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 const EMPTY_CATCH = /catch(\s*\([^)]*\))?\s*\{\s*\}/g;
+
+/**
+ * Blank out the contents of string, template and regex literals, preserving offsets so the
+ * reported line numbers stay accurate. Without this a `catch {}` inside a shell snippet passed
+ * as a string is reported as source code.
+ */
+function blankNonCode(content: string): string {
+	const out = content.split("");
+	const blank = (start: number, end: number) => {
+		for (let i = start; i < end && i < out.length; i++) {
+			if (out[i] !== "\n") out[i] = " ";
+		}
+	};
+	// A slash opens a regex only where a value may start; after a value it is division.
+	const regexAllowedBefore = /[(,=:[!&|?{};+\-*%~^]/;
+	let lastMeaningful = "";
+	let i = 0;
+	while (i < content.length) {
+		const ch = content[i];
+		const next = content[i + 1];
+		// Comments are skipped, not blanked: the explanatory comment is exactly what makes a
+		// catch block non-empty, so removing it would report every documented site.
+		if (ch === "/" && next === "/") {
+			const end = content.indexOf("\n", i);
+			i = end === -1 ? content.length : end;
+			continue;
+		}
+		if (ch === "/" && next === "*") {
+			const end = content.indexOf("*/", i + 2);
+			i = end === -1 ? content.length : end + 2;
+			continue;
+		}
+		if (ch === '"' || ch === "'" || ch === "`") {
+			let j = i + 1;
+			while (j < content.length) {
+				if (content[j] === "\\") {
+					j += 2;
+					continue;
+				}
+				if (content[j] === ch) break;
+				// A template literal ends at its backtick; `${}` holes may themselves contain
+				// strings, but blanking them wholesale only hides code that is not a catch site.
+				if (ch !== "`" && content[j] === "\n") break;
+				j++;
+			}
+			blank(i + 1, j);
+			i = j + 1;
+			lastMeaningful = ch;
+			continue;
+		}
+		if (ch === "/" && (lastMeaningful === "" || regexAllowedBefore.test(lastMeaningful))) {
+			let j = i + 1;
+			let inClass = false;
+			let closed = false;
+			while (j < content.length && content[j] !== "\n") {
+				if (content[j] === "\\") {
+					j += 2;
+					continue;
+				}
+				if (content[j] === "[") inClass = true;
+				else if (content[j] === "]") inClass = false;
+				else if (content[j] === "/" && !inClass) {
+					closed = true;
+					break;
+				}
+				j++;
+			}
+			if (closed) {
+				blank(i + 1, j);
+				i = j + 1;
+				lastMeaningful = "/";
+				continue;
+			}
+		}
+		if (!/\s/.test(ch)) lastMeaningful = ch;
+		i++;
+	}
+	return out.join("");
+}
 
 function collectTsFiles(dir: string, out: string[] = []): string[] {
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -39,7 +112,7 @@ describe("no silent catch blocks", () => {
 				continue;
 			}
 			for (const file of files) {
-				const content = readFileSync(file, "utf-8");
+				const content = blankNonCode(readFileSync(file, "utf-8"));
 				for (const match of content.matchAll(EMPTY_CATCH)) {
 					const line = content.slice(0, match.index).split("\n").length;
 					offenders.push(`${relative(REPO_ROOT, file)}:${line}`);

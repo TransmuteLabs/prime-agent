@@ -66,21 +66,17 @@ export function transformMessages<TApi extends Api>(
 	model: Model<TApi>,
 	normalizeToolCallId?: (id: string, model: Model<TApi>, source: AssistantMessage) => string,
 ): Message[] {
-	// Build a map of original tool call IDs to normalized IDs
 	const toolCallIdMap = new Map<string, string>();
 	// Normalize null/undefined content from untyped callers (custom tools, hand-built
 	// histories, old session files) so downstream code can rely on the type contract.
 	const normalizedMessages = messages.map((msg) => (msg.content == null ? { ...msg, content: [] } : msg));
 	const imageAwareMessages = downgradeUnsupportedImages(normalizedMessages, model);
 
-	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
 	const transformed = imageAwareMessages.map((msg) => {
-		// User messages pass through unchanged
 		if (msg.role === "user") {
 			return msg;
 		}
 
-		// Handle toolResult messages - normalize toolCallId if we have a mapping
 		if (msg.role === "toolResult") {
 			const normalizedId = toolCallIdMap.get(msg.toolCallId);
 			if (normalizedId && normalizedId !== msg.toolCallId) {
@@ -89,7 +85,6 @@ export function transformMessages<TApi extends Api>(
 			return msg;
 		}
 
-		// Assistant messages need transformation check
 		if (msg.role === "assistant") {
 			const assistantMsg = msg as AssistantMessage;
 			const isSameModel =
@@ -155,7 +150,6 @@ export function transformMessages<TApi extends Api>(
 		return msg;
 	});
 
-	// Second pass: insert synthetic empty tool results for orphaned tool calls
 	// This preserves thinking signatures and satisfies API requirements
 	const result: Message[] = [];
 	let pendingToolCalls: ToolCall[] = [];
@@ -183,7 +177,6 @@ export function transformMessages<TApi extends Api>(
 		const msg = transformed[i];
 
 		if (msg.role === "assistant") {
-			// If we have pending orphaned tool calls from a previous assistant, insert synthetic results now
 			insertSyntheticToolResults();
 
 			// Skip errored/aborted assistant messages entirely.
@@ -196,7 +189,6 @@ export function transformMessages<TApi extends Api>(
 				continue;
 			}
 
-			// Track tool calls from this assistant message
 			const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall") as ToolCall[];
 			if (toolCalls.length > 0) {
 				pendingToolCalls = toolCalls;
@@ -208,7 +200,6 @@ export function transformMessages<TApi extends Api>(
 			existingToolResultIds.add(msg.toolCallId);
 			result.push(msg);
 		} else if (msg.role === "user") {
-			// User message interrupts tool flow - insert synthetic results for orphaned calls
 			insertSyntheticToolResults();
 			result.push(msg);
 		} else {
@@ -216,7 +207,6 @@ export function transformMessages<TApi extends Api>(
 		}
 	}
 
-	// If the conversation ends with unresolved tool calls, synthesize results now.
 	insertSyntheticToolResults();
 
 	return result;

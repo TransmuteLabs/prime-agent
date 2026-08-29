@@ -2,15 +2,23 @@ import { describe, expect, it, vi } from "vitest";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 
 type RebindContext = {
-	session: object;
+	sessionEventGeneration: number;
 	unsubscribe?: () => void;
+	bindLocalSessionExtensions: boolean;
+	toolDefinitionCache: { clear: () => void };
 	applyRuntimeSettings: () => void;
-	renderCurrentSessionState: () => void;
+	renderSessionStateNow: () => Promise<void>;
 	bindCurrentSessionExtensions: () => Promise<void>;
 	subscribeToAgent: () => void;
+	refreshConnectionQueue: () => Promise<void>;
+	refreshHeartbeatCatalog: () => Promise<void>;
 	updateAvailableProviderCount: () => Promise<void>;
 	updateEditorBorderColor: () => void;
 	updateTerminalTitle: () => void;
+	setGoalAnnouncementBaseline: (state: unknown) => void;
+	getGoalState: () => unknown;
+	syncGoalTray: (state: unknown) => void;
+	syncWorkingLoader: () => void;
 };
 
 type InteractiveModePrototype = {
@@ -19,10 +27,15 @@ type InteractiveModePrototype = {
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
 
+/** Let the pending microtasks of a rebind run without resolving its bind barrier. */
+async function flush(): Promise<void> {
+	for (let i = 0; i < 4; i++) {
+		await Promise.resolve();
+	}
+}
+
 describe("overlapping startup and replacement session rebinds", () => {
 	it("does not subscribe from the stale startup rebind", async () => {
-		const startupSession = {};
-		const replacementSession = {};
 		let resolveStartupBind!: () => void;
 		let resolveReplacementBind!: () => void;
 
@@ -38,26 +51,37 @@ describe("overlapping startup and replacement session rebinds", () => {
 		let bindCount = 0;
 
 		const context: RebindContext = {
-			session: startupSession,
+			sessionEventGeneration: 0,
+			bindLocalSessionExtensions: true,
+			toolDefinitionCache: { clear: () => {} },
 			applyRuntimeSettings: () => {},
-			renderCurrentSessionState: () => {},
+			renderSessionStateNow: async () => {},
 			bindCurrentSessionExtensions: () => {
 				bindCount += 1;
 				return bindCount === 1 ? startupBind : replacementBind;
 			},
 			subscribeToAgent,
+			refreshConnectionQueue: async () => {},
+			refreshHeartbeatCatalog: async () => {},
 			updateAvailableProviderCount: async () => {},
 			updateEditorBorderColor: () => {},
 			updateTerminalTitle,
+			setGoalAnnouncementBaseline: () => {},
+			getGoalState: () => undefined,
+			syncGoalTray: () => {},
+			syncWorkingLoader: () => {},
 		};
 
 		const startupRebind = interactiveModePrototype.rebindCurrentSession.call(context);
 		expect(bindCount).toBe(1);
 
-		context.session = replacementSession;
+		// A replacement session advances the generation before it rebinds.
+		context.sessionEventGeneration += 1;
 		const replacementRebind = interactiveModePrototype.rebindCurrentSession.call(context, {
 			renderBeforeBind: true,
 		});
+		// The replacement renders before it binds, so its bind starts one microtask turn later.
+		await flush();
 
 		expect(bindCount).toBe(2);
 		expect(subscribeToAgent).toHaveBeenCalledTimes(1);

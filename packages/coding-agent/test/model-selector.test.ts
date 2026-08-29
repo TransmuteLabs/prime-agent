@@ -30,9 +30,6 @@ describe("model selector", () => {
 				["anthropic", new Error("unavailable")],
 			]),
 		});
-		vi.spyOn(harness.session.modelRuntime, "getError").mockReturnValue(
-			"Could not refresh 2 model catalogs (openai, anthropic); showing cached models.",
-		);
 
 		const selector = new ModelSelectorComponent(
 			createFakeTui(),
@@ -43,7 +40,9 @@ describe("model selector", () => {
 			() => {},
 		);
 
-		const rendered = stripAnsi(selector.render(120).join("\n"));
-		expect(rendered).toContain("Could not refresh 2 model catalogs (openai, anthropic); showing cached models.");
+		await vi.waitFor(() => {
+			const rendered = stripAnsi(selector.render(120).join("\n"));
+			expect(rendered).toContain("Could not refresh 2 model catalogs (openai, anthropic); showing cached models.");
+		});
 	});
 });

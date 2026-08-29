@@ -1,9 +1,10 @@
 import type { ContextUsage } from "./extensions/index.ts";
 
-/** Session statistics for the /session command and connection snapshots. */
 export interface SessionStats {
 	sessionFile: string | undefined;
 	sessionId: string;
+	/** Set only when the session lives outside the default directory, so a resume hint can name it. */
+	sessionDir?: string;
 	userMessages: number;
 	assistantMessages: number;
 	toolCalls: number;

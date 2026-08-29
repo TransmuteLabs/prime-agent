@@ -1,102 +1,52 @@
-# Contributing to pi
+# Contributing to Prime Agent
 
-This guide exists to save both sides time.
+Thanks for your interest in contributing to Prime Agent! Prime Agent is developed in public, and we welcome bug reports, feature requests, questions, and other feedback. To keep the project maintainable, public contributions begin in [GitHub Discussions](https://github.com/PrimeIntellect-ai/prime-agent/discussions).
 
-## Philosophy
+With the influx of agent-generated contributions, we do not review unsolicited pull requests or use public Issues as the initial intake queue. While we are open to contributions by agents, you are responsible for your code and must understand how it interacts with the entire project.
 
-First things first: **pi's core is minimal**.
+## Start with a Discussion
 
-If your feature does not belong in the core, it should be an extension. PRs that bloat the core will likely be rejected.
+Choose the category that best matches what you want to share:
 
-Pi's core exists to be minimal and to be extensible so that it can be influenced and manipulated by extensions.  Even hook points for extensions however should be well considered and discussed to avoid adding unmaintainable bloat and complex interactions.
+- [General discussion or question](https://github.com/PrimeIntellect-ai/prime-agent/discussions/categories/general)
+- [Bug report](https://github.com/PrimeIntellect-ai/prime-agent/discussions/categories/bug-reports)
+- [Feature request](https://github.com/PrimeIntellect-ai/prime-agent/discussions/categories/feature-requests)
 
-## The One Rule
+Search existing Discussions before creating a new one. Include enough detail for someone else to understand and reproduce the problem, but do not share API keys, tokens, private prompts, or other sensitive information.
 
-**You must understand your code.** If you cannot explain what your changes do and how they interact with the rest of the system, your PR will be closed.
+For security vulnerabilities, follow [SECURITY.md](SECURITY.md) instead of posting publicly.
 
-Using AI to write code is fine. Submitting AI-generated slop without understanding it is not.
+## Issues
 
-If you use an agent, run it from the `pi` root directory so it picks up `AGENTS.md` automatically. Your agent must follow the rules and guidelines in that file.
+GitHub Issues track work that maintainers have accepted and intend to investigate or implement. A maintainer may create an Issue from a Discussion when the scope is clear and the work fits the roadmap. An existing Issue does not automatically mean that an external pull request is wanted. Wait for a maintainer to invite implementation before starting substantial work.
 
-## Contribution Gate
+Issues opened by unapproved contributors are automatically closed and redirected to Discussions. To contribute, share interest in Discussions or corresponding issues, and maintainers can invite implementation for requested work.
 
-All issues and PRs from new contributors are auto-closed by default.
+## Pull Requests and Trusted Contributors
 
-Issues submitted Friday through Sunday are not guaranteed to be reviewed.  If something is urgent, ask on Discord: https://discord.com/invite/3cU7Bz4UPx
+Prime Agent runs on user machines and can execute code with the user's permissions. We therefore limit pull requests to maintainers and trusted contributors who have been explicitly vouched for. Maintainers may vouch for someone after they have consistently demonstrated a useful understanding of the project through Discussions, issue investigation, testing, documentation, or other collaboration. There is no separate application process and no guarantee that participation will result in approval.
 
-Maintainers review auto-closed issues daily and reopen worthwhile ones. Issues that do not meet the quality bar below will not be reopened or receive a reply.
+Pull requests from unvouched contributors are automatically closed. If you are interested in contributing code, begin with a Discussion and work with the maintainers on the problem first.
 
-Approval happens through maintainer replies on issues:
+## Preparing an Approved Pull Request
 
-- `lgtmi`: your future issues will not be auto-closed
-- `lgtm`: your future issues and PRs will not be auto-closed
+If a maintainer has invited a pull request:
 
-The command must be at the start of the reply (optionally after one or more `@username` mentions) or at the end. `lgtmi` does not grant rights to submit PRs. Only `lgtm` grants rights to submit PRs.
+1. Keep the change focused on the accepted Issue or Discussion.
+2. Follow the repository's development rules and existing conventions.
+3. Add or update tests for behavioral changes.
+4. Run the relevant checks locally and describe the validation in the pull request.
+5. Avoid unrelated refactors or dependency changes.
 
-## Quality Bar For Issues
+Development setup and commands are documented in the [development guide](packages/coding-agent/docs/development.md).
 
-If you open an issue, you must use one of the two GitHub issue templates.
+## Changelog entries
 
-If you open an issue, keep it short, concrete, and worth reading.
+Do not edit `packages/*/CHANGELOG.md` directly. Instead, add one fragment
+file per PR per touched package: `packages/<pkg>/.changes/<slug>.md`, where `<slug>` is a kebab-case name
+derived from your branch or ticket (e.g. `eng-1234-fix-resize.md`). The file contains exactly the bullet
+line(s) that describe the change, e.g. `- Fixed the frobnicator dropping input on resize.`. The release
+script aggregates fragments into the release section and deletes them. PRs that change `packages/<pkg>/src`
+without a fragment fail CI; apply the `no-changelog` label to opt out.
 
-- Keep it concise. If it does not fit on one screen, it is too long.
-- Write in your own voice (do not use an LLM to generate text, if you must, follow up with a clearly AI labeled comment).
-- State the bug or request clearly.
-- Explain why it matters.
-- If you want to implement the change yourself, say so.
-
-If the issue is real and written well, a maintainer may reopen it or reply with `lgtmi` or `lgtm` in the command position described above.
-
-## Blocking
-
-If you ignore this document twice, or if you spam the tracker with agent-generated issues, your GitHub account will be permanently blocked.
-
-If you send a large volume of issues through automation, your GitHub account will be permanently blocked. No taksies backsies.
-
-## Before Submitting a PR
-
-Do not open a PR unless you have already been approved by a maintainer using `lgtm` in the command position described above.
-
-Before submitting a PR:
-
-```bash
-npm run check
-./test.sh
-```
-
-Both must pass.
-
-Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
-
-If you are adding a new provider to `packages/ai`, see `AGENTS.md` for required tests.
-
-## Questions?
-
-Ask on [Discord](https://discord.com/invite/nKXTsAcmbT).
-
-## FAQ
-
-### Why are new issues and PRs auto-closed?
-
-pi receives more issues than the maintainers can responsibly review in real time. Many reports do not meet the quality bar in this guide or do not follow CONTRIBUTING.md. Some are slung at the repository mindlessly via an agent instead of being reviewed and shaped by the person submitting them. Auto-closing creates a buffer so maintainers can review the tracker on their own schedule and reopen the issues that meet the quality bar.
-
-### Why are weekend issues lower priority?
-
-We triage the tracker during working hours. That means more issues can accumulate over the weekend. Anything submitted Friday through Sunday may be missed or given lower priority in the Monday review queue. If a problem is urgent, ask on Discord and include the short version, a repro, and the relevant logs.
-
-### Why do some issues get no reply?
-
-A reply is maintenance work too. Low-signal issues, unclear reports, duplicates, and issues that do not follow this guide may be closed without discussion. This keeps time available for reproducible bugs, thoughtful requests, and contributors who have done the work to make their report actionable.
-
-### Why not let AI triage everything?
-
-AI can help group duplicates, summarize reports, and spot missing information. It is not trusted to make final maintainer decisions. Polished AI-generated issues can still be wrong, misleading, or expensive to investigate. Human review remains the final gate.
-
-### Is this hostile to contributors?
-
-No. It is a guardrail against burnout and tracker spam. Short, concrete, reproducible issues are welcome. Thoughtful contributions are welcome. Automated slop, entitlement, and large volumes of low-effort reports are not.
-
-## Where can I learn about plans?
-
-Earendil uses RFCs to discuss larger changes.  Not all of them are public, but
-quite a few are.  They can be found at [rfc.earendil.com](https://rfc.earendil.com/keyword/pi/).
+Maintainers may close a pull request that changes scope, cannot be validated safely, or no longer fits the project roadmap.

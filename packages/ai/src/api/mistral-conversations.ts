@@ -19,6 +19,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { recordStreamFailure, streamFailureFromStopReason } from "../utils/stream-failure.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -155,7 +156,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 				throw new Error("Mistral stream ended without a finish reason");
 			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error(output.errorMessage || "An unknown error occurred");
+				throw streamFailureFromStopReason(output.rawStopReason, { message: output.errorMessage });
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -167,6 +168,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatMistralError(error);
+			recordStreamFailure(model, output, error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -471,10 +473,14 @@ async function* readMistralEvents(
 		signal.removeEventListener("abort", onAbort);
 		try {
 			await reader.cancel();
-		} catch {}
+		} catch {
+			// Teardown only: the stream is already finished, errored or aborted.
+		}
 		try {
 			reader.releaseLock();
-		} catch {}
+		} catch {
+			// A reader released by an earlier cancel throws; nothing is left to clean up.
+		}
 	}
 }
 

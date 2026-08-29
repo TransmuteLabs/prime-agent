@@ -226,6 +226,7 @@ async function runLoop(
 			const nextTurnContext = {
 				message,
 				toolResults,
+				hasMoreToolCalls,
 				context: currentContext,
 				newMessages,
 			};
@@ -248,6 +249,7 @@ async function runLoop(
 				await config.shouldStopAfterTurn?.({
 					message,
 					toolResults,
+					hasMoreToolCalls,
 					context: currentContext,
 					newMessages,
 				})

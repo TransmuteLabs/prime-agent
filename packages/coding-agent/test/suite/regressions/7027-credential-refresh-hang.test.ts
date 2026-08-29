@@ -1,8 +1,9 @@
-import type { Api, Model, Provider } from "@earendil-works/pi-ai";
+import type { Model, Provider } from "@earendil-works/pi-ai";
+import type { TUI } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { ModelRuntime } from "../../../src/core/model-runtime.ts";
-import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { ProviderAuthFlows } from "../../../src/modes/interactive/auth-flows.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 const dynamicModel: Model<"openai-completions"> = {
@@ -90,27 +91,22 @@ describe("issues #7027 and #7113 credential refresh hang", () => {
 				}),
 		);
 		const showWarning = vi.fn();
-		const context = {
-			session: harness.session,
-			updateAvailableProviderCount: vi.fn(),
-			footer: { invalidate: vi.fn() },
-			updateEditorBorderColor: vi.fn(),
+		const flows = new ProviderAuthFlows({
+			ui: { requestRender: vi.fn() } as unknown as TUI,
+			modelRegistry: harness.session.modelRegistry,
 			showStatus: vi.fn(),
 			showError: vi.fn(),
 			showWarning,
-			maybeWarnAboutAnthropicSubscriptionAuth: vi.fn(),
-			checkDaxnutsEasterEgg: vi.fn(),
-			ui: { requestRender: vi.fn() },
-		};
-		const complete = Reflect.get(InteractiveMode.prototype, "completeProviderAuthentication") as (
-			this: object,
+			getAvailableModels: async () => [],
+		});
+		const complete = Reflect.get(flows, "completeProviderAuthentication") as (
+			this: ProviderAuthFlows,
 			providerId: string,
 			providerName: string,
 			authType: "oauth" | "api_key",
-			previousModel: Model<Api>,
-		) => Promise<void>;
+		) => Promise<unknown>;
 
-		await complete.call(context, dynamicModel.provider, "Stalled Login", "api_key", harness.getModel());
+		await complete.call(flows, dynamicModel.provider, "Stalled Login", "api_key");
 		expect(runtime.refresh).toHaveBeenCalledWith({
 			providers: [dynamicModel.provider],
 			signal: expect.any(AbortSignal),

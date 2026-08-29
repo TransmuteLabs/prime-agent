@@ -9,7 +9,9 @@ import {
 } from "../src/utils/version-check.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
+const DEFAULT_PRIME_AGENT_DOWNLOAD_BASE_URL = "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev";
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+const originalDownloadBaseUrl = process.env.PRIME_AGENT_DOWNLOAD_BASE_URL;
 
 beforeEach(() => {
 	allowNetwork();
@@ -17,6 +19,11 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	if (originalDownloadBaseUrl === undefined) {
+		delete process.env.PRIME_AGENT_DOWNLOAD_BASE_URL;
+	} else {
+		process.env.PRIME_AGENT_DOWNLOAD_BASE_URL = originalDownloadBaseUrl;
+	}
 	if (originalSkipVersionCheck === undefined) {
 		delete process.env.PI_SKIP_VERSION_CHECK;
 	} else {
@@ -42,20 +49,58 @@ describe("version checks", () => {
 		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ version: "1.2.3" });
 	});
 
-	it("uses the pi.dev version check api with a pi user agent", async () => {
-		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
+	it("uses the Prime Agent release manifest with a Prime Agent user agent", async () => {
+		const fetchMock = vi.fn(async () => Response.json({ version: "v1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");
 		expect(fetchMock).toHaveBeenCalledWith(
-			"https://pi.dev/api/latest-version",
+			`${DEFAULT_PRIME_AGENT_DOWNLOAD_BASE_URL}/latest.json`,
 			expect.objectContaining({
 				headers: expect.objectContaining({
-					"User-Agent": expect.stringMatching(/^pi\/1\.2\.3 /),
+					"User-Agent": expect.stringMatching(/^prime-agent\/1\.2\.3 /),
 					accept: "application/json",
 				}),
 			}),
 		);
+	});
+
+	it("keeps beta installations on the beta release manifest", async () => {
+		const fetchMock = vi.fn(async () => Response.json({ version: "v1.2.4-beta.124.1.abcdef0" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getLatestPiVersion("1.2.4-beta.123.1.1234567")).resolves.toBe("1.2.4-beta.124.1.abcdef0");
+		expect(fetchMock).toHaveBeenCalledWith(`${DEFAULT_PRIME_AGENT_DOWNLOAD_BASE_URL}/beta.json`, expect.any(Object));
+	});
+
+	it("returns the active package and tarball install spec from the release manifest", async () => {
+		const fetchMock = vi.fn(async () =>
+			Response.json({
+				package: "prime-agent",
+				tarball: "releases/v1.2.4/prime-agent-1.2.4.tgz",
+				version: "v1.2.4",
+			}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({
+			installSpec: `${DEFAULT_PRIME_AGENT_DOWNLOAD_BASE_URL}/releases/v1.2.4/prime-agent-1.2.4.tgz`,
+			packageName: "prime-agent",
+			version: "1.2.4",
+		});
+	});
+
+	it("resolves the release manifest against a configured download base url", async () => {
+		process.env.PRIME_AGENT_DOWNLOAD_BASE_URL = "https://downloads.example.com/agent/";
+		const fetchMock = vi.fn(async () => Response.json({ tarball: "/pkg.tgz", version: "1.2.4" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({
+			installSpec: "https://downloads.example.com/agent/pkg.tgz",
+			packageName: undefined,
+			version: "1.2.4",
+		});
+		expect(fetchMock).toHaveBeenCalledWith("https://downloads.example.com/agent/latest.json", expect.any(Object));
 	});
 
 	it("retries a transient version request when explicitly requested", async () => {

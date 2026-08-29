@@ -1,6 +1,6 @@
 import { resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { highlightCode, initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { highlightCode, initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import {
 	highlight,
 	loadAllHighlightLanguages,
@@ -99,8 +99,10 @@ describe("theme syntax highlighting", () => {
 	it("colors diff additions and deletions in fenced diff blocks", () => {
 		const lines = highlightCode("-old\n+new\n", "diff");
 
-		expect(lines[0]).toBe("\x1b[38;2;204;102;102m-old\x1b[39m");
-		expect(lines[1]).toBe("\x1b[38;2;181;189;104m+new\x1b[39m");
+		// The mapping is the guarantee; the palette behind toolDiffRemoved/toolDiffAdded is
+		// this distribution's own dark theme, so the expected escapes come from the theme.
+		expect(lines[0]).toBe(theme.fg("toolDiffRemoved", "-old"));
+		expect(lines[1]).toBe(theme.fg("toolDiffAdded", "+new"));
 	});
 
 	it("keeps cli-highlight default styled scopes mapped to theme styles", () => {

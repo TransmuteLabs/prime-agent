@@ -3,10 +3,22 @@
  */
 
 import chalk from "chalk";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
+import type { Dirent } from "fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmdirSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "fs";
+import { basename, dirname, join } from "path";
+import { CONFIG_DIR_NAME, getAgentDir, getBinDir, getSessionsDir } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
+import { readFirstLineSync } from "./utils/file-lines.ts";
 import { stripBom } from "./utils/text.ts";
 
 const MIGRATION_GUIDE_URL =
@@ -99,34 +111,134 @@ export function migrateSessionsFromAgentRoot(): void {
 
 	for (const file of files) {
 		try {
-			// Read first line to get session header
-			const content = readFileSync(file, "utf8");
-			const firstLine = content.split("\n")[0];
+			// Only the header decides where the file belongs; a session transcript can be
+			// hundreds of megabytes, so it is never read whole to classify it.
+			const firstLine = readFirstLineSync(file);
 			if (!firstLine?.trim()) continue;
 
 			const header = JSON.parse(firstLine);
-			if (header.type !== "session" || !header.cwd) continue;
+			if (header.type !== "session") continue;
 
-			const cwd: string = header.cwd;
-
-			// Compute the correct session directory (same encoding as session-manager.ts)
-			const safePath = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-			const correctDir = join(agentDir, "sessions", safePath);
+			// The header's cwd is what separates sessions; the store itself is one flat directory.
+			const correctDir = getSessionsDir(agentDir);
 
 			// Create directory if needed
 			if (!existsSync(correctDir)) {
 				mkdirSync(correctDir, { recursive: true });
 			}
 
-			// Move the file
-			const fileName = file.split("/").pop() || file.split("\\").pop();
-			const newPath = join(correctDir, fileName!);
+			const newPath = join(correctDir, basename(file));
 
 			if (existsSync(newPath)) continue; // Skip if target exists
 
 			renameSync(file, newPath);
 		} catch {
 			// Skip files that can't be migrated
+		}
+	}
+}
+
+function isSessionJsonlFile(filePath: string): boolean {
+	try {
+		const firstLine = readFirstLineSync(filePath);
+		if (!firstLine?.trim()) {
+			return false;
+		}
+		const header = JSON.parse(firstLine) as { type?: unknown; id?: unknown };
+		return header.type === "session" && typeof header.id === "string";
+	} catch {
+		// An unreadable or non-JSON first line means this is not a session transcript.
+		return false;
+	}
+}
+
+function isLegacySessionDirName(name: string): boolean {
+	return /^--.+--$/.test(name);
+}
+
+function filesHaveSameContent(a: string, b: string): boolean {
+	try {
+		if (statSync(a).size !== statSync(b).size) {
+			return false;
+		}
+		return readFileSync(a, "utf-8") === readFileSync(b, "utf-8");
+	} catch {
+		// Unreadable means "not provably identical", so the caller keeps both files.
+		return false;
+	}
+}
+
+function uniqueSessionRootPath(sessionsDir: string, file: string): string {
+	const base = file.endsWith(".jsonl") ? file.slice(0, -".jsonl".length) : file;
+	for (let n = 1; ; n++) {
+		const candidate = join(sessionsDir, `${base}-${n}.jsonl`);
+		if (!existsSync(candidate)) {
+			return candidate;
+		}
+	}
+}
+
+/**
+ * Migrate legacy per-cwd session directories into the flat session root.
+ *
+ * Older versions stored sessions under <agentDir>/sessions/--cwd--/*.jsonl. The list and
+ * continue paths scan the flat session root, so nested session files move up one level or
+ * they stop being discoverable.
+ */
+export function migrateLegacySessionDirsToSessionRoot(): void {
+	const agentDir = getAgentDir();
+	const sessionsDir = getSessionsDir(agentDir);
+
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(sessionsDir, { withFileTypes: true });
+	} catch {
+		// No session root yet; nothing to migrate.
+		return;
+	}
+
+	for (const entry of entries) {
+		if (!entry.isDirectory() || !isLegacySessionDirName(entry.name)) {
+			continue;
+		}
+
+		const legacyDir = join(sessionsDir, entry.name);
+		let files: string[];
+		try {
+			files = readdirSync(legacyDir).filter((file) => file.endsWith(".jsonl"));
+		} catch {
+			// An unreadable legacy directory is left in place.
+			continue;
+		}
+
+		for (const file of files) {
+			const oldPath = join(legacyDir, file);
+			let newPath = join(sessionsDir, file);
+			if (!isSessionJsonlFile(oldPath)) {
+				continue;
+			}
+			if (existsSync(newPath)) {
+				if (filesHaveSameContent(oldPath, newPath)) {
+					// Already migrated; leave the legacy copy alone.
+					continue;
+				}
+				// A different session shares the basename; move it under a unique name
+				// so it stays discoverable by the flat-root list and continue paths.
+				newPath = uniqueSessionRootPath(sessionsDir, file);
+			}
+			try {
+				renameSync(oldPath, newPath);
+			} catch {
+				// Leave the legacy file in place if it cannot be moved.
+			}
+		}
+
+		try {
+			if (readdirSync(legacyDir).length === 0) {
+				rmdirSync(legacyDir);
+			}
+		} catch {
+			// Ignore cleanup errors; migrated files are already in the flat root.
 		}
 	}
 }
@@ -309,6 +421,7 @@ export function runMigrations(cwd: string): {
 } {
 	const migratedAuthProviders = migrateAuthToAuthJson();
 	migrateSessionsFromAgentRoot();
+	migrateLegacySessionDirsToSessionRoot();
 	migrateToolsToBin();
 	migrateKeybindingsConfigFile();
 	const deprecationWarnings = migrateExtensionSystem(cwd);

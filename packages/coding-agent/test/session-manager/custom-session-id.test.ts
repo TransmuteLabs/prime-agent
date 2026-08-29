@@ -78,7 +78,7 @@ describe("SessionManager.newSession with custom id", () => {
 		expect(session.getHeader()!.id).toBe("created-session-id");
 		const sessionFile = session.getSessionFile()!;
 		expect(sessionFile).toContain("created-session-id");
-		expect(basename(sessionFile)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_created-session-id\.jsonl$/);
+		expect(basename(sessionFile)).toBe("created-session-id.jsonl");
 		expect(existsSync(sessionFile)).toBe(false);
 	});
 
@@ -164,6 +164,6 @@ describe("SessionManager.newSession with custom id", () => {
 		expect(header!.parentSession).toBe(sourcePath);
 		const sessionFile = forked.getSessionFile()!;
 		expect(sessionFile).toContain("forked-session-id");
-		expect(basename(sessionFile)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_forked-session-id\.jsonl$/);
+		expect(basename(sessionFile)).toBe("forked-session-id.jsonl");
 	});
 });

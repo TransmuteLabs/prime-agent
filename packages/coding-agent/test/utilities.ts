@@ -23,6 +23,7 @@ import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/ex
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import type { Skill } from "../src/core/skills.ts";
 import { createCodingTools } from "../src/index.ts";
 
 /**
@@ -208,6 +209,7 @@ export async function createTestExtensionsResult(
 
 export interface CreateTestResourceLoaderOptions {
 	extensionsResult?: LoadExtensionsResult;
+	skills?: Skill[];
 }
 
 export function createTestResourceLoader(options: CreateTestResourceLoaderOptions = {}): ResourceLoader {
@@ -219,7 +221,7 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
 
 	return {
 		getExtensions: () => extensionsResult,
-		getSkills: () => ({ skills: [], diagnostics: [] }),
+		getSkills: () => ({ skills: options.skills ?? [], diagnostics: [] }),
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),

@@ -8,6 +8,18 @@ const findExactModelMatch = Reflect.get(InteractiveMode.prototype, "findExactMod
 	searchTerm: string,
 ) => Promise<Model<Api> | undefined>;
 
+function createContext(cachedModels: readonly Model<Api>[], refreshedModels: readonly Model<Api>[] | undefined) {
+	return {
+		getScopedModelState: () => [],
+		getCachedModelCandidates: () => [...cachedModels],
+		getModelSelectorRefreshPromise: vi.fn((_options?: { force?: boolean }): Promise<Model<Api>[]> | undefined =>
+			refreshedModels === undefined ? undefined : Promise.resolve([...refreshedModels]),
+		),
+		showStatus: vi.fn(),
+		showWarning: vi.fn(),
+	};
+}
+
 describe("issue #7443 /model cached match", () => {
 	let harness: Harness | undefined;
 
@@ -19,28 +31,38 @@ describe("issue #7443 /model cached match", () => {
 
 	it("matches the availability snapshot without starting a catalog refresh", async () => {
 		harness = await createHarness({ models: [{ id: "cached", name: "Cached" }] });
-		const refresh = vi.spyOn(harness.session.modelRuntime, "refresh").mockImplementation(() => new Promise(() => {}));
-		const context = { session: harness.session, showStatus: vi.fn(), showWarning: vi.fn() };
+		const context = createContext(harness.models, undefined);
 
 		const model = await findExactModelMatch.call(context, harness.models[0].id);
 
 		expect(model?.id).toBe("cached");
-		expect(refresh).not.toHaveBeenCalled();
+		expect(context.getModelSelectorRefreshPromise).not.toHaveBeenCalled();
 		expect(context.showStatus).not.toHaveBeenCalled();
 	});
 
-	it("uses a caller-owned deadline only after a cache miss", async () => {
+	it("refreshes the catalog only after a cache miss", async () => {
 		harness = await createHarness({ models: [{ id: "cached", name: "Cached" }] });
-		const refresh = vi.spyOn(harness.session.modelRuntime, "refresh").mockResolvedValue({
-			aborted: true,
-			errors: new Map(),
-		});
-		const context = { session: harness.session, showStatus: vi.fn(), showWarning: vi.fn() };
+		const context = createContext(harness.models, []);
 
 		await expect(findExactModelMatch.call(context, "not-cached")).resolves.toBeUndefined();
 
-		expect(refresh).toHaveBeenCalledOnce();
-		expect(refresh.mock.calls[0]?.[0]?.signal).toBeInstanceOf(AbortSignal);
+		expect(context.getModelSelectorRefreshPromise).toHaveBeenCalledOnce();
+		expect(context.getModelSelectorRefreshPromise.mock.calls[0]?.[0]).toEqual({ force: true });
+		expect(context.showStatus).toHaveBeenCalledWith("Refreshing model catalogs…");
+	});
+
+	it("finds a model that only the refreshed catalog knows", async () => {
+		harness = await createHarness({
+			models: [
+				{ id: "cached", name: "Cached" },
+				{ id: "refreshed", name: "Refreshed" },
+			],
+		});
+		const context = createContext([harness.models[0]], harness.models);
+
+		const model = await findExactModelMatch.call(context, "refreshed");
+
+		expect(model?.id).toBe("refreshed");
 		expect(context.showStatus).toHaveBeenCalledWith("Refreshing model catalogs…");
 	});
 });

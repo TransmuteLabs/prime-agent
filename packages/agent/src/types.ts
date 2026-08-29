@@ -7,6 +7,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ServiceTier,
 	SimpleStreamOptions,
 	TextContent,
 	Tool,
@@ -128,6 +129,13 @@ export interface ShouldStopAfterTurnContext {
 	message: AssistantMessage;
 	/** Tool result messages passed to the preceding `turn_end` event. */
 	toolResults: ToolResultMessage[];
+	/**
+	 * Whether the loop still has tool calls to service, i.e. the turn executed tool calls and the
+	 * batch did not request early termination. False means the loop is about to leave the tool loop
+	 * and drain the follow-up queue, so callbacks that must only act when the agent would otherwise
+	 * stop can gate on it.
+	 */
+	hasMoreToolCalls: boolean;
 	/** Current agent context after the turn's assistant message and tool results have been appended. */
 	context: AgentContext;
 	/** Messages that this loop invocation will return if it exits at this point. Prompt runs include the initial prompt messages; continuation runs do not include pre-existing context messages. */
@@ -337,6 +345,8 @@ export interface AgentState {
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
+	/** Requested provider service tier for future turns. */
+	serviceTier: ServiceTier;
 	/** Available tools. Assigning a new array copies the top-level array. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];

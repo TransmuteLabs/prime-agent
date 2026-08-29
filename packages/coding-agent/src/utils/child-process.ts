@@ -12,6 +12,7 @@ import {
 	type StdioPipe,
 } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { constants } from "node:os";
 import type { Readable } from "node:stream";
 import crossSpawn from "cross-spawn";
 
@@ -48,14 +49,27 @@ export function spawnProcessSync(
  * us reading, while a quiet inherited handle (e.g. a Windows daemonized descendant
  * that never lets `close` fire) still releases us after the grace elapses.
  */
+/** Shell convention for a signal death: 128 + signal number, so SIGTERM reads as 143. */
+function signalExitCode(signal: NodeJS.Signals | null): number | null {
+	if (!signal) return null;
+	const signalNumber = constants.signals[signal];
+	return signalNumber === undefined ? 1 : 128 + signalNumber;
+}
+
+function normalizedExitCode(code: number | null, signal: NodeJS.Signals | null): number | null {
+	return code ?? signalExitCode(signal);
+}
+
 export function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 	return new Promise((resolve, reject) => {
 		let settled = false;
 		let exited = false;
 		let exitCode: number | null = null;
+		let exitSignal: NodeJS.Signals | null = null;
 		let postExitTimer: NodeJS.Timeout | undefined;
-		let stdoutEnded = child.stdout === null;
-		let stderrEnded = child.stderr === null;
+		// A stream that already ended emits no further "end", so its state has to be read up front.
+		let stdoutEnded = child.stdout === null || child.stdout.readableEnded;
+		let stderrEnded = child.stderr === null || child.stderr.readableEnded;
 
 		const cleanup = () => {
 			if (postExitTimer) {
@@ -83,13 +97,13 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 		const maybeFinalizeAfterExit = () => {
 			if (!exited || settled) return;
 			if (stdoutEnded && stderrEnded) {
-				finalize(exitCode);
+				finalize(normalizedExitCode(exitCode, exitSignal));
 			}
 		};
 
 		const armIdleTimer = () => {
 			if (postExitTimer) clearTimeout(postExitTimer);
-			postExitTimer = setTimeout(() => finalize(exitCode), EXIT_STDIO_GRACE_MS);
+			postExitTimer = setTimeout(() => finalize(normalizedExitCode(exitCode, exitSignal)), EXIT_STDIO_GRACE_MS);
 		};
 
 		const onData = () => {
@@ -115,17 +129,18 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 			reject(err);
 		};
 
-		const onExit = (code: number | null) => {
+		const onExit = (code: number | null, signal: NodeJS.Signals | null = null) => {
 			exited = true;
 			exitCode = code;
+			exitSignal = signal;
 			maybeFinalizeAfterExit();
 			if (!settled) {
 				armIdleTimer();
 			}
 		};
 
-		const onClose = (code: number | null) => {
-			finalize(code);
+		const onClose = (code: number | null, signal: NodeJS.Signals | null = null) => {
+			finalize(normalizedExitCode(code, signal));
 		};
 
 		child.stdout?.once("end", onStdoutEnd);
@@ -135,6 +150,11 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 		child.once("error", onError);
 		child.once("exit", onExit);
 		child.once("close", onClose);
+
+		// A child that had already terminated when this was called will never emit exit or close.
+		if (child.exitCode !== null || child.signalCode !== null) {
+			onExit(child.exitCode, child.signalCode);
+		}
 	});
 }
 

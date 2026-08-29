@@ -164,10 +164,17 @@ function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
 			return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
 
 		case "branch_summary":
-			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
+			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp, entry.usage);
 
 		case "compaction":
-			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
+			return createCompactionSummaryMessage(
+				entry.summary,
+				entry.tokensBefore,
+				entry.timestamp,
+				entry.customInstructions,
+				undefined,
+				entry.usage,
+			);
 
 		// These don't contribute to conversation content
 		case "thinking_level_change":

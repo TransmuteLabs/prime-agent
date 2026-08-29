@@ -17,18 +17,19 @@ function createInteractiveContext(options: {
 	const setScopedModels = vi.fn();
 	const getAvailableSnapshot = vi.fn(() => options.allModels);
 	const context = {
-		session: {
-			modelRuntime: {
-				refresh: vi.fn().mockResolvedValue({ aborted: false, errors: new Map() }),
-				getAvailableSnapshot,
-			},
-			scopedModels: options.scopedModels ?? [],
-			setScopedModels,
-		},
+		// The fork reaches models and scope through the agent connection, so the cached
+		// candidates and the scope write are stubbed there rather than on a session runtime.
+		getCachedModelCandidates: getAvailableSnapshot,
+		getModelSelectorRefreshPromise: () => undefined,
+		getScopedModelState: () => options.scopedModels ?? [],
+		getScopedModelsFromModelIds: Reflect.get(InteractiveMode.prototype, "getScopedModelsFromModelIds"),
+		agentConnection: { setScopedModels },
+		patchConnectionState: vi.fn(),
 		settingsManager: {
 			getEnabledModels: () => options.enabledModelIds,
 			setEnabledModels: vi.fn(),
 		},
+		showError: vi.fn(),
 		showStatus: vi.fn(),
 		showSelector: (factory: (done: () => void) => { component: ScopedModelsSelectorComponent }) => {
 			selector = factory(() => {}).component;
@@ -39,9 +40,9 @@ function createInteractiveContext(options: {
 	return { context, getAvailableSnapshot, getSelector: () => selector, setScopedModels };
 }
 
-async function showModelsSelector(context: object): Promise<void> {
-	const show = Reflect.get(InteractiveMode.prototype, "showModelsSelector") as (this: object) => Promise<void>;
-	await show.call(context);
+function showModelsSelector(context: object): void {
+	const show = Reflect.get(InteractiveMode.prototype, "showModelsSelector") as (this: object) => void;
+	show.call(context);
 }
 
 describe("issue #6949 unavailable scoped models", () => {
@@ -98,7 +99,7 @@ describe("issue #6949 unavailable scoped models", () => {
 			enabledModelIds: unavailableIds,
 		});
 
-		await showModelsSelector(context);
+		showModelsSelector(context);
 
 		const selector = getSelector();
 		if (!selector) throw new Error("Expected scoped-model selector to open");
@@ -120,7 +121,7 @@ describe("issue #6949 unavailable scoped models", () => {
 			scopedModels: [{ model }],
 		});
 
-		await showModelsSelector(context);
+		showModelsSelector(context);
 
 		const selector = getSelector();
 		if (!selector) throw new Error("Expected scoped-model selector to open");
@@ -145,7 +146,7 @@ describe("issue #6949 unavailable scoped models", () => {
 			scopedModels: [{ model: one }, { model: two }],
 		});
 
-		await showModelsSelector(context);
+		showModelsSelector(context);
 		const selector = getSelector();
 		if (!selector) throw new Error("Expected scoped-model selector to open");
 		selector.handleInput("\x1b[1;3B");

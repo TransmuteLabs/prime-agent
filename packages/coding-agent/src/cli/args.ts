@@ -7,21 +7,24 @@ import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import type { TuiMode } from "../core/settings-manager.ts";
+import { THINKING_LEVELS } from "../core/thinking-levels.ts";
 
-export type Mode = "text" | "json" | "rpc" | "acp";
+export type Mode = "text" | "json" | "rpc" | "acp" | "daemon";
 
 export interface Args {
 	provider?: string;
 	model?: string;
 	apiKey?: string;
+	cwd?: string;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	thinking?: ThinkingLevel;
 	continue?: boolean;
-	resume?: boolean;
+	resume?: true | string;
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
+	daemonSocket?: string;
 	name?: string;
 	noSession?: boolean;
 	session?: string;
@@ -45,6 +48,16 @@ export interface Args {
 	useTheme?: string;
 	noThemes?: boolean;
 	noContextFiles?: boolean;
+	autonomous?: boolean;
+	autonomousGates?: string[];
+	autonomousGateRetries?: number;
+	autonomousGateTimeoutMs?: number;
+	autonomousMaxContinuations?: number;
+	autonomousMaxTurns?: number;
+	autonomousMaxTokens?: number;
+	autonomousTimeoutMs?: number;
+	goal?: string;
+	goalTokenBudget?: number;
 	listModels?: string | true;
 	offline?: boolean;
 	tuiMode?: TuiMode;
@@ -57,10 +70,10 @@ export interface Args {
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
 }
 
-const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const INTERNAL_RUNTIME_COMMAND_MARKER = "\0prime-agent-runtime-command";
 
 export function isValidThinkingLevel(level: string): level is ThinkingLevel {
-	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
+	return THINKING_LEVELS.includes(level as ThinkingLevel);
 }
 
 export function normalizeSessionName(value: string): string | undefined {
@@ -76,7 +89,10 @@ export function parseArgs(args: string[]): Args {
 		diagnostics: [],
 	};
 
-	for (let i = 0; i < args.length; i++) {
+	const internalRuntimeCommand = args[0] === INTERNAL_RUNTIME_COMMAND_MARKER;
+	const firstArgIndex = internalRuntimeCommand ? 1 : 0;
+
+	for (let i = firstArgIndex; i < args.length; i++) {
 		const arg = args[i];
 
 		if (arg === "--") {
@@ -94,19 +110,32 @@ export function parseArgs(args: string[]): Args {
 			result.version = true;
 		} else if (arg === "--mode" && i + 1 < args.length) {
 			const mode = args[++i];
-			if (mode === "text" || mode === "json" || mode === "rpc" || mode === "acp") {
+			if (mode === "text" || mode === "json" || mode === "rpc" || mode === "acp" || mode === "daemon") {
 				result.mode = mode;
 			}
+		} else if (arg === "--daemon-socket" && i + 1 < args.length) {
+			result.daemonSocket = args[++i];
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
-			result.resume = true;
+			const next = args[i + 1];
+			if (next !== undefined && next !== "" && !next.startsWith("-") && !next.startsWith("@")) {
+				result.resume = next;
+				i++;
+			} else {
+				result.resume = true;
+			}
+		} else if (arg.startsWith("--resume=")) {
+			const value = arg.slice("--resume=".length);
+			result.resume = value || true;
 		} else if (arg === "--provider" && i + 1 < args.length) {
 			result.provider = args[++i];
 		} else if (arg === "--model" && i + 1 < args.length) {
 			result.model = args[++i];
 		} else if (arg === "--api-key" && i + 1 < args.length) {
 			result.apiKey = args[++i];
+		} else if (arg === "--cwd" && i + 1 < args.length) {
+			result.cwd = args[++i];
 		} else if (arg === "--system-prompt" && i + 1 < args.length) {
 			result.systemPrompt = args[++i];
 		} else if (arg === "--append-system-prompt" && i + 1 < args.length) {
@@ -151,7 +180,7 @@ export function parseArgs(args: string[]): Args {
 			} else {
 				result.diagnostics.push({
 					type: "warning",
-					message: `Invalid thinking level "${level}". Valid values: ${VALID_THINKING_LEVELS.join(", ")}`,
+					message: `Invalid thinking level "${level}". Valid values: ${THINKING_LEVELS.join(", ")}`,
 				});
 			}
 		} else if (arg === "--print" || arg === "-p") {
@@ -193,6 +222,57 @@ export function parseArgs(args: string[]): Args {
 			result.noThemes = true;
 		} else if (arg === "--no-context-files" || arg === "-nc") {
 			result.noContextFiles = true;
+		} else if (arg === "--autonomous") {
+			result.autonomous = true;
+		} else if (arg === "--autonomous-gate") {
+			result.autonomous = true;
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				result.autonomousGates = result.autonomousGates ?? [];
+				result.autonomousGates.push(args[++i]);
+			}
+		} else if (arg === "--autonomous-gate-retries") {
+			result.autonomous = true;
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				result.autonomousGateRetries = parsePositiveInt(args[++i], "--autonomous-gate-retries", result);
+			}
+		} else if (arg === "--autonomous-gate-timeout-ms") {
+			result.autonomous = true;
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				result.autonomousGateTimeoutMs = parsePositiveInt(args[++i], "--autonomous-gate-timeout-ms", result);
+			}
+		} else if (arg === "--autonomous-max-continuations") {
+			result.autonomous = true;
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				result.autonomousMaxContinuations = parsePositiveInt(args[++i], "--autonomous-max-continuations", result);
+			}
+		} else if (arg === "--autonomous-max-turns") {
+			result.autonomous = true;
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				result.autonomousMaxTurns = parsePositiveInt(args[++i], "--autonomous-max-turns", result);
+			}
+		} else if (arg === "--autonomous-max-tokens") {
+			result.autonomous = true;
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				result.autonomousMaxTokens = parsePositiveInt(args[++i], "--autonomous-max-tokens", result);
+			}
+		} else if (arg === "--autonomous-timeout-ms") {
+			result.autonomous = true;
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				result.autonomousTimeoutMs = parsePositiveInt(args[++i], "--autonomous-timeout-ms", result);
+			}
+		} else if (arg === "--goal") {
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				const value = args[++i];
+				if (!value.trim()) {
+					result.diagnostics.push({ type: "error", message: "--goal requires a non-empty objective" });
+				} else {
+					result.goal = value;
+				}
+			}
+		} else if (arg === "--goal-token-budget") {
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				result.goalTokenBudget = parsePositiveInt(args[++i], "--goal-token-budget", result);
+			}
 		} else if (arg === "--list-models") {
 			// Check if next arg is a search pattern (not a flag or file arg)
 			if (i + 1 < args.length && !args[i + 1].startsWith("-") && !args[i + 1].startsWith("@")) {
@@ -245,7 +325,32 @@ export function parseArgs(args: string[]): Args {
 		}
 	}
 
+	if (result.goalTokenBudget !== undefined && !result.goal) {
+		result.diagnostics.push({
+			type: "error",
+			message: "--goal-token-budget requires --goal",
+		});
+	}
+
 	return result;
+}
+
+function hasRequiredOptionValue(args: string[], index: number, flag: string, result: Args): boolean {
+	const next = args[index + 1];
+	if (next === undefined || next.startsWith("--")) {
+		result.diagnostics.push({ type: "error", message: `${flag} requires a value` });
+		return false;
+	}
+	return true;
+}
+
+function parsePositiveInt(value: string, flag: string, result: Args): number | undefined {
+	const parsed = Number(value);
+	if (!Number.isInteger(parsed) || parsed <= 0) {
+		result.diagnostics.push({ type: "error", message: `${flag} must be a positive integer` });
+		return undefined;
+	}
+	return parsed;
 }
 
 export function printHelp(extensionFlags?: ExtensionFlag[]): void {
@@ -309,6 +414,18 @@ ${chalk.bold("Options:")}
   --use-theme <name[/name]>      Set the initial interactive theme for this run
   --no-themes                    Disable theme discovery and loading
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
+  --cwd <dir>                    Run as if started in <dir>
+  --daemon-socket <path>         Daemon socket path to listen on or connect to
+  --autonomous                   Run without interactive confirmations
+  --autonomous-gate <cmd>        Gate command that must pass to continue (repeatable)
+  --autonomous-gate-retries <n>  Retries for a failing gate command
+  --autonomous-gate-timeout-ms <n>  Per-gate timeout in milliseconds
+  --autonomous-max-continuations <n>  Cap on automatic continuations
+  --autonomous-max-turns <n>     Cap on agent turns
+  --autonomous-max-tokens <n>    Cap on total tokens
+  --autonomous-timeout-ms <n>    Wall-clock cap for the autonomous run
+  --goal <objective>             Objective the autonomous run works toward
+  --goal-token-budget <n>        Token budget for the goal (requires --goal)
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)

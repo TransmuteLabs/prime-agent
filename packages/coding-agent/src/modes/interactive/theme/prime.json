@@ -65,7 +65,6 @@
 		"mdListBullet": "muted",
 		"toolDiffAdded": "#3fb950",
 		"toolDiffRemoved": "#f85149",
-		"toolDiffText": "#9aa0a6",
 		"toolDiffContext": "muted",
 		"syntaxComment": "muted",
 		"syntaxKeyword": "info",
@@ -84,7 +83,7 @@
 		"thinkingXhigh": "primary",
 		"bashMode": "success",
 		"searchMatchBg": "selectedBg",
-		"searchMatchText": "text"
+		"searchMatchText": "fg"
 	},
 	"export": {
 		"pageBg": "bg",

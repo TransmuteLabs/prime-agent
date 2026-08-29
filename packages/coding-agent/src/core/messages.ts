@@ -6,8 +6,9 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, Message, TextContent, Usage } from "@earendil-works/pi-ai";
 import type { AgentCronJob } from "./cron-jobs.ts";
+import type { AppliedRefinementEdit, HarnessScope, RefinementResult } from "./refinement/refinement.ts";
 import { isSessionSlashCommandName, parseSessionSlashCommand, type SessionSlashCommand } from "./slash-commands.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
@@ -31,6 +32,7 @@ export const IPYTHON_STATE_RESTORED_CUSTOM_TYPE = "ipython_state_restored";
 export const SESSION_SLASH_COMMAND_CUSTOM_TYPE = "session_slash_command";
 export const SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE = "session_slash_command_result";
 export const COMPACTION_OUTCOME_CUSTOM_TYPE = "compaction_outcome";
+export const REFINEMENT_OUTCOME_CUSTOM_TYPE = "refinement_outcome";
 export const RLM_CHILD_FAILURE_CUSTOM_TYPE = "rlm_child_failure";
 export const RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE = "rlm_child_terminal_notice";
 
@@ -71,6 +73,20 @@ export interface CompactionOutcomeMessage extends CustomMessage<CompactionOutcom
 	customType: typeof COMPACTION_OUTCOME_CUSTOM_TYPE;
 	content: string;
 	details: CompactionOutcomeDetails;
+}
+
+export interface RefinementOutcomeDetails {
+	refinementId: string;
+	summary: string;
+	scope: HarnessScope;
+	rollbackOf?: string;
+	edits: AppliedRefinementEdit[];
+}
+
+export interface RefinementOutcomeMessage extends CustomMessage<RefinementOutcomeDetails> {
+	customType: typeof REFINEMENT_OUTCOME_CUSTOM_TYPE;
+	content: string;
+	details: RefinementOutcomeDetails;
 }
 
 export interface RlmChildFailureDetails {
@@ -171,6 +187,8 @@ export interface BranchSummaryMessage {
 	role: "branchSummary";
 	summary: string;
 	fromId: string;
+	/** Usage billed for the summarization call; carried so a rebuilt transcript can still price it. */
+	usage?: Usage;
 	timestamp: number;
 }
 
@@ -182,11 +200,10 @@ export interface CompactionSummaryMessage {
 	retainedMessageCount?: number;
 	/** User instructions that guided the summary (from `/compact <instructions>`) */
 	customInstructions?: string;
+	/** Usage billed for the summarization call; carried so a rebuilt transcript can still price it. */
+	usage?: Usage;
 	timestamp: number;
 }
-
-// coding-agent CompactionSummaryMessage is a structural superset of the agent package's
-// declaration; avoid a conflicting module augmentation here. Call sites use local types.
 
 /**
  * Format bash output for LLM context. The fence must be longer than any
@@ -226,11 +243,17 @@ export function bashExecutionToText(msg: BashExecutionMessage): string {
 	return `Ran \`${msg.command}\`\n${bashOutputToText(msg)}`;
 }
 
-export function createBranchSummaryMessage(summary: string, fromId: string, timestamp: string): BranchSummaryMessage {
+export function createBranchSummaryMessage(
+	summary: string,
+	fromId: string,
+	timestamp: string,
+	usage?: Usage,
+): BranchSummaryMessage {
 	return {
 		role: "branchSummary",
 		summary,
 		fromId,
+		usage,
 		timestamp: new Date(timestamp).getTime(),
 	};
 }
@@ -241,6 +264,7 @@ export function createCompactionSummaryMessage(
 	timestamp: string,
 	customInstructions?: string,
 	retainedMessageCount?: number,
+	usage?: Usage,
 ): CompactionSummaryMessage {
 	return {
 		role: "compactionSummary",
@@ -248,6 +272,7 @@ export function createCompactionSummaryMessage(
 		tokensBefore,
 		retainedMessageCount,
 		customInstructions,
+		usage,
 		timestamp: new Date(timestamp).getTime(),
 	};
 }
@@ -314,6 +339,27 @@ export function createCompactionOutcomeMessage(
 		content,
 		display,
 		details: { ...details },
+		timestamp,
+	};
+}
+
+export function createRefinementOutcomeMessage(
+	result: RefinementResult,
+	display = true,
+	timestamp = Date.now(),
+): RefinementOutcomeMessage {
+	return {
+		role: "custom",
+		customType: REFINEMENT_OUTCOME_CUSTOM_TYPE,
+		content: `Refinement complete: ${result.summary}`,
+		display,
+		details: {
+			refinementId: result.id,
+			summary: result.summary,
+			scope: result.scope ?? "local",
+			...(result.rollbackOf ? { rollbackOf: result.rollbackOf } : {}),
+			edits: result.appliedEdits,
+		},
 		timestamp,
 	};
 }
@@ -391,6 +437,27 @@ export function isCompactionOutcomeMessage(message: unknown): message is Compact
 	);
 }
 
+function isAppliedRefinementEdit(value: unknown): value is AppliedRefinementEdit {
+	return (
+		isRecord(value) &&
+		(value.action === "create" || value.action === "update" || value.action === "delete") &&
+		typeof value.kind === "string" &&
+		typeof value.id === "string" &&
+		typeof value.applied === "boolean"
+	);
+}
+
+export function isRefinementOutcomeMessage(message: unknown): message is RefinementOutcomeMessage {
+	if (!isRecord(message) || !hasValidCustomMessageEnvelope(message, REFINEMENT_OUTCOME_CUSTOM_TYPE)) return false;
+	if (!isRecord(message.details)) return false;
+	return (
+		typeof message.details.summary === "string" &&
+		(message.details.scope === "local" || message.details.scope === "global") &&
+		Array.isArray(message.details.edits) &&
+		message.details.edits.every(isAppliedRefinementEdit)
+	);
+}
+
 export function createHeartbeatPromptMessage(
 	job: AgentCronJob,
 	timestamp = Date.now(),
@@ -425,7 +492,6 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
-					// Skip messages excluded from context (!! prefix)
 					if (m.excludeFromContext) {
 						return undefined;
 					}
@@ -438,7 +504,8 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					if (
 						m.customType === SESSION_SLASH_COMMAND_CUSTOM_TYPE ||
 						m.customType === SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE ||
-						m.customType === COMPACTION_OUTCOME_CUSTOM_TYPE
+						m.customType === COMPACTION_OUTCOME_CUSTOM_TYPE ||
+						m.customType === REFINEMENT_OUTCOME_CUSTOM_TYPE
 					) {
 						return undefined;
 					}

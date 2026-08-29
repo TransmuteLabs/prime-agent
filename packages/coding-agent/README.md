@@ -1,38 +1,19 @@
 <p align="center">
-  <a href="https://pi.dev">
-    <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
+  <a href="https://primeintellect.ai">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="../../assets/brand/prime-butterfly.svg">
+      <img alt="Prime Intellect butterfly mark" src="../../assets/brand/prime-butterfly-black.svg" width="96">
+    </picture>
   </a>
 </p>
+
+<h1 align="center">Prime Agent CLI</h1>
+
 <p align="center">
-  <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
+  RLM-native terminal coding and research harness.
 </p>
 
-> New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
-
----
-
-Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
-
-Pi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask pi to build what you want or install a third party pi package that matches your workflow.
-
-Pi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps.
-
-## Share your OSS coding agent sessions
-
-If you use pi for open source work, please share your coding agent sessions.
-
-Public OSS session data helps improve models, prompts, tools, and evaluations using real development workflows.
-
-For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
-
-To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). Read its README.md for setup instructions. All you need is a Hugging Face account, the Hugging Face CLI, and `pi-share-hf`.
-
-You can also watch [this video](https://x.com/badlogicgames/status/2041151967695634619), where I show how I publish my `pi-mono` sessions.
-
-I regularly publish my own `pi-mono` work sessions here:
-
-- [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
+Prime Agent began as a hard fork of [pi-mono](https://github.com/badlogic/pi-mono), but it is now developed and distributed independently. This workspace retains inherited `@earendil-works/pi-*` source package identifiers, the `pi` package manifest key, and a source-package `pi` bin entry for internal compatibility. Public releases are currently versioned tarball artifacts installed by the scripts below; release packaging rewrites the application package and command to `prime-agent`. Do not use the inherited npm package as the Prime Agent install path.
 
 ## Table of Contents
 
@@ -51,52 +32,49 @@ I regularly publish my own `pi-mono` work sessions here:
 - [Customization](#customization)
   - [Prompt Templates](#prompt-templates)
   - [Skills](#skills)
+  - [MCP Integrations](#mcp-integrations)
   - [Extensions](#extensions)
   - [Themes](#themes)
-  - [Pi Packages](#pi-packages)
+  - [Prime Agent Packages](#prime-agent-packages)
 - [Programmatic Usage](#programmatic-usage)
-- [Philosophy](#philosophy)
+- [Upstream](#upstream)
 - [CLI Reference](#cli-reference)
-
----
 
 ## Quick Start
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh
 ```
 
-`--ignore-scripts` disables dependency lifecycle scripts during install. Pi does not require install scripts for normal npm installs.
-
-Installer alternative:
+To install the beta built from the latest commit on `main`:
 
 ```bash
-curl -fsSL https://pi.dev/install.sh | sh
+curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh -s -- beta
 ```
 
 Authenticate with an API key:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pi
+prime-agent
 ```
 
 Or use your existing subscription:
 
 ```bash
-pi
+prime-agent
 /login  # Then select provider
 ```
 
-Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
+Then just talk to Prime Agent. By default, Prime Agent gives the model one tool: `ipython`. The model uses the persistent kernel to read files, run commands, edit code, and inspect data. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [Prime Agent packages](#prime-agent-packages).
+
+The Python kernel runtime is set up automatically on first invocation. Set `PRIME_AGENT_KERNEL_PYTHON` to use an existing Python environment with `prime-agent-runtime`.
 
 **Platform notes:** [Windows](docs/windows.md) | [Termux (Android)](docs/termux.md) | [tmux](docs/tmux.md) | [Terminal setup](docs/terminal-setup.md) | [Shell aliases](docs/shell-aliases.md)
 
----
-
 ## Providers & Models
 
-For each built-in provider, pi maintains a list of tool-capable models. Configured provider catalogs refresh automatically; run `pi update --models` to force an immediate refresh. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L). Press Ctrl+S in the model picker to save the highlighted model as the startup default.
+For each built-in provider, Prime Agent maintains a list of tool-capable models. Configured provider catalogs refresh automatically; run `prime-agent package update --models` to force an immediate refresh. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L).
 
 **Subscriptions:**
 - Anthropic Claude Pro/Max
@@ -107,6 +85,7 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Anthropic
 - Ant Ling
 - OpenAI
+- Prime Inference
 - Azure OpenAI
 - DeepSeek
 - NVIDIA NIM
@@ -136,13 +115,11 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Xiaomi MiMo Token Plan (Amsterdam)
 - Xiaomi MiMo Token Plan (Singapore)
 
-Pi also supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage downloads and loaded models with `/llama`, then select a loaded model with `/model`. See [docs/llama-cpp.md](docs/llama-cpp.md) for setup and usage.
+Prime Agent also supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage downloads and loaded models with `/llama`, then select a loaded model with `/model`. See [docs/llama-cpp.md](docs/llama-cpp.md) for setup and usage.
 
 See [docs/providers.md](docs/providers.md) for other provider setup instructions.
 
-**Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
-
----
+**Custom providers & models:** Add providers via `~/.prime/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
 
 ## Interactive Mode
 
@@ -150,10 +127,10 @@ See [docs/providers.md](docs/providers.md) for other provider setup instructions
 
 The interface from top to bottom:
 
-- **Startup header** - Shows shortcuts (`/hotkeys` for all), loaded AGENTS.md files, prompt templates, skills, and extensions
+- **Startup header** - Shows a compact brand and runtime summary; use `--verbose` to list loaded AGENTS.md files, prompt templates, skills, and extensions
 - **Messages** - Your messages, assistant responses, tool calls and results, notifications, errors, and extension UI
-- **Editor** - Where you type; border color indicates thinking level
-- **Footer** - Working directory, session name, total token/cache usage (`↑` input, `↓` output, `R` cache read, `W` cache write, `CH` latest cache hit rate), cost, context usage, current model. Totals include assistant responses, usage reported by tools, and summary generation.
+- **Editor** - Where you type
+- **Footer** - Empty by default; use `/usage` for token, cost, and context details
 
 The editor can be temporarily replaced by other UI, like built-in `/settings` or custom UI from extensions (e.g., a Q&A tool that lets the user answer model questions in a structured format). [Extensions](#extensions) can also replace the editor, add widgets above/below it, a status line, custom footer, or overlays.
 
@@ -178,43 +155,46 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 |---------|-------------|
 | `/login`, `/logout` | Manage provider credentials |
 | [`/llama`](docs/llama-cpp.md) | Download, load, and unload llama.cpp router models |
-| `/model` | Switch models; Ctrl+S in the picker saves the startup default |
-| `/thinking` | Switch thinking level; Ctrl+S in the picker saves the startup default |
+| `/model` | Switch models |
+| `/effort`, `/thinking` | Set reasoning/thinking level |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Theme, message delivery, transport, and other preferences |
-| `/resume` | Pick from previous sessions |
-| `/new` | Start a new session |
+| `/trust` | Save the project trust decision for future sessions (takes effect after restart) |
+| `/resume [id\|path]` | Open the agents view, or resume a session directly |
+| `/new`, `/clear` | Start a new session |
 | `/name <name>` | Set session display name |
-| `/session` | Show session info (file, ID, messages, tokens, cost) |
+| `/session` | Show session info (file, ID, messages) |
+| `/traces [status\|on\|off\|preview\|upload-current\|upload-all\|login]` | Preview traces, run one-shot current/all uploads, and manage automatic sharing (`upload` aliases `upload-current`) |
+| `/usage` | Show token, cost, and context usage |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/trust` | Save project trust decision for future sessions (restart required) |
 | `/fork` | Create a new session from a previous user message |
 | `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
-| `/export [file]` | Export session to HTML or JSONL file |
+| `/btw <question>`, `/side <question>` | Ask an inline side question without adding it to the session; replies continue the side conversation, esc returns |
+| `/export [file]` | Export session to HTML, or to JSONL when the path ends in `.jsonl` |
 | `/import <file>` | Import and resume a session from a JSONL file |
 | `/share` | Upload as private GitHub gist with shareable HTML link |
 | `/reload` | Reload keybindings, extensions, skills, prompts, themes, and context files |
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
-| `/quit` | Quit pi |
+| `/quit` | Quit Prime Agent |
 
 ### Keyboard Shortcuts
 
-See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. See [docs/keybindings.md](docs/keybindings.md).
+See `/hotkeys` for the full list. Customize via `~/.prime/agent/keybindings.json`. See [docs/keybindings.md](docs/keybindings.md).
 
 **Commonly used:**
 
 | Key | Action |
 |-----|--------|
-| Ctrl+C | Clear editor |
-| Ctrl+C twice | Quit |
-| Escape | Cancel/abort |
+| Ctrl+C | Interrupt active work, or show the exit hint when idle |
+| Ctrl+C twice | Exit while the exit hint is visible |
+| Escape | Clear the input without interrupting active work |
 | Escape twice | Open `/tree` |
 | Ctrl+L | Open model selector |
 | Ctrl+P / Shift+Ctrl+P | Cycle scoped models forward/backward |
-| Shift+Tab | Cycle thinking level |
 | Ctrl+O | Collapse/expand tool output |
 | Ctrl+T | Collapse/expand thinking blocks |
 | Ctrl+X | Copy the last assistant message; with fullscreen copy-on-select disabled, copy the active text selection |
@@ -225,14 +205,15 @@ Submit messages while the agent is working:
 
 - **Enter** queues a *steering* message, delivered after the current assistant turn finishes executing its tool calls
 - **Alt+Enter** queues a *follow-up* message, delivered only after the agent finishes all work
-- **Escape** aborts and restores queued messages to editor
-- **Alt+Up** retrieves queued messages back to editor
+- **Ctrl+C** interrupts active work; queued messages are kept and resume after your next submit or edit
+- **Escape** clears the input without interrupting active work
+- **Alt+Up / Alt+Down** browse queued messages individually and return to the editor draft
+- While browsing, **Enter** applies the edit as steering input and **Alt+Enter** applies it as a follow-up; submitting an empty edit deletes the item
+- **Ctrl+Alt+Up / Ctrl+Alt+Down** move the selected item earlier or later within its queue
 
-On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so pi can receive the follow-up shortcut.
+On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so Prime Agent can receive the follow-up shortcut.
 
 Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUpMode` can be `"one-at-a-time"` (default, waits for response) or `"all"` (delivers all queued at once). `transport` selects provider transport preference (`"sse"`, `"websocket"`, or `"auto"`) for providers that support multiple transports.
-
----
 
 ## Sessions
 
@@ -240,18 +221,18 @@ Sessions are stored as JSONL files with a tree structure. Each entry has an `id`
 
 ### Management
 
-Sessions auto-save to `~/.pi/agent/sessions/` organized by working directory.
+Sessions auto-save as flat JSONL files under `~/.prime/agent/sessions/`. Each session header records its working directory, which the searchable session view uses to identify and open saved sessions.
 
 ```bash
-pi -c                  # Continue most recent session
-pi -r                  # Browse and select from past sessions
-pi --no-session        # Ephemeral mode (don't save)
-pi --name "my task"    # Set session display name at startup
-pi --session <path|id> # Use specific session file or ID
-pi --fork <path|id>    # Fork specific session file or ID into a new session
+prime-agent -c                  # Continue most recent session
+prime-agent -r [path|id]        # Browse past sessions or resume one directly
+prime-agent --no-session        # Ephemeral mode (don't save)
+prime-agent --name "my task"    # Set session display name at startup
+prime-agent --session <path|id> # Use specific session file or ID
+prime-agent --fork <path|id>    # Fork specific session file or ID into a new session
 ```
 
-Use `/session` in interactive mode to see the current session ID before reusing it with `--session <id>` or `--fork <id>`.
+Use `/session` in interactive mode to see the current session ID before reusing it with `--resume <id>` or `--fork <id>`.
 
 ### Branching
 
@@ -280,52 +261,45 @@ Long sessions can exhaust context windows. Compaction summarizes older messages 
 
 Compaction is lossy. The full history remains in the JSONL file; use `/tree` to revisit. Customize compaction behavior via [extensions](#extensions). See [docs/compaction.md](docs/compaction.md) for internals.
 
----
-
 ## Settings
 
 Use `/settings` to modify common options, or edit JSON files directly:
 
 | Location | Scope |
 |----------|-------|
-| `~/.pi/agent/settings.json` | Global (all projects) |
-| `.pi/settings.json` | Project (overrides global) |
+| `~/.prime/agent/settings.json` | Global (all projects) |
+| `.prime/agent/settings.json` | Project (overrides global) |
 
 See [docs/settings.md](docs/settings.md) for all options.
 
 ### Project Trust
 
-On interactive startup, pi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.pi/agent/trust.json`. Trusting a project allows pi to load `.pi/settings.json` and `.pi` resources, install missing project packages, and execute project extensions.
+On interactive startup, Prime Agent asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.prime/agent/trust.json`. Trusting a project allows Prime Agent to load `.prime/agent/settings.json` and project-local resources, install missing project packages, and execute project extensions.
 
-Before the trust decision, pi loads only context files, user/global extensions, and CLI `-e` extensions so they can handle the `project_trust` event. Project-local extensions, project package-managed extensions, and project settings are loaded only after the project is trusted. This split also applies when switching to a session from a different cwd whose trust has not been resolved in the current process.
+Before the trust decision, only context files, user/global extensions, and CLI `-e` extensions load, so they can handle the `project_trust` event. Project-local extensions, project package-managed extensions, and project settings are loaded only after the project is trusted. This split also applies when switching to a session from a different cwd whose trust has not been resolved in the current process.
 
-Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without an applicable saved trust decision, they use `defaultProjectTrust` from global settings: `ask` (default) and `never` ignore those project resources, while `always` trusts them. Pass `--approve`/`-a` or `--no-approve`/`-na` to override project trust for one run.
+Non-interactive modes (`-p`, `--mode json`, `--mode rpc`, and `--mode acp`) do not show a trust prompt. Without an applicable saved trust decision, they use `defaultProjectTrust` from global settings: `ask` (default) and `never` ignore those project resources, while `always` trusts them. Pass `--approve`/`-a` or `--no-approve`/`-na` to override project trust for one run.
 
-If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.pi/agent/settings.json`, or change it with `/settings`.
+If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.prime/agent/settings.json`, or change it with `/settings`.
 
-`pi config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
+`prime-agent config` and package commands use the same project trust flow, except `prime-agent update`, which never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
 
-Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
+Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.prime/agent/trust.json` only; the current session is not reloaded, so restart Prime Agent for changes to take effect.
 
-### Telemetry and update checks
+### Update checks
 
-Pi has two separate startup features:
+Prime Agent stable builds fetch `https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/latest.json` to check whether a newer version exists. Beta builds fetch `beta.json` and remain on the beta channel. Override the base URL with `PRIME_AGENT_DOWNLOAD_BASE_URL`. Disable version checks with `PI_SKIP_VERSION_CHECK=1`.
 
-- **Update check:** fetches `https://pi.dev/api/latest-version` to check whether a newer Pi version exists. Disable it with `PI_SKIP_VERSION_CHECK=1`. Disabling update checks only turns off this check.
-- **Install/update telemetry:** after first install or a changelog-detected update, sends an anonymous version ping to `https://pi.dev/api/report-install`. This setting also controls optional provider attribution headers for OpenRouter, Cloudflare, and direct NVIDIA NIM requests. Opt out by setting `enableInstallTelemetry` to `false` in `settings.json`, or by setting `PI_TELEMETRY=0`. This does not disable update checks; Pi may still contact `pi.dev` for the latest version unless update checks are disabled or offline mode is enabled.
-
-Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including update checks, package update checks, and install/update telemetry.
-
----
+Use `--offline` or `PI_OFFLINE=1` to disable startup network operations, including update checks and package update checks.
 
 ## Context Files
 
-Pi loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
-- `~/.pi/agent/AGENTS.md` (global)
+Prime Agent loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
+- `~/.prime/agent/AGENTS.md` (global)
 - Parent directories (walking up from cwd)
 - Current directory
 
-If a directory contains `AGENTS.override.md`, Pi loads it instead of `AGENTS.md` or `CLAUDE.md` from that directory. Context files from other directories are still concatenated.
+If a directory contains `AGENTS.override.md`, Prime Agent loads it instead of `AGENTS.md` or `CLAUDE.md` from that directory. Context files from other directories are still concatenated.
 
 Use for project instructions (`AGENTS.md`/`CLAUDE.md`), conventions, common commands. All matching files are concatenated.
 
@@ -333,9 +307,7 @@ Disable context file loading with `--no-context-files` (or `-nc`).
 
 ### System Prompt
 
-Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
-
----
+Replace the default system prompt with `.prime/agent/SYSTEM.md` (project) or `~/.prime/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
 
 ## Customization
 
@@ -344,34 +316,91 @@ Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent
 Reusable prompts as Markdown files. Type `/name` to expand.
 
 ```markdown
-<!-- ~/.pi/agent/prompts/review.md -->
+<!-- ~/.prime/agent/prompts/review.md -->
 Review this code for bugs, security issues, and performance problems.
 Focus on: {{focus}}
 ```
 
-Place in `~/.pi/agent/prompts/`, `.pi/prompts/`, or a [pi package](#pi-packages) to share with others. See [docs/prompt-templates.md](docs/prompt-templates.md).
+Place in `~/.prime/agent/prompts/`, `.prime/agent/prompts/`, or a [Prime Agent package](#prime-agent-packages) to share with others. See [docs/prompt-templates.md](docs/prompt-templates.md).
 
 ### Skills
 
-On-demand capability packages following the [Agent Skills standard](https://agentskills.io). Invoke via `/skill:name` or let the agent load them automatically.
+On-demand capability packages following the [Agent Skills standard](https://agentskills.io). At startup, Prime Agent gives the model each visible skill's name, type, description, and location. The full `SKILL.md` stays out of context until the model inspects it with `ipython` or you explicitly invoke `/skill:name`.
 
 ```markdown
-<!-- ~/.pi/agent/skills/my-skill/SKILL.md -->
+<!-- ~/.prime/agent/skills/my-skill/SKILL.md -->
+---
+name: my-skill
+description: Use this skill when the user asks about X.
+---
+
 # My Skill
-Use this skill when the user asks about X.
 
 ## Steps
 1. Do this
 2. Then that
 ```
 
-Place in `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, or `.agents/skills/` (from `cwd` up through parent directories) or a [pi package](#pi-packages) to share with others. See [docs/skills.md](docs/skills.md).
+Skills can also be Python-backed. A Python skill is a normal skill directory with `SKILL.md` plus a Python package at `src/<import_name>/`. Prime Agent installs it into the persistent Python kernel and exposes it by import name, so the model can call it directly, inspect it with `help()`, or use any console scripts the skill declares.
+
+Place in `~/.prime/agent/skills/`, `~/.agents/skills/`, `.prime/agent/skills/`, or `.agents/skills/` (from `cwd` up through parent directories) or a [Prime Agent package](#prime-agent-packages) to share with others. See [docs/skills.md](docs/skills.md).
+
+Prime Agent ships with a built-in `websearch` skill (Google search via the [Serper](https://serper.dev) API). It loads by default; run `/login`, switch to **MCP Connections**, and choose "Serper (web search)" to add your key. Disable it with `bundledSkills.websearch: false`, or override it with your own `websearch` skill in any location above. See [docs/skills.md#built-in-skills](docs/skills.md#built-in-skills).
+
+### MCP Integrations
+
+Connect external services (Linear, Notion, …) over the [Model Context Protocol](https://modelcontextprotocol.io). Consistent with the single-tool design, MCP is **not** exposed as new agent tools — each integration is a Python skill package the model imports and calls from the kernel:
+
+```python
+import linear
+issues = await linear.list_issues(team="Engineering")   # tools auto-discovered from the server
+help(linear.list_issues)                                 # description + argument schema
+```
+
+Built-in integrations for Linear and Notion ship disabled. **Logging in enables them**: open `/login`, switch to **MCP Connections**, pick the integration, and complete OAuth in the browser. The integration's skill then becomes visible and is auto-imported into the kernel. `/mcp` opens the same tab, while its subcommands support direct management:
+
+```
+/mcp                 list integrations and connection status
+/mcp login <name>    connect via OAuth (browser)
+/mcp logout <name>   disconnect
+```
+
+Credentials are stored once in `~/.prime/agent/auth.json` (under `mcp:<name>`); the kernel reads them directly and the host refreshes expired tokens. Enablement is derived from whether valid credentials exist, so there is no separate on/off switch.
+
+**Add your own server.** Declare it under `mcpServers` in settings, then ship a tiny Python skill package that subclasses `McpIntegration`:
+
+```jsonc
+// ~/.prime/agent/settings.json
+{
+  "mcpServers": {
+    "acme": { "type": "http", "url": "https://mcp.acme.com/mcp", "oauth": true }
+  }
+}
+```
+
+```python
+# ~/.prime/agent/skills/acme/src/acme/__init__.py
+from rlm import McpIntegration
+
+class Acme(McpIntegration):
+    server = "acme"
+    url = "https://mcp.acme.com/mcp"
+
+acme = Acme()
+
+def __getattr__(name):     # so `import acme; await acme.<tool>(...)` works
+    return getattr(acme, name)
+```
+
+The base class connects with the official `mcp` SDK, injects the bearer token from `auth.json`, and binds the server's tools as async methods. Use `await acme.call_tool("name", {...})` for tools whose names aren't valid Python identifiers, or a static `bearerTokenEnvVar` instead of OAuth.
+
+See [docs/mcp-integrations.md](docs/mcp-integrations.md) for the full authoring guide (package layout, auth options, the `McpIntegration` API, and caveats).
 
 ### Extensions
 
 <p align="center"><img src="docs/images/doom-extension.png" alt="Doom Extension" width="600"></p>
 
-TypeScript modules that extend pi with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
+TypeScript modules that extend Prime Agent with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
 
 ```typescript
 export default function (pi: ExtensionAPI) {
@@ -381,11 +410,11 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-The default export can also be `async`. pi waits for async extension factories before startup continues, which is useful for one-time initialization such as fetching remote model lists before calling `pi.registerProvider()`.
+The default export can also be `async`. Prime Agent waits for async extension factories before startup continues, which is useful for one-time initialization such as fetching remote model lists before calling `pi.registerProvider()`.
 
 **What's possible:**
 - Custom tools (or replace built-in tools entirely)
-- Sub-agents and plan mode
+- Additional orchestration workflows and plan modes
 - Custom compaction and summarization
 - Permission gates and path protection
 - Custom editors and UI components
@@ -393,56 +422,50 @@ The default export can also be `async`. pi waits for async extension factories b
 - Git checkpointing and auto-commit
 - SSH and sandbox execution
 - MCP server integration
-- Make pi look like Claude Code
+- Make Prime Agent look like Claude Code
 - Games while waiting (yes, Doom runs)
 - ...anything you can dream up
 
-Place in `~/.pi/agent/extensions/`, `.pi/extensions/`, or a [pi package](#pi-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/).
+Place in `~/.prime/agent/extensions/`, `.prime/agent/extensions/`, or a [Prime Agent package](#prime-agent-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/).
 
 ### Themes
 
-Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and pi immediately applies changes.
+Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and Prime Agent immediately applies changes.
 
-Place in `~/.pi/agent/themes/`, `.pi/themes/`, or a [pi package](#pi-packages) to share with others. See [docs/themes.md](docs/themes.md).
+Place in `~/.prime/agent/themes/`, `.prime/agent/themes/`, or a [Prime Agent package](#prime-agent-packages) to share with others. See [docs/themes.md](docs/themes.md).
 
-### Pi Packages
+### Prime Agent Packages
 
-Bundle and share extensions, skills, prompts, and themes via npm or git. Find packages on [npmjs.com](https://www.npmjs.com/search?q=keywords%3Api-package) or [Discord](https://discord.com/channels/1456806362351669492/1457744485428629628).
+Bundle and share extensions, skills, prompts, and themes via npm or git.
 
-> **Security:** Pi packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
+> **Security:** Prime Agent packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
 
 ```bash
-pi install npm:@foo/pi-tools
-pi install npm:@foo/pi-tools@1.2.3      # pinned version
-pi install git:github.com/user/repo
-pi install git:github.com/user/repo@v1  # tag or commit
-pi install git:git@github.com:user/repo
-pi install git:git@github.com:user/repo@v1  # tag or commit
-pi install https://github.com/user/repo
-pi install https://github.com/user/repo@v1      # tag or commit
-pi install ssh://git@github.com/user/repo
-pi install ssh://git@github.com/user/repo@v1    # tag or commit
-pi remove npm:@foo/pi-tools
-pi uninstall npm:@foo/pi-tools          # alias for remove
-pi list
-pi update                               # update pi only
-pi update --all                         # update pi and packages
-pi update --extensions                  # update packages only
-pi update --models                      # refresh model catalogs only
-pi update --self                        # update pi only
-pi update --self --force                # reinstall pi even if current
-pi update npm:@foo/pi-tools             # update one package
-pi config                               # enable/disable extensions, skills, prompts, themes
+prime-agent package install npm:@foo/prime-agent-tools
+prime-agent package install npm:@foo/prime-agent-tools@1.2.3  # pinned version
+prime-agent package install git:github.com/user/repo
+prime-agent package install git:github.com/user/repo@v1       # tag or commit
+prime-agent package install git:git@github.com:user/repo
+prime-agent package install https://github.com/user/repo
+prime-agent package install ssh://git@github.com/user/repo
+prime-agent package remove npm:@foo/prime-agent-tools
+prime-agent package list
+prime-agent package update                                  # update packages, except pinned versions
+prime-agent package update npm:@foo/prime-agent-tools       # update one package
+prime-agent package update --models                         # refresh model catalogs only
+prime-agent update                                          # update Prime Agent
+prime-agent update --force                                  # reinstall Prime Agent even if current
+prime-agent config                                          # enable/disable package resources
 ```
 
-Packages install to `~/.pi/agent/git/` (git) or `~/.pi/agent/npm/` (npm). Use `-l` for project-local installs (`.pi/git/`, `.pi/npm/`). Git `@ref` values are pinned tags or commits; pinned packages are skipped by `pi update --extensions` and `pi update --all`, so use `pi install git:host/user/repo@new-ref` to move an existing package to a new ref. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
+Packages install to `~/.prime/agent/git/` (git) or global npm. Use `--local` (`-l`) for project-local installs (`.prime/agent/git/`, `.prime/agent/npm/`). Git `@ref` values are pinned tags or commits, and pinned packages are skipped by `prime-agent package update`, so move an existing package with `prime-agent package install git:host/user/repo@new-ref`. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
 
-Create a package by adding a `pi` key to `package.json`:
+Create a package by adding the inherited `pi` manifest key to `package.json`:
 
 ```json
 {
-  "name": "my-pi-package",
-  "keywords": ["pi-package"],
+  "name": "my-prime-agent-package",
+  "keywords": ["prime-agent-package"],
   "pi": {
     "extensions": ["./extensions"],
     "skills": ["./skills"],
@@ -452,18 +475,16 @@ Create a package by adding a `pi` key to `package.json`:
 }
 ```
 
-Without a `pi` manifest, pi auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
+Without a `pi` manifest, Prime Agent auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
 
 See [docs/packages.md](docs/packages.md).
-
----
 
 ## Programmatic Usage
 
 ### SDK
 
 ```typescript
-import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, ModelRuntime, SessionManager } from "prime-agent";
 
 const modelRuntime = await ModelRuntime.create();
 const { session } = await createAgentSession({
@@ -483,59 +504,68 @@ See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
 For non-Node.js integrations, use RPC mode over stdin/stdout:
 
 ```bash
-pi --mode rpc
+prime-agent --mode rpc
 ```
 
 RPC mode uses strict LF-delimited JSONL framing. Clients must split records on `\n` only. Do not use generic line readers like Node `readline`, which also split on Unicode separators inside JSON payloads.
 
 See [docs/rpc.md](docs/rpc.md) for the protocol.
 
----
+## Upstream
 
-## Philosophy
+Prime Agent is forked from [pi-mono](https://github.com/badlogic/pi-mono) by Mario Zechner and keeps MIT attribution in the root license.
 
-Pi is aggressively extensible so it doesn't have to dictate your workflow. Features that other tools bake in can be built with [extensions](#extensions), [skills](#skills), or installed from third-party [pi packages](#pi-packages). This keeps the core minimal while letting you shape pi to fit how you work.
-
-**No MCP.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support. [Why?](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/)
-
-**No sub-agents.** There's many ways to do this. Spawn pi instances via tmux, or build your own with [extensions](#extensions), or install a package that does it your way.
-
-**No permission popups.** Run in a container, or build your own confirmation flow with [extensions](#extensions) inline with your environment and security requirements.
-
-**No plan mode.** Write plans to files, or build it with [extensions](#extensions), or install a package.
-
-**No built-in to-dos.** They confuse models. Use a TODO.md file, or build your own with [extensions](#extensions).
-
-**No background bash.** Use tmux. Full observability, direct interaction.
-
-Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) for the full rationale.
-
----
+The package architecture, extension model, and source package names still reflect that upstream lineage while the distributed command and release artifacts are branded for Prime Agent.
 
 ## CLI Reference
 
 ```bash
-pi [options] [--] [@files...] [messages...]
+prime-agent [options] [@files...] [messages...]
 ```
 
-### Package Commands
+Run `prime-agent help` for the command list and `prime-agent help <command>` for details.
+
+### Agent Commands
 
 ```bash
-pi install <source> [-l]     # Install package, -l for project-local
-pi remove <source> [-l]      # Remove package
-pi uninstall <source> [-l]   # Alias for remove
-pi update [source|self|pi]   # Update pi only, or one package source
-pi update --all              # Update pi and packages
-pi update --extensions       # Update packages only
-pi update --models           # Refresh model catalogs only
-pi update --self             # Update pi only
-pi update --self --force     # Reinstall pi even if current
-pi update --extension <src>  # Update one package
-pi list                      # List installed packages
-pi config                    # Enable/disable package resources
+prime-agent agents                         # Search running, idle, and inactive sessions
+prime-agent list [--all]                   # List active or saved agents
+prime-agent attach <agent>                 # Attach the interactive UI
+prime-agent stop <agent>                   # Stop one agent
+prime-agent rename <agent> <name>          # Rename an agent
+prime-agent send <agent> <message>         # Send an agent-to-agent message
+prime-agent status                         # Show background service status
+prime-agent doctor [--fix]                 # Inspect or safely clean up background services
+prime-agent shutdown [--force]             # Stop every agent, worker, and background service
 ```
 
-`pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
+`shutdown` asks for confirmation. `shutdown --force` skips confirmation and kills unresponsive workers and their tracked child processes.
+
+### Scheduled Prompts
+
+```bash
+prime-agent schedule list [--all] [agent]
+prime-agent schedule add <agent> <schedule> -- <message>
+prime-agent schedule cancel <job-id>
+```
+
+Schedules run prompts later or repeatedly. A schedule can be a supported one-time expression such as `in 5m` or a cron expression.
+
+### Package and Update Commands
+
+Packages bundle capabilities such as extensions, skills, prompts, and themes.
+
+```bash
+prime-agent package install <source> [--local]
+prime-agent package remove <source> [--local]
+prime-agent package list
+prime-agent package update [source]
+prime-agent package update --models            # Refresh model catalogs only
+prime-agent update [--force]                   # Update Prime Agent itself
+prime-agent config                             # Enable/disable package resources
+```
+
+`prime-agent config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `prime-agent update` never prompts for project trust.
 
 ### Modes
 
@@ -545,12 +575,11 @@ pi config                    # Enable/disable package resources
 | `-p`, `--print` | Print response and exit |
 | `--mode json` | Output all events as JSON lines (see [docs/json.md](docs/json.md)) |
 | `--mode rpc` | RPC mode for process integration (see [docs/rpc.md](docs/rpc.md)) |
-| `--export <in> [out]` | Export session to HTML |
 
-In print mode, pi also reads piped stdin and merges it into the initial prompt:
+In print mode, Prime Agent also reads piped stdin and merges it into the initial prompt:
 
 ```bash
-cat README.md | pi -p "Summarize this text"
+cat README.md | prime-agent -p "Summarize this text"
 ```
 
 ### Model Options
@@ -562,19 +591,21 @@ cat README.md | pi -p "Summarize this text"
 | `--api-key <key>` | API key (overrides env vars) |
 | `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `--models <patterns>` | Comma-separated patterns for Ctrl+P cycling |
-| `--list-models [search]` | List available models |
+
+Use `prime-agent model list [search]` to list available models.
 
 ### Session Options
 
 | Option | Description |
 |--------|-------------|
 | `-c`, `--continue` | Continue most recent session |
-| `-r`, `--resume` | Browse and select session |
-| `--session <path\|id>` | Use specific session file or partial UUID |
+| `-r`, `--resume [path\|id]` | Open the searchable session view, or resume a specific session file or partial UUID |
 | `--fork <path\|id>` | Fork specific session file or partial UUID into a new session |
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode (don't save) |
 | `--name <name>`, `-n <name>` | Set session display name at startup |
+
+Use `prime-agent session export <file> [output]` to export a saved session to HTML.
 
 ### Tool Options
 
@@ -585,7 +616,7 @@ cat README.md | pi -p "Summarize this text"
 | `--no-builtin-tools`, `-nbt` | Disable built-in tools by default but keep extension/custom tools enabled |
 | `--no-tools`, `-nt` | Disable all tools by default |
 
-Available built-in tools: `read`, `bash`, `powershell` (Windows), `edit`, `write`, `grep`, `find`, `ls`
+Available built-in tools: `ipython` (the only one active by default), `read`, `write`, `edit`, `bash`, `powershell` (Windows), `grep`, `find`, `ls`. Set `defaultTools` in `settings.json` to change which of them start active.
 
 ### Resource Options
 
@@ -602,6 +633,23 @@ Available built-in tools: `read`, `bash`, `powershell` (Windows), `edit`, `write
 | `--no-context-files`, `-nc` | Disable AGENTS.md and CLAUDE.md context file discovery |
 
 Combine `--no-*` with explicit flags to load exactly what you need, ignoring settings.json (e.g., `--no-extensions -e ./my-ext.ts`).
+
+### Autonomous Options
+
+Autonomous mode is disabled by default. `--autonomous` or any of its sub-options enables host-managed continuations for unattended work.
+
+| Option | Description |
+|--------|-------------|
+| `--autonomous` | Continue until gates pass or a limit prevents another continuation |
+| `--autonomous-gate <command>` | Add a repeatable shell command that must pass before completion |
+| `--autonomous-gate-retries <n>` | Positive per-gate retry limit; default `3` |
+| `--autonomous-gate-timeout-ms <n>` | Positive per-gate timeout in milliseconds; default `300000` |
+| `--autonomous-max-continuations <n>` | Positive host follow-up limit; default `3` |
+| `--autonomous-max-turns <n>` | Positive assistant-turn limit; default `12` |
+| `--autonomous-max-tokens <n>` | Positive token limit; default `80000` |
+| `--autonomous-timeout-ms <n>` | Positive wall-clock limit in milliseconds; default `1800000` |
+
+Gates run before the continuation, turn, token, and wall-clock limits are evaluated; every configured gate must pass for autonomous completion. See the [usage guide](docs/usage.md#autonomous-options) for validation rules, retry behavior, and detailed limit interactions.
 
 ### Other Options
 
@@ -623,65 +671,74 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 Prefix files with `@` to include in the message:
 
 ```bash
-pi @prompt.md "Answer this"
-pi -p @screenshot.png "What's in this image?"
-pi @code.ts @test.ts "Review these files"
+prime-agent @prompt.md "Answer this"
+prime-agent -p @screenshot.png "What's in this image?"
+prime-agent @code.ts @test.ts "Review these files"
 ```
 
 ### Examples
 
 ```bash
 # Interactive with initial prompt
-pi "List all .ts files in src/"
+prime-agent "List all .ts files in src/"
 
 # Non-interactive
-pi -p "Summarize this codebase"
+prime-agent -p "Summarize this codebase"
 
 # Prompt beginning with a dash
-pi -p -- "- Summarize these points"
+prime-agent -p -- "- Summarize these points"
 
 # Non-interactive with piped stdin
-cat README.md | pi -p "Summarize this text"
+cat README.md | prime-agent -p "Summarize this text"
 
 # Named one-shot session
-pi --name "release audit" -p "Audit this repository"
+prime-agent --name "release audit" -p "Audit this repository"
 
 # Different model
-pi --provider openai --model gpt-4o "Help me refactor"
+prime-agent --provider openai --model gpt-4o "Help me refactor"
 
 # Model with provider prefix (no --provider needed)
-pi --model openai/gpt-4o "Help me refactor"
+prime-agent --model openai/gpt-4o "Help me refactor"
 
 # Model with thinking level shorthand
-pi --model sonnet:high "Solve this complex problem"
+prime-agent --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
-pi --models "claude-*,gpt-4o"
+prime-agent --models "claude-*,gpt-4o"
 
-# Read-only mode
-pi --tools read,grep,find,ls -p "Review the code"
+# Restrict to the built-in Python REPL tool
+prime-agent --tools ipython -p "Review the code"
 
 # Disable one extension or built-in tool while keeping the rest available
-pi --exclude-tools ask_question
+prime-agent --exclude-tools ask_question
 
 # High thinking level
-pi --thinking high "Solve this complex problem"
+prime-agent --thinking high "Solve this complex problem"
 ```
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `AI_AGENT` | Set to `pi` by the CLI and RPC entry points so generic tooling can attribute child processes to Pi |
-| `PI_CODING_AGENT` | Set to `true` by the CLI and RPC entry points so child processes can detect that they run inside Pi |
-| `PI_CODING_AGENT_DIR` | Override config directory (default: `~/.pi/agent`) |
-| `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory (overridden by `--session-dir`) |
+| `PRIME_AGENT_CODING_AGENT_DIR` | Override config directory (default: `~/.prime/agent`) |
+| `PRIME_AGENT_SESSION_DIR` | Override session storage directory (overridden by `--session-dir`) |
+| `PRIME_AGENT_CODING_AGENT_SESSION_DIR` | Legacy alias for `PRIME_AGENT_SESSION_DIR` |
 | `PI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
-| `PI_OFFLINE` | Disable startup network operations, including update checks, package update checks, and install/update telemetry |
-| `PI_SKIP_VERSION_CHECK` | Skip the Pi version update check at startup. This prevents the `pi.dev` latest-version request |
-| `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers. Use `1`/`true`/`yes` to enable or `0`/`false`/`no` to disable. This does not disable update checks |
+| `PI_OFFLINE` | Disable startup network operations, including update checks and package update checks |
+| `PI_SKIP_VERSION_CHECK` | Skip the Prime Agent version update check at startup. This prevents the release manifest request |
+| `PRIME_AGENT_TELEMETRY` | Override pseudonymous aggregate usage analytics with `1`/`true`/`yes` or `0`/`false`/`no` |
+| `PRIME_AGENT_TELEMETRY_ENDPOINT` | Override the aggregate analytics ingestion endpoint |
+| `DO_NOT_TRACK` | Disable aggregate usage analytics when set to `1`/`true`/`yes` |
+| `PI_TELEMETRY` | Override the optional provider attribution headers sent to OpenRouter, Cloudflare, and direct NVIDIA NIM requests. Use `1`/`true`/`yes` or `0`/`false`/`no`; without it the `enableInstallTelemetry` setting applies |
+| `PRIME_AGENT_DOWNLOAD_BASE_URL` | Override the Prime Agent release manifest and tarball base URL |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
-| `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
+| `PRIME_API_KEY` | Prime Inference API key; also used for trace sharing if it has `agent_traces` scope |
+| `PRIME_AGENT_TRACES_API_KEY` | Prime API key used only for opt-in trace sharing |
+| `PRIME_AGENT_TRACES_BASE_URL` | Override the Prime Agent trace upload API base URL |
+| `PRIME_AGENT_KERNEL_PYTHON` | Use an existing Python environment with `prime-agent-runtime` instead of auto-bootstrapping `~/.prime/agent/kernel-venv` |
+| `AI_AGENT` | Set to `pi` by the CLI and RPC entry points so generic tooling can attribute child processes to this agent |
+| `PI_CODING_AGENT` | Set to `true` by the CLI and RPC entry points so child processes can detect that they run inside the agent |
+| `VISUAL`, `EDITOR` | External editor for Ctrl+G when the `externalEditor` setting is unset; defaults to Notepad on Windows and `nano` elsewhere |
 
 Commands run by the LLM-callable `bash` and `powershell` tools also receive current session metadata:
 
@@ -695,7 +752,7 @@ Commands run by the LLM-callable `bash` and `powershell` tools also receive curr
 
 These values are resolved when each command starts. See [Environment Variables](docs/environment-variables.md#shell-tool-session-environment) for semantics, examples, and custom-tool opt-out.
 
----
+The remaining `PI_*` variables in this table are compatibility names still read by the current runtime. They do not change the application name, command, or default `~/.prime/agent` configuration path.
 
 ## Contributing & Development
 
@@ -707,12 +764,6 @@ MIT
 
 ## See Also
 
-- [@earendil-works/pi-ai](https://www.npmjs.com/package/@earendil-works/pi-ai): Core LLM toolkit
-- [@earendil-works/pi-agent-core](https://www.npmjs.com/package/@earendil-works/pi-agent-core): Agent framework
-- [@earendil-works/pi-tui](https://www.npmjs.com/package/@earendil-works/pi-tui): Terminal UI components
-
-<p align="center">
-  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
-  <br /><br />
-  <a href="https://exe.dev"><img src="docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
-</p>
+- [Prime Agent AI](../ai): Core LLM toolkit
+- [Prime Agent Core](../agent): Agent framework
+- [Prime Agent TUI](../tui): Terminal UI components

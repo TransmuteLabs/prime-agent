@@ -39,14 +39,13 @@ export interface CompactionDetails {
 /**
  * Extract file operations from messages and previous compaction entries.
  */
+/** Preserve file operations recorded by prior compactions and current tool calls. */
 function extractFileOperations(
 	messages: AgentMessage[],
 	entries: SessionEntry[],
 	prevCompactionIndex: number,
 ): FileOperations {
 	const fileOps = createFileOps();
-
-	// Collect from previous compaction's details (if pi-generated)
 	if (prevCompactionIndex >= 0) {
 		const prevCompaction = entries[prevCompactionIndex] as CompactionEntry;
 		if (!prevCompaction.fromHook && prevCompaction.details) {
@@ -60,19 +59,12 @@ function extractFileOperations(
 			}
 		}
 	}
-
-	// Extract from tool calls in messages
 	for (const msg of messages) {
 		extractFileOpsFromMessage(msg, fileOps);
 	}
 
 	return fileOps;
 }
-
-// ============================================================================
-// Message Extraction
-// ============================================================================
-
 /**
  * Extract AgentMessage from an entry if it produces one.
  * Returns undefined for entries that don't contribute to LLM context.
@@ -136,11 +128,6 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 	reserveTokens: 16384,
 	keepRecentTokens: 20000,
 };
-
-// ============================================================================
-// Token calculation
-// ============================================================================
-
 /**
  * Calculate total context tokens from usage.
  * Uses the native totalTokens field when available, falls back to computing from components.
@@ -236,6 +223,8 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
  */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
 	if (!settings.enabled) return false;
+	// An unknown window (0) would otherwise make every turn look overfull.
+	if (contextWindow <= 0) return false;
 	return contextTokens > contextWindow - settings.reserveTokens;
 }
 
@@ -413,8 +402,6 @@ export function findCutPoint(
 	if (cutPoints.length === 0) {
 		return { firstKeptEntryIndex: startIndex, turnStartIndex: -1, isSplitTurn: false };
 	}
-
-	// Walk backwards from newest, accumulating estimated message sizes
 	let accumulatedTokens = 0;
 	let cutIndex = cutPoints[0]; // Default: keep from first message (not header)
 
@@ -426,10 +413,7 @@ export function findCutPoint(
 		);
 		if (messageTokens === 0) continue;
 		accumulatedTokens += messageTokens;
-
-		// Check if we've exceeded the budget
 		if (accumulatedTokens >= keepRecentTokens) {
-			// Find the closest valid cut point at or after this entry
 			for (let c = 0; c < cutPoints.length; c++) {
 				if (cutPoints[c] >= i) {
 					cutIndex = cutPoints[c];
@@ -449,8 +433,6 @@ export function findCutPoint(
 		}
 		cutIndex--;
 	}
-
-	// Determine if this is a split turn
 	const cutEntry = entries[cutIndex];
 	const startsTurn = isTurnStartEntry(cutEntry);
 	const turnStartIndex = startsTurn ? -1 : findTurnStartIndex(entries, cutIndex, startIndex);
@@ -461,11 +443,6 @@ export function findCutPoint(
 		isSplitTurn: !startsTurn && turnStartIndex !== -1,
 	};
 }
-
-// ============================================================================
-// Summarization
-// ============================================================================
-
 const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
 
 Use this EXACT format:
@@ -498,6 +475,9 @@ Use this EXACT format:
 - [Or "(none)" if not applicable]
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+
+const KERNEL_PERSIST_SUMMARY_NOTE =
+	"Note: the Python kernel keeps running after this summary \u2014 every Python variable, import, and helper you defined stays available. The cells that defined them won't appear above, so record in the summary any names worth remembering so you reuse them instead of redefining them.";
 
 const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summary with new information. RULES:
 - PRESERVE all existing information from the previous summary
@@ -640,6 +620,18 @@ export async function generateSummary(
 	).text;
 }
 
+/**
+ * Build the instruction portion of the summarization prompt: the initial or
+ * update template, optional user instructions, and the kernel persistence note.
+ */
+export function buildSummarizationPrompt(customInstructions?: string, previousSummary?: string): string {
+	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+	if (customInstructions) {
+		basePrompt += `\n\n<user-instructions>\nThe user provided these instructions for this summary. Follow them with high priority while keeping the section format above: emphasize what they ask to focus on, and preserve verbatim anything they ask to remember.\n${customInstructions}\n</user-instructions>`;
+	}
+	return `${basePrompt}\n\n${KERNEL_PERSIST_SUMMARY_NOTE}`;
+}
+
 /** Build the provider context for a standalone summary request. */
 function buildSummarizationContext(promptText: string): Context {
 	return {
@@ -676,18 +668,12 @@ export async function generateSummaryWithUsage(
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
 
-	// Use update prompt if we have a previous summary, otherwise initial prompt
-	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
-	if (customInstructions) {
-		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
-	}
+	const basePrompt = buildSummarizationPrompt(customInstructions, previousSummary);
 
 	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
 	const llmMessages = convertToLlm(currentMessages);
 	const conversationText = serializeConversation(llmMessages);
-
-	// Build the prompt with conversation wrapped in tags
 	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
 	if (previousSummary) {
 		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
@@ -726,11 +712,6 @@ export async function generateSummaryWithUsage(
 
 	return { text: textContent, usage: response.usage };
 }
-
-// ============================================================================
-// Compaction Preparation (for extensions)
-// ============================================================================
-
 export interface CompactionPreparation {
 	/** UUID of first entry to keep */
 	firstKeptEntryId: string;
@@ -778,8 +759,6 @@ export function prepareCompaction(
 	const tokensBefore = estimateContextTokens(buildSessionContext(pathEntries).messages).tokens;
 
 	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
-
-	// Get UUID of first kept entry
 	const firstKeptEntry = pathEntries[cutPoint.firstKeptEntryIndex];
 	if (!firstKeptEntry?.id) {
 		return undefined; // Session needs migration
@@ -787,15 +766,11 @@ export function prepareCompaction(
 	const firstKeptEntryId = firstKeptEntry.id;
 
 	const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
-
-	// Messages to summarize (will be discarded after summary)
 	const messagesToSummarize: AgentMessage[] = [];
 	for (let i = boundaryStart; i < historyEnd; i++) {
 		const msg = getMessageFromEntryForCompaction(pathEntries[i]);
 		if (msg) messagesToSummarize.push(msg);
 	}
-
-	// Messages for turn prefix summary (if splitting a turn)
 	const turnPrefixMessages: AgentMessage[] = [];
 	if (cutPoint.isSplitTurn) {
 		for (let i = cutPoint.turnStartIndex; i < cutPoint.firstKeptEntryIndex; i++) {
@@ -804,14 +779,12 @@ export function prepareCompaction(
 		}
 	}
 
-	if (messagesToSummarize.length === 0 && turnPrefixMessages.length === 0) {
+	// Avoid a compaction that would summarize no history at all.
+	if (messagesToSummarize.length === 0 && turnPrefixMessages.length === 0 && !previousSummary) {
 		return undefined;
 	}
-
-	// Extract file operations from messages and previous compaction
 	const fileOps = extractFileOperations(messagesToSummarize, pathEntries, prevCompactionIndex);
-
-	// Also extract file ops from turn prefix if splitting
+	// Split turns retain their suffix, but their prefix file operations still belong in the summary.
 	if (cutPoint.isSplitTurn) {
 		for (const msg of turnPrefixMessages) {
 			extractFileOpsFromMessage(msg, fileOps);
@@ -829,11 +802,6 @@ export function prepareCompaction(
 		settings,
 	};
 }
-
-// ============================================================================
-// Main compaction function
-// ============================================================================
-
 const TURN_PREFIX_SUMMARIZATION_PROMPT = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
 
 Summarize the prefix to provide context for the retained suffix:
@@ -947,8 +915,6 @@ export async function compact(
 		summary = result.text;
 		summaryUsage = result.usage;
 	}
-
-	// Compute file lists and append to summary
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
 

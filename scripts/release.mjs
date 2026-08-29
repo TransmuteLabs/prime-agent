@@ -5,32 +5,35 @@
  * Usage:
  *   node scripts/release.mjs <major|minor|patch>
  *   node scripts/release.mjs <x.y.z>
+ *   node scripts/release.mjs <target> --dry-run   (preview changelog updates only)
  *
  * Steps:
  * 1. Check for uncommitted changes
  * 2. Verify every public workspace package is registered on npm
  * 3. Bump version via npm run version:xxx or set an explicit version
- * 4. Update CHANGELOG.md files: [Unreleased] -> [version] - date
+ * 4. Update CHANGELOG.md files: aggregate .changes/*.md fragments into a
+ *    [version] - date section, git rm the consumed fragments
  * 5. Regenerate release artifacts
  * 6. Run checks and tests
  * 7. Commit and tag the release
- * 8. Add new [Unreleased] section to changelogs
- * 9. Commit next-cycle changelog updates
- * 10. Push main and the tag to trigger CI publication and verified pi.dev announcement
+ * 8. Publish to npm
+ * 9. Push main and the tag
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { buildReleaseSection } from "./lib/changelog-fragments.mjs";
 import { findPackageDirectories } from "./package-workspaces.mjs";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
-const RELEASE_TARGET = process.argv[2];
+const DRY_RUN = process.argv.includes("--dry-run");
+const RELEASE_TARGET = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
 const BUMP_TYPES = new Set(["major", "minor", "patch"]);
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 
 if (!RELEASE_TARGET || (!BUMP_TYPES.has(RELEASE_TARGET) && !SEMVER_RE.test(RELEASE_TARGET))) {
-	console.error("Usage: node scripts/release.mjs <major|minor|patch|x.y.z>");
+	console.error("Usage: node scripts/release.mjs <major|minor|patch|x.y.z> [--dry-run]");
 	process.exit(1);
 }
 
@@ -170,48 +173,92 @@ function getChangelogs() {
 		.filter((path) => existsSync(path));
 }
 
+function listFragments(pkgDir) {
+	const changesDir = join(pkgDir, ".changes");
+	if (!existsSync(changesDir)) {
+		return [];
+	}
+
+	const files = readdirSync(changesDir)
+		.filter((name) => name.endsWith(".md") && name !== "README.md")
+		.map((name) => join(changesDir, name));
+	return files
+		.map((path) => ({ path, key: fragmentSortKey(path) }))
+		.sort((a, b) => a.key - b.key || (a.path < b.path ? -1 : 1))
+		.map(({ path }) => ({ name: path, content: readFileSync(path, "utf-8") }));
+}
+
+function fragmentSortKey(path) {
+	const output = run(`git log --diff-filter=A --format=%ct -1 -- ${shellQuote(path)}`, {
+		silent: true,
+		ignoreError: true,
+	});
+	const epoch = Number.parseInt((output || "").trim(), 10);
+	return Number.isFinite(epoch) ? epoch : Infinity;
+}
+
 function updateChangelogsForRelease(version) {
 	const date = new Date().toISOString().split("T")[0];
 	const changelogs = getChangelogs();
+	const consumedFragments = [];
 
 	for (const changelog of changelogs) {
 		const content = readFileSync(changelog, "utf-8");
+		const allFragments = listFragments(dirname(changelog));
+		// Empty fragments are skipped, not consumed, so nothing is ever lost silently.
+		const empty = allFragments.filter((fragment) => !fragment.content.trim());
+		for (const fragment of empty) {
+			console.warn(`  Warning: skipping empty fragment ${fragment.name}; delete it or add content.`);
+		}
+		const fragments = allFragments.filter((fragment) => fragment.content.trim());
+		const result = buildReleaseSection(content, fragments, version, date);
 
-		if (!content.includes("## [Unreleased]")) {
-			console.log(`  Skipping ${changelog}: no [Unreleased] section`);
+		if (!result.changed) {
+			console.log(`  Skipping ${changelog}: no fragments`);
 			continue;
 		}
 
-		const updated = content.replace(
-			"## [Unreleased]",
-			`## [${version}] - ${date}`
-		);
-		writeFileSync(changelog, updated);
-		console.log(`  Updated ${changelog}`);
+		if (DRY_RUN) {
+			console.log(`\n--- ${changelog} (${fragments.length} fragments) ---`);
+			const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+			const sectionRe = new RegExp(`## \\[${escapedVersion}\\][\\s\\S]*?(?=\\n## \\[|$)`);
+			console.log((result.content.match(sectionRe) || ["(no release section)"])[0]);
+		} else {
+			writeFileSync(changelog, result.content);
+			console.log(`  Updated ${changelog} (${fragments.length} fragments)`);
+		}
+		consumedFragments.push(...fragments.map((fragment) => fragment.name));
+	}
+
+	if (consumedFragments.length > 0) {
+		if (DRY_RUN) {
+			console.log(`\nWould git rm: ${consumedFragments.join(", ")}`);
+		} else {
+			run(`git rm -q -- ${consumedFragments.map(shellQuote).join(" ")}`);
+		}
 	}
 }
 
-function addUnreleasedSection() {
-	const changelogs = getChangelogs();
-	const unreleasedSection = "## [Unreleased]\n\n";
-
-	for (const changelog of changelogs) {
-		const content = readFileSync(changelog, "utf-8");
-
-		// Insert after "# Changelog\n\n"
-		const updated = content.replace(
-			/^(# Changelog\n\n)/,
-			`$1${unreleasedSection}`
-		);
-		writeFileSync(changelog, updated);
-		console.log(`  Added [Unreleased] to ${changelog}`);
+function previewVersion(target) {
+	if (!BUMP_TYPES.has(target)) {
+		return target;
 	}
+	const [major, minor, patch] = getVersion().split(".").map(Number);
+	if (target === "major") return `${major + 1}.0.0`;
+	if (target === "minor") return `${major}.${minor + 1}.0`;
+	return `${major}.${minor}.${patch + 1}`;
 }
 
-// Main flow
 console.log("\n=== Release Script ===\n");
 
-// 1. Check for uncommitted changes
+if (DRY_RUN) {
+	const version = previewVersion(RELEASE_TARGET);
+	console.log(`Dry run for v${version}: previewing changelog updates, no files are written.`);
+	updateChangelogsForRelease(version);
+	console.log("\n=== Dry run complete (no changes made) ===");
+	process.exit(0);
+}
+
 console.log("Checking for uncommitted changes...");
 const status = run("git status --porcelain", { silent: true });
 if (status && status.trim()) {
@@ -228,7 +275,7 @@ assertPackagesAreRegisteredWithNpm();
 const version = bumpOrSetVersion(RELEASE_TARGET);
 console.log(`  New version: ${version}\n`);
 
-// 4. Update changelogs
+// 4. Fold .changes fragments into the release section
 console.log("Updating CHANGELOG.md files...");
 updateChangelogsForRelease(version);
 console.log();
@@ -261,18 +308,13 @@ run(`git commit -m "Release v${version}"`);
 run(`git tag v${version}`);
 console.log();
 
-// 8. Add new [Unreleased] sections
-console.log("Adding [Unreleased] sections for next cycle...");
-addUnreleasedSection();
+// 8. Publish
+// No CI publish workflow exists here, so the release script publishes directly.
+console.log("Publishing to npm...");
+run("npm run publish");
 console.log();
 
-// 9. Commit
-console.log("Committing changelog updates...");
-stageChangedFiles();
-run(`git commit -m "Add [Unreleased] section for next cycle"`);
-console.log();
-
-// 10. Push
+// 9. Push
 console.log("Pushing to remote...");
 run("git push origin main");
 run(`git push origin v${version}`);

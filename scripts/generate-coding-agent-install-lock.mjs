@@ -16,7 +16,6 @@ const installPackageName = "@earendil-works/pi-coding-agent-install";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
 	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
-	["zeromq@6.5.0", "install builds native ZeroMQ bindings required by the IPython kernel host"],
 ]);
 
 const args = new Set(process.argv.slice(2));

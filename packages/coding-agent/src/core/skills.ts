@@ -60,7 +60,9 @@ function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
 			if (patterns.length > 0) {
 				ig.add(patterns);
 			}
-		} catch {}
+		} catch {
+			// An unreadable ignore file contributes no patterns; the scan continues.
+		}
 	}
 }
 
@@ -71,7 +73,9 @@ export interface SkillFrontmatter {
 	[key: string]: unknown;
 }
 
-export interface Skill {
+export type SkillKind = "markdown" | "python";
+
+interface BaseSkill {
 	name: string;
 	description: string;
 	filePath: string;
@@ -79,6 +83,18 @@ export interface Skill {
 	sourceInfo: SourceInfo;
 	disableModelInvocation: boolean;
 }
+
+export interface MarkdownSkill extends BaseSkill {
+	kind: "markdown";
+	python?: undefined;
+}
+
+export interface PythonSkill extends BaseSkill {
+	kind: "python";
+	python: SkillPythonMetadata;
+}
+
+export type Skill = MarkdownSkill | PythonSkill;
 
 /** Metadata for a Python skill package installable into the IPython kernel. */
 export interface SkillPythonMetadata {
@@ -92,22 +108,83 @@ export interface PythonSkillRuntimeInfo extends SkillPythonMetadata {
 	name: string;
 }
 
-/** Collect Python skill runtime metadata when skills carry optional python metadata. */
-export function getPythonSkillRuntimeInfo(skills: readonly Skill[]): PythonSkillRuntimeInfo[] {
-	return skills.flatMap((skill) => {
-		const python = (skill as Skill & { python?: SkillPythonMetadata }).python;
-		if (!python) {
-			return [];
+function pythonImportNameForSkill(name: string): string {
+	return name.replaceAll("-", "_");
+}
+
+function isValidPythonImportName(name: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+/**
+ * A skill is Python only when both halves are present: a pyproject.toml AND the
+ * importable package it declares. A pyproject without src/<import>/__init__.py
+ * would install into the kernel and then fail at import time, so it degrades to
+ * a markdown skill with a diagnostic instead.
+ */
+function detectPythonSkill(
+	skillDir: string,
+	name: string,
+	diagnostics: ResourceDiagnostic[],
+): SkillPythonMetadata | null {
+	const pyprojectPath = join(skillDir, "pyproject.toml");
+	if (!existsSync(pyprojectPath)) {
+		return null;
+	}
+
+	try {
+		if (!statSync(pyprojectPath).isFile()) {
+			return null;
 		}
-		return [
-			{
-				name: skill.name,
-				importName: python.importName,
-				packagePath: python.packagePath,
-				pyprojectPath: python.pyprojectPath,
-			},
-		];
-	});
+	} catch {
+		return null;
+	}
+
+	const importName = pythonImportNameForSkill(name);
+	if (!isValidPythonImportName(importName)) {
+		diagnostics.push({
+			type: "warning",
+			message: `python skill import name "${importName}" is invalid`,
+			path: pyprojectPath,
+		});
+		return null;
+	}
+
+	const packageInitPath = join(skillDir, "src", importName, "__init__.py");
+	try {
+		if (!statSync(packageInitPath).isFile()) {
+			diagnostics.push({
+				type: "warning",
+				message: `python skill package src/${importName}/__init__.py not found`,
+				path: pyprojectPath,
+			});
+			return null;
+		}
+	} catch {
+		diagnostics.push({
+			type: "warning",
+			message: `python skill package src/${importName}/__init__.py not found`,
+			path: pyprojectPath,
+		});
+		return null;
+	}
+
+	return {
+		importName,
+		packagePath: skillDir,
+		pyprojectPath,
+	};
+}
+
+export function getPythonSkillRuntimeInfo(skills: readonly Skill[]): PythonSkillRuntimeInfo[] {
+	return skills
+		.filter((skill): skill is PythonSkill => skill.kind === "python")
+		.map((skill) => ({
+			name: skill.name,
+			importName: skill.python.importName,
+			packagePath: skill.python.packagePath,
+			pyprojectPath: skill.python.pyprojectPath,
+		}));
 }
 
 export interface LoadSkillsResult {
@@ -299,7 +376,9 @@ function loadSkillsFromDirInternal(
 			}
 			diagnostics.push(...result.diagnostics);
 		}
-	} catch {}
+	} catch {
+		// An unreadable directory yields whatever was collected before it.
+	}
 
 	return { skills, diagnostics };
 }
@@ -361,15 +440,18 @@ function loadSkillFromFile(
 		return { skill: null, diagnostics };
 	}
 
+	const python = basename(filePath) === "SKILL.md" ? detectPythonSkill(skillDir, name, diagnostics) : null;
+	const baseSkill: BaseSkill = {
+		name,
+		description,
+		filePath,
+		baseDir: skillDir,
+		sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
+		disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+	};
+
 	return {
-		skill: {
-			name,
-			description,
-			filePath,
-			baseDir: skillDir,
-			sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
-			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
-		},
+		skill: python ? { ...baseSkill, kind: "python", python } : { ...baseSkill, kind: "markdown" },
 		diagnostics,
 	};
 }
@@ -391,7 +473,8 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
 
 	const lines = [
 		"\n\nThe following skills provide specialized instructions for specific tasks.",
-		"Use the read tool to load a skill's file when the task matches its description.",
+		"Use ipython to inspect a skill's file when the task matches its description.",
+		"Skills with a python_import are prepared in the persistent Python kernel when available and can be called directly by that import name.",
 		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
 		"",
 		"<available_skills>",
@@ -400,6 +483,10 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
 	for (const skill of visibleSkills) {
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
+		lines.push(`    <type>${skill.kind}</type>`);
+		if (skill.kind === "python") {
+			lines.push(`    <python_import>${escapeXml(skill.python.importName)}</python_import>`);
+		}
 		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
 		lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
 		lines.push("  </skill>");

@@ -41,12 +41,27 @@ import {
 import {
 	extractAnsiCode,
 	getGraphemeCellRange,
-	getOsc8LinkAtColumn,
 	getWordSegmenter,
 	sliceByColumn,
 	stripTerminalSequences,
+	urlAtColumn,
 	visibleWidth,
 } from "./utils.ts";
+
+/**
+ * A clicked target is opened through the platform opener, and transcript text is
+ * attacker-influenced, so only http(s) without control characters may be handed over.
+ */
+function toOpenableUrl(line: string, column: number): string | undefined {
+	const url = urlAtColumn(line, column);
+	if (url === undefined || /\p{Cc}/u.test(url)) return undefined;
+	try {
+		const parsed = new URL(url);
+		return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 const ENTER_ALT_SCREEN = "\x1b[?1049h";
 const EXIT_ALT_SCREEN = "\x1b[?1049l";
@@ -1083,7 +1098,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.selectionDragged = false;
 		this.pressedUrl = range
 			? undefined
-			: getOsc8LinkAtColumn(
+			: toOpenableUrl(
 					this.previousScreen[Math.max(0, Math.min(this.terminal.rows - 1, event.y))] ?? "",
 					Math.max(0, Math.min(this.terminal.columns - 1, event.x)),
 				);

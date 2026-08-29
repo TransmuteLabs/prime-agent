@@ -1,10 +1,16 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ServiceTier } from "@earendil-works/pi-ai";
+import { supportsFastMode } from "@earendil-works/pi-ai";
 import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
+import type { AgentSessionMessageController } from "./agent-messages.ts";
+import type { AgentObserveController } from "./agent-observe.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
+import type { AgentAutonomousConfig } from "./autonomous.ts";
+import type { AgentRlmHeartbeatController } from "./cron-jobs.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { McpManager } from "./mcp/mcp-manager.ts";
@@ -14,6 +20,7 @@ import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
+import type { SubagentRuntimeHost } from "./rlm-runtime.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import { time } from "./timings.ts";
@@ -23,6 +30,7 @@ import {
 	createEditTool,
 	createFindTool,
 	createGrepTool,
+	createIpythonTool,
 	createLsTool,
 	createPowerShellTool,
 	createReadOnlyTools,
@@ -87,6 +95,34 @@ export interface CreateAgentSessionOptions {
 	mcpManager?: McpManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+
+	/** Provider service tier. Defaults to the session's persisted tier, else the settings default. */
+	serviceTier?: ServiceTier;
+	/** Tool names active at session start. Overrides the derivation from `tools`/`noTools`. */
+	initialActiveToolNames?: string[];
+	/** Hard allowlist of tool names for the whole session. Overrides the derivation from `tools`. */
+	allowedToolNames?: string[];
+	/** Expose the goals surface. Default: false only when `noTools: "all"` and no explicit `tools`. */
+	includeGoals?: boolean;
+	/** Expose the compact skill. Default: from the compaction-agent setting. */
+	includeCompactSkill?: boolean;
+	agentMessageController?: AgentSessionMessageController;
+	agentObserveController?: AgentObserveController;
+	rlmHeartbeatController?: AgentRlmHeartbeatController;
+	/** Subagent nesting depth; 0 is a top-level session. */
+	rlmDepth?: number;
+	rlmMaxDepth?: number;
+	rlmSessionDir?: string;
+	rlmParentNodeId?: string;
+	rlmParentAgent?: string;
+	subagentRuntimeHost?: SubagentRuntimeHost;
+	/** Boot the IPython kernel at session creation instead of on first call. */
+	prewarmIpythonKernel?: boolean;
+	autonomous?: AgentAutonomousConfig;
+	/** Run auto-refine synchronously at the turn boundary instead of after agent_end. */
+	serializedRefine?: boolean;
+	/** Goal seeded into a new top-level session (rlmDepth 0). */
+	initialGoal?: { objective: string; tokenBudget?: number };
 }
 
 /** Result from createAgentSession */
@@ -101,6 +137,7 @@ export interface CreateAgentSessionResult {
 
 // Re-exports
 
+export type { AgentSessionRuntimeConfig } from "./agent-session-config.ts";
 export * from "./agent-session-runtime.ts";
 export type {
 	ExtensionAPI,
@@ -127,6 +164,7 @@ export {
 	createWriteTool,
 	createGrepTool,
 	createFindTool,
+	createIpythonTool,
 	createLsTool,
 	createPowerShellTool,
 };
@@ -187,7 +225,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		options.mcpManager ??
 		new McpManager({
 			authStorage: modelRuntime.authStorage,
-			getUserServers: () => settingsManager.getMcpServers(),
+			// MCP servers execute local processes: only user/global settings may declare them.
+			getUserServers: () => settingsManager.getGlobalMcpServers(),
 		});
 	if (!resourceLoader) {
 		resourceLoader = new DefaultResourceLoader({
@@ -210,15 +249,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		time("resourceLoader.reload");
 	}
 
-	// Check if session has existing data to restore
 	const existingSession = sessionManager.buildSessionContext();
 	const hasExistingSession = existingSession.messages.length > 0;
 	const hasThinkingEntry = sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
+	const hasServiceTierEntry = sessionManager.getBranch().some((entry) => entry.type === "service_tier_change");
 
 	let model = options.model;
 	let modelFallbackMessage: string | undefined;
 
-	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && existingSession.model) {
 		const restoredModel = modelRuntime.getModel(existingSession.model.provider, existingSession.model.modelId);
 		if (restoredModel && modelRuntime.hasConfiguredAuth(restoredModel.provider)) {
@@ -229,7 +267,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 	}
 
-	// If still no model, use findInitialModel (checks settings default, then provider defaults)
 	if (!model) {
 		const result = await findInitialModel({
 			scopedModels: [],
@@ -250,7 +287,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	let thinkingLevel = options.thinkingLevel;
 
-	// If session has data, restore thinking level from it
 	if (thinkingLevel === undefined && hasExistingSession) {
 		thinkingLevel = hasThinkingEntry
 			? (existingSession.thinkingLevel as ThinkingLevel)
@@ -268,32 +304,38 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
 	}
 
-	// Clamp to model capabilities
 	if (!model) {
 		thinkingLevel = "off";
 	} else {
 		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
 	}
 
+	const serviceTierPreference =
+		options.serviceTier ??
+		(hasServiceTierEntry ? existingSession.serviceTier : settingsManager.getDefaultServiceTier());
+	// A model without fast-mode support must not carry a priority tier into the request.
+	const serviceTier =
+		serviceTierPreference === "priority" && (!model || !supportsFastMode(model)) ? "default" : serviceTierPreference;
+
 	const defaultActiveToolNames: ToolName[] = ["ipython"];
 	const configuredDefaultToolNames = settingsManager.getDefaultTools();
-	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
+	const allowedToolNames = options.allowedToolNames ?? options.tools ?? (options.noTools === "all" ? [] : undefined);
+	const includeGoals = options.includeGoals ?? (options.tools !== undefined || options.noTools !== "all");
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
 	const initialActiveToolNames = (
-		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? defaultActiveToolNames))
+		options.initialActiveToolNames ??
+		options.tools ??
+		(options.noTools ? [] : (configuredDefaultToolNames ?? defaultActiveToolNames))
 	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;
 
-	// Create convertToLlm wrapper that filters images if blockImages is enabled (defense-in-depth)
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] => {
 		const converted = convertToLlm(messages);
-		// Check setting dynamically so mid-session changes take effect
 		if (!settingsManager.getBlockImages()) {
 			return converted;
 		}
-		// Filter out ImageContent from all messages, replacing with text placeholder
 		return converted.map((msg) => {
 			if (msg.role === "user" || msg.role === "toolResult") {
 				const content = msg.content;
@@ -306,7 +348,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 							)
 							.filter(
 								(c, i, arr) =>
-									// Dedupe consecutive "Image reading is disabled." texts
 									!(
 										c.type === "text" &&
 										c.text === "Image reading is disabled." &&
@@ -330,6 +371,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			systemPrompt: "",
 			model,
 			thinkingLevel,
+			serviceTier,
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
@@ -393,7 +435,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 	});
 
-	// Restore messages if session has existing data
 	if (hasExistingSession) {
 		agent.state.messages = existingSession.messages;
 		if (!hasThinkingEntry) {
@@ -407,11 +448,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager.appendThinkingLevelChange(thinkingLevel);
 	}
 
+	if (!hasServiceTierEntry) {
+		sessionManager.appendServiceTierChange(serviceTierPreference);
+	}
+
 	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settingsManager,
+		serviceTierPreference,
 		cwd,
+		// Only the explicit dir — the default may not match injected custom storage.
+		agentDir: options.agentDir,
 		scopedModels: options.scopedModels,
 		resourceLoader,
 		customTools: options.customTools,
@@ -420,8 +468,23 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		initialActiveToolNames,
 		allowedToolNames,
 		excludedToolNames,
+		includeGoals,
+		includeCompactSkill: options.includeCompactSkill,
+		rlmHeartbeatController: options.rlmHeartbeatController,
+		agentMessageController: options.agentMessageController,
+		agentObserveController: options.agentObserveController,
 		extensionRunnerRef,
+		rlmDepth: options.rlmDepth,
+		rlmMaxDepth: options.rlmMaxDepth,
+		rlmSessionDir: options.rlmSessionDir,
+		rlmParentNodeId: options.rlmParentNodeId,
+		rlmParentAgent: options.rlmParentAgent,
+		subagentRuntimeHost: options.subagentRuntimeHost,
 		sessionStartEvent: options.sessionStartEvent,
+		prewarmIpythonKernel: options.prewarmIpythonKernel,
+		autonomous: options.autonomous,
+		serializedRefine: options.serializedRefine,
+		initialGoal: options.initialGoal,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

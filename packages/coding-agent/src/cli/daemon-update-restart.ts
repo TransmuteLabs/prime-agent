@@ -6,7 +6,7 @@ import lockfile from "proper-lockfile";
 import { ENV_AGENT_DIR, SELF_UPDATE_INTERACTIVE_CHILD_ENV } from "../config.ts";
 import { ORPHAN_PROCESS_JOURNAL_ENV } from "../core/orphan-process-journal.ts";
 import { getProcessStartId, SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../core/session-lease.ts";
-import { defaultDaemonSocketDir, defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.ts";
+import { defaultDaemonSocketDir, defaultDaemonSocketPath, normalizeSocketPath } from "../modes/daemon/daemon-socket.ts";
 import {
 	DAEMON_WORKER_ACTIVE_SESSION_ID_ENV,
 	DAEMON_WORKER_RECOVERY_JOURNAL_ENV,
@@ -95,8 +95,7 @@ export interface AcquireDaemonUpdateRestartCoordinatorOptions {
 }
 
 export function resolveDaemonUpdateRestartSocketPath(socketPath?: string): string {
-	const selectedSocketPath = socketPath ?? defaultDaemonSocketPath();
-	return process.platform === "win32" ? selectedSocketPath : resolve(selectedSocketPath);
+	return normalizeSocketPath(socketPath ?? defaultDaemonSocketPath());
 }
 
 const TERMINAL_PHASES: ReadonlySet<DaemonUpdateRestartPhase> = new Set(["complete", "skipped", "failed"]);
@@ -153,8 +152,7 @@ function statusLivenessId(status: DaemonUpdateRestartStatus): string {
 }
 
 function socketKey(socketPath: string): string {
-	const normalized = process.platform === "win32" ? socketPath.toLowerCase() : resolve(socketPath);
-	return createHash("sha256").update(normalized).digest("hex");
+	return createHash("sha256").update(normalizeSocketPath(socketPath)).digest("hex");
 }
 
 function writeJsonAtomically(path: string, value: unknown): void {
@@ -247,7 +245,6 @@ function readTerminalDaemonUpdateRestartStatus(path: string): DaemonUpdateRestar
 
 export class DaemonUpdateRestartStatusWriter {
 	private status: DaemonUpdateRestartStatus;
-
 	private readonly path: string;
 
 	constructor(path: string, requestId: string, socketPath: string) {
@@ -412,7 +409,6 @@ function readCoordinatorRecord(path: string): DaemonUpdateRestartCoordinatorReco
 
 export class DaemonUpdateRestartCoordinatorLease {
 	private released = false;
-
 	readonly record: DaemonUpdateRestartCoordinatorRecord;
 	private readonly registryDir: string;
 	private readonly path: string;

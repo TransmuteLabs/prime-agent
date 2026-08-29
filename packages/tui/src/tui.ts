@@ -313,6 +313,7 @@ export interface TUI extends Component {
 	stop(options?: TuiStopOptions): void;
 	renderNow(force?: boolean): void;
 	requestRender(force?: boolean): void;
+	requestRenderPreservingViewport(): void;
 	addInputListener(listener: TuiInputListener): () => void;
 	removeInputListener(listener: TuiInputListener): void;
 	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
@@ -793,6 +794,15 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.renderRequested) return;
 		this.renderRequested = true;
 		process.nextTick(() => this.scheduleRender());
+	}
+
+	/**
+	 * Request a render that keeps the user anchored at their current scroll
+	 * position. Renderers without scrollback of their own (alt screen) have
+	 * nothing to preserve and fall back to a plain render.
+	 */
+	requestRenderPreservingViewport(): void {
+		this.requestRender();
 	}
 
 	private requestImmediateRender(): void {

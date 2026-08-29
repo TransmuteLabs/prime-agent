@@ -15,6 +15,7 @@ function makeSession(
 		messageCount: overrides.messageCount ?? 1,
 		firstMessage: overrides.firstMessage ?? "(no messages)",
 		allMessagesText: overrides.allMessagesText,
+		rlmDepth: overrides.rlmDepth ?? 0,
 	};
 }
 

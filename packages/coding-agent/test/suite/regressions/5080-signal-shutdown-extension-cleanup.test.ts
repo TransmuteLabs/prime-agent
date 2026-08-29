@@ -1,16 +1,15 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import chalk from "chalk";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { APP_NAME } from "../../../src/config.ts";
-import type { SessionManager } from "../../../src/core/session-manager.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import type { ResumeHintStats } from "../../../src/modes/interactive/resume-hint.ts";
 
 // Regression for https://github.com/earendil-works/pi/issues/5080
 //
 // On SIGTERM/SIGHUP the graceful shutdown must emit `session_shutdown`
-// (runtimeHost.dispose) BEFORE touching the terminal. Extension teardown such
+// (agentConnection.dispose) BEFORE touching the terminal. Extension teardown such
 // as removing a socket does not write to the tty, so it must not be skipped if
 // a later terminal-restore write fails on a dead or stalled terminal. The
 // interactive quit path (Ctrl+D, /quit) keeps the opposite order to preserve
@@ -19,11 +18,11 @@ import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode
 type ShutdownThis = {
 	isShuttingDown: boolean;
 	unregisterSignalHandlers: () => void;
-	runtimeHost: { dispose: () => Promise<void> };
+	agentConnection: { dispose: () => Promise<void>; getSessionStats: () => Promise<ResumeHintStats | undefined> };
+	options: { onShutdown?: () => Promise<void> };
+	clearCtrlCExitHint: (options: { render?: boolean }) => void;
 	ui: { terminal: { drainInput: (ms: number) => Promise<void> } };
-	themeController: { disableAutoSync: () => void };
 	stop: () => void;
-	sessionManager: SessionManager;
 };
 
 type InteractiveModePrototypeWithShutdown = {
@@ -36,14 +35,8 @@ const originalStdoutIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isT
 
 class ProcessExitError extends Error {}
 
-function createSessionManager(options: { sessionFile?: string } = {}): SessionManager {
-	return {
-		isPersisted: () => options.sessionFile !== undefined,
-		getSessionFile: () => options.sessionFile,
-		getSessionId: () => "test-session",
-		getSessionDir: () => "/tmp/pi-sessions",
-		usesDefaultSessionDir: () => true,
-	} as unknown as SessionManager;
+function createStats(sessionFile: string): ResumeHintStats {
+	return { sessionId: "test-session", sessionFile, userMessages: 1 };
 }
 
 function createTempFile(): string {
@@ -66,15 +59,18 @@ function restoreStdoutIsTTY(): void {
 	}
 }
 
-function createContext(order: string[], sessionManager = createSessionManager()): ShutdownThis {
+function createContext(order: string[], sessionStats?: ResumeHintStats): ShutdownThis {
 	return {
 		isShuttingDown: false,
 		unregisterSignalHandlers: vi.fn(),
-		runtimeHost: {
+		agentConnection: {
 			dispose: vi.fn(async () => {
 				order.push("dispose");
 			}),
+			getSessionStats: vi.fn(async () => sessionStats),
 		},
+		options: {},
+		clearCtrlCExitHint: vi.fn(),
 		ui: {
 			terminal: {
 				drainInput: vi.fn(async () => {
@@ -82,11 +78,9 @@ function createContext(order: string[], sessionManager = createSessionManager())
 				}),
 			},
 		},
-		themeController: { disableAutoSync: vi.fn() },
 		stop: vi.fn(() => {
 			order.push("stop");
 		}),
-		sessionManager,
 	};
 }
 
@@ -136,18 +130,16 @@ describe("InteractiveMode.shutdown ordering (#5080)", () => {
 		vi.spyOn(process, "exit").mockImplementation((() => {
 			throw new ProcessExitError();
 		}) as typeof process.exit);
-		const stdoutWrite = vi
-			.spyOn(process.stdout, "write")
-			.mockImplementation((() => true) as typeof process.stdout.write);
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
 		setStdoutIsTTY(true);
 		const order: string[] = [];
-		const context = createContext(order, createSessionManager({ sessionFile: createTempFile() }));
+		const context = createContext(order, createStats(createTempFile()));
 
 		await callShutdown(context);
 
 		expect(order).toEqual(["drainInput", "stop", "dispose"]);
-		expect(stdoutWrite).toHaveBeenCalledWith(
-			`${chalk.dim("To resume this session:")} ${APP_NAME} --session test-session\n`,
+		expect(log.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			`Resume this session with: ${APP_NAME} --resume test-session`,
 		);
 	});
 
@@ -155,17 +147,15 @@ describe("InteractiveMode.shutdown ordering (#5080)", () => {
 		vi.spyOn(process, "exit").mockImplementation((() => {
 			throw new ProcessExitError();
 		}) as typeof process.exit);
-		const stdoutWrite = vi
-			.spyOn(process.stdout, "write")
-			.mockImplementation((() => true) as typeof process.stdout.write);
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
 		setStdoutIsTTY(true);
 		const order: string[] = [];
-		const context = createContext(order, createSessionManager({ sessionFile: createTempFile() }));
+		const context = createContext(order, createStats(createTempFile()));
 
 		await callShutdown(context, { fromSignal: true });
 
-		for (const call of stdoutWrite.mock.calls) {
-			expect(call[0]).not.toContain("To resume this session:");
+		for (const call of log.mock.calls) {
+			expect(String(call[0])).not.toContain("Resume this session with:");
 		}
 	});
 
@@ -180,6 +170,6 @@ describe("InteractiveMode.shutdown ordering (#5080)", () => {
 		await callShutdown(context, { fromSignal: true });
 
 		expect(order).toEqual([]);
-		expect(context.runtimeHost.dispose).not.toHaveBeenCalled();
+		expect(context.agentConnection.dispose).not.toHaveBeenCalled();
 	});
 });

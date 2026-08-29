@@ -1,3 +1,53 @@
-// TODO(prime-port): zai-test-model.test.ts dropped in the prime-agent -> pi 0.84.1 migration:
-// it tests 0.7-era behavior/APIs that changed or were not ported in pi 0.84.
-// Restore against the pi 0.84 APIs when the corresponding feature is reconciled.
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Model } from "../src/types.ts";
+
+let models: Model<"openai-completions">[] = [];
+
+vi.mock("../src/compat.ts", () => ({
+	getModels: () => models,
+}));
+
+import { getZaiTestModel } from "./zai-test-model.ts";
+
+function createZaiModel(id: string, contextWindow: number, zaiToolStream = true): Model<"openai-completions"> {
+	return {
+		id,
+		name: id,
+		api: "openai-completions",
+		provider: "zai",
+		baseUrl: "https://api.z.ai/api/coding/paas/v4",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow,
+		maxTokens: 4096,
+		compat: { zaiToolStream },
+	};
+}
+
+describe("getZaiTestModel", () => {
+	beforeEach(() => {
+		models = [
+			createZaiModel("glm-4.7", 204800),
+			createZaiModel("glm-5-turbo", 200000),
+			createZaiModel("glm-5.2", 1000000),
+		];
+	});
+
+	it("prefers the current general-purpose model", () => {
+		expect(getZaiTestModel().id).toBe("glm-5.2");
+	});
+
+	it("selects the smallest live context window for overflow tests", () => {
+		const model = getZaiTestModel({ smallestContextWindow: true });
+
+		expect(model.id).toBe("glm-5-turbo");
+		expect(model.contextWindow).toBe(200000);
+	});
+
+	it("selects a tool-stream-capable model when required", () => {
+		models = [createZaiModel("glm-5.2", 1000000, false), createZaiModel("glm-4.7", 204800)];
+
+		expect(getZaiTestModel({ toolStream: true }).id).toBe("glm-4.7");
+	});
+});

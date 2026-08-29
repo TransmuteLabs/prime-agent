@@ -1,4 +1,3 @@
-import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } from "../model-runtime-test-utils.ts";
 /**
  * Local test harness for the new coding-agent test suite.
  */
@@ -15,14 +14,20 @@ import type {
 	Model,
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
-import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
+import type { AgentSessionMessageController } from "../../src/core/agent-messages.ts";
+import type { AgentObserveController } from "../../src/core/agent-observe.ts";
+import { AgentSession, type AgentSessionEvent, type AutoRefineReviewer } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import type { AgentAutonomousConfig } from "../../src/core/autonomous.ts";
 import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
 import { convertToLlm } from "../../src/core/messages.ts";
+import type { ModelRuntime } from "../../src/core/model-runtime.ts";
+import type { SubagentRuntimeHost } from "../../src/core/rlm-runtime.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
+import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } from "../model-runtime-test-utils.ts";
 import {
 	type CreateTestExtensionsResultInput,
 	createTestExtensionsResult,
@@ -61,6 +66,8 @@ export function getAssistantTexts(harness: Harness): string[] {
 }
 
 export interface HarnessOptions {
+	api?: string;
+	provider?: string;
 	models?: FauxModelDefinition[];
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
@@ -70,8 +77,19 @@ export interface HarnessOptions {
 	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
+	agentObserveController?: AgentObserveController;
+	agentMessageController?: AgentSessionMessageController;
+	subagentRuntimeHost?: SubagentRuntimeHost;
+	/** Back the session with a session file, which is what local harness refinement needs. */
+	persistSession?: boolean;
+	rlmDepth?: number;
+	rlmMaxDepth?: number;
 	withConfiguredAuth?: boolean;
 	modelsJson?: Record<string, unknown>;
+	autonomous?: AgentAutonomousConfig;
+	autoRefineReviewer?: AutoRefineReviewer;
+	serializedRefine?: boolean;
+	initialGoal?: { objective: string; tokenBudget?: number };
 }
 
 export interface Harness {
@@ -79,6 +97,8 @@ export interface Harness {
 	sessionManager: SessionManager;
 	settingsManager: SettingsManager;
 	authStorage: AuthStorage;
+	/** Providers are registered per ModelRuntime instance; sessions built outside the harness must reuse this one. */
+	modelRuntime: ModelRuntime;
 	faux: FauxProviderRegistration;
 	models: [Model<string>, ...Model<string>[]];
 	getModel(): Model<string>;
@@ -101,6 +121,8 @@ function createTempDir(): string {
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
+		api: options.api,
+		provider: options.provider,
 		models: options.models,
 	});
 	fauxProvider.setResponses([]);
@@ -109,7 +131,9 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	const sessionManager = SessionManager.inMemory();
+	const sessionManager = options.persistSession
+		? SessionManager.create(tempDir, join(tempDir, "sessions"))
+		: SessionManager.inMemory();
 	const settingsManager = SettingsManager.inMemory(options.settings);
 
 	const authStorage = AuthStorage.inMemory();
@@ -186,11 +210,20 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		cwd: tempDir,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
+		agentObserveController: options.agentObserveController,
+		agentMessageController: options.agentMessageController,
+		subagentRuntimeHost: options.subagentRuntimeHost,
 		baseToolsOverride: toolMap,
 		initialActiveToolNames: options.initialActiveToolNames,
 		allowedToolNames: options.allowedToolNames,
 		excludedToolNames: options.excludedToolNames,
+		rlmDepth: options.rlmDepth,
+		rlmMaxDepth: options.rlmMaxDepth,
 		extensionRunnerRef,
+		autonomous: options.autonomous,
+		autoRefineReviewer: options.autoRefineReviewer,
+		serializedRefine: options.serializedRefine,
+		initialGoal: options.initialGoal,
 	});
 
 	const events: AgentSessionEvent[] = [];
@@ -203,6 +236,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		sessionManager,
 		settingsManager,
 		authStorage,
+		modelRuntime: getModelRuntime(modelRegistry),
 		faux: fauxProvider,
 		models: fauxProvider.models,
 		getModel: fauxProvider.getModel,
@@ -218,7 +252,9 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			session.dispose();
 			fauxProvider.unregister();
 			if (existsSync(tempDir)) {
-				rmSync(tempDir, { recursive: true });
+				// Spawned fixture processes may still be flushing their final registry
+				// writes; retry briefly instead of failing the suite on ENOTEMPTY.
+				rmSync(tempDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 50 });
 			}
 		},
 	};

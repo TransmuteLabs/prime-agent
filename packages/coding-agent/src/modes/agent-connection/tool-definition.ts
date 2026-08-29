@@ -16,8 +16,8 @@ export function createAgentConnectionToolDefinition(
 		...(definition.promptGuidelines !== undefined ? { promptGuidelines: [...definition.promptGuidelines] } : {}),
 		parameters: definition.parameters,
 		...(definition.renderShell !== undefined ? { renderShell: definition.renderShell } : {}),
-		...("replayBuiltInToolName" in definition && definition.replayBuiltInToolName !== undefined
-			? { replayBuiltInToolName: String(definition.replayBuiltInToolName) }
+		...(definition.replayBuiltInToolName !== undefined
+			? { replayBuiltInToolName: definition.replayBuiltInToolName }
 			: {}),
 	};
 }

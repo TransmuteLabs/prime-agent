@@ -1,21 +1,90 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import { Container } from "@earendil-works/pi-tui";
-import { describe, expect, test, vi } from "vitest";
-import type { SessionEntry } from "../src/core/session-manager.ts";
+import stripAnsi from "strip-ansi";
+import { beforeAll, describe, expect, test, vi } from "vitest";
+import { createCompactionSummaryMessage } from "../src/core/messages.ts";
+import { AgentActivityTracker } from "../src/modes/interactive/agent-activity.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
-import { stripAnsi } from "../src/utils/ansi.ts";
+
+const USAGE: Usage = {
+	input: 10,
+	output: 20,
+	cacheRead: 30,
+	cacheWrite: 40,
+	totalTokens: 100,
+	cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.065, total: 0.125 },
+};
+
+const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+	this: unknown,
+	event: Record<string, unknown>,
+) => Promise<void>;
+
+const startCompactionLoader = Reflect.get(InteractiveMode.prototype, "startCompactionLoader") as (
+	this: unknown,
+	reason: string,
+	customInstructions?: string,
+) => void;
+
+const reserveIdleStatusLine = Reflect.get(InteractiveMode.prototype, "reserveIdleStatusLine") as (
+	this: unknown,
+) => void;
+
+/** The summary path reaches the notice helpers through `this`, so both travel with the fake. */
+function createSummaryRenderThis(showCostNotices: boolean) {
+	return {
+		chatContainer: new Container(),
+		toolOutputExpanded: false,
+		getMarkdownThemeWithSettings: () => undefined,
+		settingsManager: { getShowCacheMissNotices: () => showCostNotices },
+		addSummaryCostNotice: Reflect.get(InteractiveMode.prototype, "addSummaryCostNotice"),
+		addCompactionCostNotice: Reflect.get(InteractiveMode.prototype, "addCompactionCostNotice"),
+	};
+}
+
+function createFakeThis(overrides: Record<string, unknown> = {}) {
+	return {
+		isInitialized: true,
+		footer: { invalidate: vi.fn() },
+		updateConnectionStateFromEvent: vi.fn(),
+		activityTracker: new AgentActivityTracker(),
+		updateWorkingLoaderMessage: vi.fn(),
+		autoCompactionLoader: undefined,
+		retryLoader: undefined,
+		startCompactionLoader(this: Record<string, unknown>, reason: string, customInstructions?: string) {
+			startCompactionLoader.call(this, reason, customInstructions);
+		},
+		reserveIdleStatusLine(this: Record<string, unknown>) {
+			reserveIdleStatusLine.call(this);
+		},
+		workingVisible: true,
+		stopWorkingLoader: vi.fn(),
+		syncWorkingLoader: vi.fn(),
+		defaultEditor: {},
+		options: { tuiMode: "normal" },
+		idleStatus: { render: () => [""], invalidate: () => {} },
+		statusContainer: new Container(),
+		chatContainer: { clear: vi.fn() },
+		rebuildChatFromMessages: vi.fn(function (this: { chatContainer: { clear(): void } }) {
+			this.chatContainer.clear();
+			return Promise.resolve();
+		}),
+		addMessageToChat: vi.fn(),
+		refreshConnectionContextUsage: vi.fn().mockResolvedValue(undefined),
+		showError: vi.fn(),
+		showWarning: vi.fn(),
+		showStatus: vi.fn(),
+		settingsManager: { getShowTerminalProgress: () => false },
+		ui: { requestRender: vi.fn(), getClearOnShrink: () => false, terminal: { setProgress: vi.fn() } },
+		...overrides,
+	};
+}
 
 describe("InteractiveMode compaction events", () => {
+	beforeAll(() => initTheme("dark"));
+
 	test("uses the cache miss notice setting for compaction and branch summary costs", () => {
-		const usage: Usage = {
-			input: 10,
-			output: 20,
-			cacheRead: 30,
-			cacheWrite: 40,
-			totalTokens: 100,
-			cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.065, total: 0.125 },
-		};
 		const addCompactionCostNotice = Reflect.get(InteractiveMode.prototype, "addCompactionCostNotice") as (
 			this: { chatContainer: Container; settingsManager: { getShowCacheMissNotices(): boolean } },
 			notice: {
@@ -25,16 +94,15 @@ describe("InteractiveMode compaction events", () => {
 			},
 		) => void;
 
-		initTheme("dark");
 		const enabled = {
 			chatContainer: new Container(),
 			settingsManager: { getShowCacheMissNotices: () => true },
 		};
-		addCompactionCostNotice.call(enabled, { type: "compaction_cost", kind: "compaction", usage });
+		addCompactionCostNotice.call(enabled, { type: "compaction_cost", kind: "compaction", usage: USAGE });
 		addCompactionCostNotice.call(enabled, {
 			type: "compaction_cost",
 			kind: "branch_summary",
-			usage,
+			usage: USAGE,
 		});
 		const output = stripAnsi(enabled.chatContainer.render(120).join("\n"));
 		expect(output).toContain("Compaction: 100 tokens billed (~$0.13)");
@@ -44,182 +112,126 @@ describe("InteractiveMode compaction events", () => {
 			chatContainer: new Container(),
 			settingsManager: { getShowCacheMissNotices: () => false },
 		};
-		addCompactionCostNotice.call(disabled, { type: "compaction_cost", kind: "compaction", usage });
+		addCompactionCostNotice.call(disabled, { type: "compaction_cost", kind: "compaction", usage: USAGE });
 		expect(disabled.chatContainer.children).toHaveLength(0);
 	});
 
-	test("renders each compaction cost after its summary", () => {
-		const currentUsage: Usage = {
-			input: 10,
-			output: 20,
-			cacheRead: 30,
-			cacheWrite: 40,
-			totalTokens: 100,
-			cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.04, total: 0.1 },
-		};
-		const previousUsage: Usage = {
-			input: 1,
-			output: 2,
-			cacheRead: 3,
-			cacheWrite: 4,
-			totalTokens: 10,
-			cost: { input: 0.001, output: 0.002, cacheRead: 0.003, cacheWrite: 0.004, total: 0.01 },
-		};
-		const entries: SessionEntry[] = [
-			{
-				type: "compaction",
-				id: "current",
-				parentId: "previous",
-				timestamp: "2025-01-02T00:00:00Z",
-				summary: "current summary",
-				firstKeptEntryId: "kept",
-				tokensBefore: 200,
-				usage: currentUsage,
-			},
-			{
-				type: "compaction",
-				id: "previous",
-				parentId: null,
-				timestamp: "2025-01-01T00:00:00Z",
-				summary: "previous summary",
-				firstKeptEntryId: "kept",
-				tokensBefore: 100,
-				usage: previousUsage,
-			},
-		];
-		const fakeThis = { renderSessionItems: vi.fn() };
-		const renderSessionEntries = Reflect.get(InteractiveMode.prototype, "renderSessionEntries") as (
-			this: typeof fakeThis,
-			entries: SessionEntry[],
+	// A summary rebuilt from history is the only carrier of its own billing figure,
+	// so the cost notice has to come off the message rather than off the live event.
+	test("prices a summary rebuilt from session history", () => {
+		const addMessageToChat = Reflect.get(InteractiveMode.prototype, "addMessageToChat") as (
+			this: unknown,
+			message: unknown,
 		) => void;
+		const fakeThis = createSummaryRenderThis(true);
 
-		renderSessionEntries.call(fakeThis, entries);
-
-		expect(fakeThis.renderSessionItems).toHaveBeenCalledWith(
-			[
-				expect.objectContaining({ role: "compactionSummary", summary: "current summary" }),
-				{ type: "compaction_cost", kind: "compaction", usage: currentUsage },
-				expect.objectContaining({ role: "compactionSummary", summary: "previous summary" }),
-				{ type: "compaction_cost", kind: "compaction", usage: previousUsage },
-			],
-			{},
+		addMessageToChat.call(
+			fakeThis,
+			createCompactionSummaryMessage("summary", 123, "2025-01-02T00:00:00Z", undefined, undefined, USAGE),
 		);
+
+		const output = stripAnsi(fakeThis.chatContainer.render(120).join("\n"));
+		expect(output).toContain("Compacted from 123 tokens");
+		expect(output).toContain("Compaction: 100 tokens billed (~$0.13)");
 	});
 
-	test("renders retained entries and appends the latest summary cost at the bottom", async () => {
-		const usage: Usage = {
-			input: 10,
-			output: 20,
-			cacheRead: 30,
-			cacheWrite: 40,
-			totalTokens: 100,
-			cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.065, total: 0.125 },
-		};
-		const latestCompaction: SessionEntry = {
-			type: "compaction",
-			id: "latest",
-			parentId: "previous",
-			timestamp: "2025-01-02T00:00:00Z",
-			summary: "summary",
-			firstKeptEntryId: "kept",
-			tokensBefore: 123,
-			usage,
-		};
-		const previousCompaction: SessionEntry = {
-			type: "compaction",
-			id: "previous",
-			parentId: null,
-			timestamp: "2025-01-01T00:00:00Z",
-			summary: "previous summary",
-			firstKeptEntryId: "kept",
-			tokensBefore: 100,
-			usage,
-		};
-		const fakeThis = {
-			isInitialized: true,
-			footer: { invalidate: vi.fn() },
-			autoCompactionEscapeHandler: undefined as (() => void) | undefined,
-			autoCompactionLoader: undefined,
-			defaultEditor: {},
-			statusContainer: { clear: vi.fn() },
-			chatContainer: { clear: vi.fn() },
-			sessionManager: { buildContextEntries: vi.fn().mockReturnValue([latestCompaction, previousCompaction]) },
-			renderSessionEntries: vi.fn(),
-			addMessageToChat: vi.fn(),
-			addCompactionCostNotice: vi.fn(),
-			showError: vi.fn(),
-			showStatus: vi.fn(),
-			clearStatusIndicator: vi.fn(),
-			flushCompactionQueue: vi.fn().mockResolvedValue(undefined),
-			settingsManager: { getShowTerminalProgress: () => false },
-			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
-		};
+	test("omits the cost line for a summary that carries no usage", () => {
+		const addMessageToChat = Reflect.get(InteractiveMode.prototype, "addMessageToChat") as (
+			this: unknown,
+			message: unknown,
+		) => void;
+		const fakeThis = createSummaryRenderThis(true);
 
-		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
-			this: typeof fakeThis,
-			event: {
-				type: "compaction_end";
-				reason: "manual" | "threshold" | "overflow";
-				result: { tokensBefore: number; summary: string; usage?: Usage } | undefined;
-				aborted: boolean;
-				willRetry: boolean;
-				errorMessage?: string;
-			},
-		) => Promise<void>;
+		addMessageToChat.call(fakeThis, createCompactionSummaryMessage("summary", 123, "2025-01-02T00:00:00Z"));
+
+		const output = stripAnsi(fakeThis.chatContainer.render(120).join("\n"));
+		expect(output).toContain("Compacted from 123 tokens");
+		expect(output).not.toContain("tokens billed");
+	});
+
+	test("shows an automatic compaction loader for the full operation", async () => {
+		const statusContainer = new Container();
+		const fakeThis = createFakeThis({ statusContainer });
+
+		await handleEvent.call(fakeThis, { type: "compaction_start", reason: "threshold" });
+
+		expect(stripAnsi(statusContainer.render(80).join("\n"))).toContain("Auto-compacting");
+		expect(fakeThis.ui.requestRender).toHaveBeenCalled();
 
 		await handleEvent.call(fakeThis, {
 			type: "compaction_end",
-			reason: "manual",
-			result: {
-				tokensBefore: 123,
-				summary: "summary",
-				usage,
-			},
+			reason: "threshold",
+			result: undefined,
+			aborted: true,
+			willRetry: false,
+		});
+		expect(statusContainer.children).toHaveLength(0);
+	});
+
+	test.each([
+		{ name: "rebuilds successful compaction from its single persisted summary", refresh: "succeeds" },
+		{ name: "keeps stale chat and reports a failed post-compaction refresh", refresh: "fails" },
+	] as const)("$name", async ({ refresh }) => {
+		const fakeThis = createFakeThis(
+			refresh === "fails"
+				? { rebuildChatFromMessages: vi.fn().mockRejectedValue(new Error("context unavailable")) }
+				: {},
+		);
+
+		await handleEvent.call(fakeThis, {
+			type: "compaction_end",
+			reason: "requested",
+			result: { tokensBefore: 123, summary: "summary", usage: USAGE },
 			aborted: false,
 			willRetry: false,
 		});
 
-		expect(fakeThis.chatContainer.clear).toHaveBeenCalledTimes(1);
-		expect(fakeThis.renderSessionEntries).toHaveBeenCalledWith([previousCompaction]);
-		expect(fakeThis.addMessageToChat).toHaveBeenCalledTimes(1);
-		expect(fakeThis.addMessageToChat).toHaveBeenCalledWith(
-			expect.objectContaining({
-				role: "compactionSummary",
-				tokensBefore: 123,
-				summary: "summary",
-			}),
-		);
-		expect(fakeThis.addCompactionCostNotice).toHaveBeenCalledWith({
-			type: "compaction_cost",
-			kind: "compaction",
-			usage,
-		});
-		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
+		expect(fakeThis.chatContainer.clear).toHaveBeenCalledTimes(refresh === "succeeds" ? 1 : 0);
+		expect(fakeThis.rebuildChatFromMessages).toHaveBeenCalledOnce();
+		expect(fakeThis.addMessageToChat).not.toHaveBeenCalled();
+		if (refresh === "fails") {
+			expect(fakeThis.showError).toHaveBeenCalledWith(
+				"Compaction succeeded, but the transcript could not be refreshed: context unavailable",
+			);
+		} else {
+			expect(fakeThis.showError).not.toHaveBeenCalled();
+		}
 	});
 
-	test("preserves steering behavior when flushing into an active agent run", async () => {
-		const fakeThis = {
-			compactionQueuedMessages: [{ text: "change direction", mode: "steer" as const }],
-			session: {
-				clearQueue: vi.fn(),
-				prompt: vi.fn().mockResolvedValue(undefined),
-				steer: vi.fn().mockResolvedValue(undefined),
-				followUp: vi.fn().mockResolvedValue(undefined),
-			},
-			isExtensionCommand: vi.fn().mockReturnValue(false),
-			updatePendingMessagesDisplay: vi.fn(),
-			showError: vi.fn(),
-		};
+	test("shows manual warning-severity outcomes as warnings, not errors", async () => {
+		const fakeThis = createFakeThis();
 
-		const flushCompactionQueue = Reflect.get(InteractiveMode.prototype, "flushCompactionQueue") as (
-			this: typeof fakeThis,
-			options?: { willRetry?: boolean },
-		) => Promise<void>;
+		await handleEvent.call(fakeThis, {
+			type: "compaction_end",
+			reason: "manual",
+			result: undefined,
+			aborted: false,
+			willRetry: false,
+			errorMessage: "Session is too short to compact",
+			errorSeverity: "warning",
+		});
 
-		await flushCompactionQueue.call(fakeThis, { willRetry: false });
-
-		expect(fakeThis.session.prompt).toHaveBeenCalledWith("change direction", { streamingBehavior: "steer" });
-		expect(fakeThis.compactionQueuedMessages).toEqual([]);
+		expect(fakeThis.showWarning).toHaveBeenCalledWith("Session is too short to compact");
 		expect(fakeThis.showError).not.toHaveBeenCalled();
+	});
+
+	test("restores the compaction loader from state when no start event was seen", () => {
+		const statusContainer = new Container();
+		const fakeThis = createFakeThis({
+			statusContainer,
+			connectionState: { isCompacting: true },
+			isAgentCompacting() {
+				return true;
+			},
+			loadingAnimation: undefined,
+			workingVisible: true,
+			isAgentStreaming: () => false,
+			stopWorkingLoader: vi.fn(),
+			startWorkingLoader: vi.fn(),
+		});
+
+		(Reflect.get(InteractiveMode.prototype, "syncWorkingLoader") as (this: unknown) => void).call(fakeThis);
+
+		expect(stripAnsi(statusContainer.render(80).join("\n"))).toContain("Compacting context");
 	});
 });

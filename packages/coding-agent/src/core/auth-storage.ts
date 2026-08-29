@@ -41,6 +41,11 @@ import { isCommandConfigValue, resolveConfigValue, resolveConfigValueUncached } 
 
 type AuthStorageData = Record<string, Credential>;
 
+export type AuthStorageOptions = {
+	primeCliConfigPath?: string;
+	usePrimeCliConfig?: boolean;
+};
+
 type LockResult<T> = {
 	result: T;
 	next?: string;
@@ -100,6 +105,8 @@ type AuthSourceCandidate = {
 	label?: string;
 	identityFingerprint: string;
 	valueFingerprint?: string;
+	/** Deferred value fingerprint: resolving it may execute the user's key command. */
+	resolveValueFingerprint?: () => string | undefined;
 };
 
 /** Legacy interactive OAuth callback surface (pre-ProviderAuthInteraction). */
@@ -536,11 +543,13 @@ export class InMemoryAuthStorageBackend implements AuthStorageBackend {
 export class AuthStorage implements CredentialStore {
 	private storage: AuthStorageBackend;
 	private authPath: string | undefined;
+	private options: AuthStorageOptions;
 	private readState: AuthFileReadState;
 
-	private constructor(storage: AuthStorageBackend, authPath?: string) {
+	private constructor(storage: AuthStorageBackend, authPath?: string, options: AuthStorageOptions = {}) {
 		this.storage = storage;
 		this.authPath = authPath;
+		this.options = options;
 		this.readState =
 			authPath && sharedAuthFileReadState?.authPath === authPath ? sharedAuthFileReadState.readState : { data: {} };
 		if (authPath && !sharedAuthFileReadState) {
@@ -553,19 +562,22 @@ export class AuthStorage implements CredentialStore {
 		this.reload();
 	}
 
-	static create(authPath: string = join(getAgentDir(), "auth.json")): AuthStorage {
-		const normalizedAuthPath = normalizePath(authPath);
-		return new AuthStorage(new FileAuthStorageBackend(normalizedAuthPath), normalizedAuthPath);
+	static create(authPath?: string, options?: AuthStorageOptions): AuthStorage {
+		// Only the real agent auth file falls back to the user's Prime CLI credentials;
+		// an injected path is an isolated store and must not read them.
+		const authOptions = options ?? { usePrimeCliConfig: authPath === undefined };
+		const normalizedAuthPath = normalizePath(authPath ?? join(getAgentDir(), "auth.json"));
+		return new AuthStorage(new FileAuthStorageBackend(normalizedAuthPath), normalizedAuthPath, authOptions);
 	}
 
-	static fromStorage(storage: AuthStorageBackend): AuthStorage {
-		return new AuthStorage(storage);
+	static fromStorage(storage: AuthStorageBackend, options?: AuthStorageOptions): AuthStorage {
+		return new AuthStorage(storage, undefined, options);
 	}
 
-	static inMemory(data: AuthStorageData = {}): AuthStorage {
+	static inMemory(data: AuthStorageData = {}, options?: AuthStorageOptions): AuthStorage {
 		const storage = new InMemoryAuthStorageBackend();
 		storage.withLock(() => ({ result: undefined, next: JSON.stringify(data, null, 2) }));
-		return AuthStorage.fromStorage(storage);
+		return AuthStorage.fromStorage(storage, options);
 	}
 
 	private parseStorageData(content: string | undefined): AuthStorageData {
@@ -648,6 +660,14 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	async read(provider: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
+		// A runtime override has to reach the model runtime through this contract:
+		// resolving it only in the synchronous facade would let getApiKey report a
+		// key while every request built from the runtime still fails without one.
+		const runtimeCredential = this.getRuntimeOverrideCredential(provider);
+		if (runtimeCredential) {
+			options?.signal?.throwIfAborted();
+			return runtimeCredential;
+		}
 		const credential = (await this.readLatestData(options))[provider];
 		options?.signal?.throwIfAborted();
 		if (credential?.type !== "api_key") return credential;
@@ -680,6 +700,9 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	async delete(provider: string, options?: AuthOperationOptions): Promise<void> {
+		// Deletion is the store-contract logout; leaving the non-persistent override
+		// behind would keep answering read() with the credential just removed.
+		this.removeRuntimeApiKey(provider);
 		let latestData = this.readState.data;
 		await this.storage.withLockAsync(async (content) => {
 			const currentData = this.parseStorageData(content);
@@ -692,9 +715,17 @@ export class AuthStorage implements CredentialStore {
 
 	/** List credential metadata without resolving configured key values. */
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
-		const entries = Object.entries(await this.readLatestData(options));
+		const entries = new Map<string, CredentialInfo>(
+			Object.entries(await this.readLatestData(options)).map(([providerId, credential]) => [
+				providerId,
+				{ providerId, type: credential.type },
+			]),
+		);
 		options?.signal?.throwIfAborted();
-		return entries.map(([providerId, credential]) => ({ providerId, type: credential.type }));
+		for (const providerId of this.runtimeOverrides.keys()) {
+			if (this.getRuntimeOverrideCredential(providerId)) entries.set(providerId, { providerId, type: "api_key" });
+		}
+		return [...entries.values()];
 	}
 
 	// =========================================================================
@@ -733,6 +764,25 @@ export class AuthStorage implements CredentialStore {
 		this.persistProviderChange(provider, undefined);
 	}
 
+	/**
+	 * Remove a provider's credential with the disk write verified: throws on any
+	 * load or write failure instead of recording it, so callers can refuse to
+	 * proceed while the credential may still exist on disk. Disk-authoritative
+	 * and idempotent.
+	 */
+	removeVerified(provider: string): void {
+		const merged = this.storage.withLock((current) => {
+			const currentData = this.parseStorageData(current);
+			if (!(provider in currentData)) return { result: currentData };
+			const next: AuthStorageData = { ...currentData };
+			delete next[provider];
+			return { result: next, next: JSON.stringify(next, null, 2) };
+		});
+		this.updateReadState(merged, this.authPath ? getFileRevision(this.authPath) : undefined);
+		// Post-success only: a failed removal must not make a stale-marked credential selectable again.
+		this.clearStaleAuthSource(provider, "stored");
+	}
+
 	/** List all providers with stored credentials (synchronous snapshot). */
 	listProviderIds(): string[] {
 		return Object.keys(this.readState.data);
@@ -768,6 +818,7 @@ export class AuthStorage implements CredentialStore {
 		identityMaterial: string;
 		valueMaterial?: string;
 		label?: string;
+		resolveValueMaterial?: () => string | undefined;
 	}): AuthSourceCandidate {
 		return {
 			configured: options.configured,
@@ -780,6 +831,19 @@ export class AuthStorage implements CredentialStore {
 							options.source,
 							`value:${options.identityMaterial}\0${options.valueMaterial}`,
 						),
+					}
+				: {}),
+			...(options.resolveValueMaterial
+				? {
+						resolveValueFingerprint: () => {
+							const valueMaterial = options.resolveValueMaterial?.();
+							return valueMaterial === undefined
+								? undefined
+								: this.fingerprintAuthSource(
+										options.source,
+										`value:${options.identityMaterial}\0${valueMaterial}`,
+									);
+						},
 					}
 				: {}),
 		};
@@ -795,6 +859,15 @@ export class AuthStorage implements CredentialStore {
 			return `api_key:${credential.key}\0${resolveConfigValue(credential.key) ?? ""}`;
 		}
 		return `oauth:${credential.access}\0${credential.refresh}\0${credential.expires}`;
+	}
+
+	/** The effective non-persistent override for a provider, or undefined when unset or stale. */
+	private getRuntimeOverrideCredential(provider: string): Credential | undefined {
+		const apiKey = this.runtimeOverrides.get(provider);
+		if (!apiKey) return undefined;
+		const candidate = this.getRuntimeAuthCandidate(provider);
+		if (!candidate || this.isAuthSourceStale(provider, candidate)) return undefined;
+		return { type: "api_key", key: apiKey };
 	}
 
 	private getRuntimeAuthCandidate(provider: string): AuthSourceCandidate | undefined {
@@ -829,18 +902,32 @@ export class AuthStorage implements CredentialStore {
 		};
 	}
 
-	private getStoredAuthCandidate(provider: string): AuthSourceCandidate | undefined {
+	private getStoredAuthCandidate(
+		provider: string,
+		options?: { resolveCommandValue?: boolean; resolvedCommandValue?: string },
+	): AuthSourceCandidate | undefined {
 		const credential = this.readState.data[provider];
 		if (!credential) {
 			return undefined;
 		}
 		const isCommandApiKey =
 			credential.type === "api_key" && credential.key !== undefined && isCommandConfigValue(credential.key);
+		// A command credential is fingerprinted from the command's output, so the value
+		// material stays deferred: status queries must not run the command.
+		const commandValueMaterial =
+			isCommandApiKey && options?.resolvedCommandValue !== undefined
+				? `api_key:command:${credential.key}\0${options.resolvedCommandValue}`
+				: undefined;
 		return this.createAuthSourceCandidate({
 			configured: true,
 			source: "stored",
 			identityMaterial: isCommandApiKey ? `api_key:command:${credential.key}` : `${provider}:${credential.type}`,
-			valueMaterial: this.getStoredCredentialValueMaterial(credential),
+			valueMaterial:
+				commandValueMaterial ??
+				(isCommandApiKey && !options?.resolveCommandValue
+					? undefined
+					: this.getStoredCredentialValueMaterial(credential)),
+			resolveValueMaterial: isCommandApiKey ? () => this.getStoredCredentialValueMaterial(credential) : undefined,
 		});
 	}
 
@@ -852,7 +939,7 @@ export class AuthStorage implements CredentialStore {
 			return undefined;
 		}
 		const label = envKey ?? "ambient credentials";
-		const identityMaterial = envKey ?? provider;
+		const identityMaterial = envKey ?? this.getAmbientEnvironmentIdentityMaterial(provider);
 		return this.createAuthSourceCandidate({
 			configured: false,
 			source: "environment",
@@ -860,6 +947,38 @@ export class AuthStorage implements CredentialStore {
 			identityMaterial,
 			valueMaterial: `${identityMaterial}\0${apiKey}`,
 		});
+	}
+
+	/**
+	 * Ambient credentials resolve to a sentinel key, so identity must come from the
+	 * environment that selects them; otherwise a stale marker would outlive the switch.
+	 */
+	private getAmbientEnvironmentIdentityMaterial(provider: string): string {
+		if (provider === "amazon-bedrock") {
+			if (process.env.AWS_PROFILE) return `amazon-bedrock:profile:${process.env.AWS_PROFILE}`;
+			if (process.env.AWS_ACCESS_KEY_ID) {
+				return `amazon-bedrock:access-key:${process.env.AWS_ACCESS_KEY_ID}:${process.env.AWS_SECRET_ACCESS_KEY ?? ""}:${process.env.AWS_SESSION_TOKEN ?? ""}`;
+			}
+			if (process.env.AWS_BEARER_TOKEN_BEDROCK) {
+				return `amazon-bedrock:bearer:${process.env.AWS_BEARER_TOKEN_BEDROCK}`;
+			}
+			if (process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI) {
+				return `amazon-bedrock:ecs-relative:${process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI}`;
+			}
+			if (process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI) {
+				return `amazon-bedrock:ecs-full:${process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI}`;
+			}
+			if (process.env.AWS_WEB_IDENTITY_TOKEN_FILE) {
+				return `amazon-bedrock:web-identity:${process.env.AWS_WEB_IDENTITY_TOKEN_FILE}`;
+			}
+		}
+		if (provider === "google-vertex") {
+			const project = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT ?? "";
+			const location = process.env.GOOGLE_CLOUD_LOCATION ?? "";
+			const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ?? "application-default";
+			return `google-vertex:${project}:${location}:${credentialsPath}`;
+		}
+		return provider;
 	}
 
 	private getAuthSourceCandidates(provider: string): AuthSourceCandidate[] {
@@ -894,10 +1013,8 @@ export class AuthStorage implements CredentialStore {
 		if (matchingStale.length === 0) {
 			return false;
 		}
-		return Boolean(
-			candidate.valueFingerprint &&
-				matchingStale.some((token) => token.valueFingerprint === candidate.valueFingerprint),
-		);
+		const valueFingerprint = candidate.valueFingerprint ?? candidate.resolveValueFingerprint?.();
+		return Boolean(valueFingerprint && matchingStale.some((token) => token.valueFingerprint === valueFingerprint));
 	}
 
 	private getAvailableAuthCandidate(provider: string): {
@@ -942,17 +1059,28 @@ export class AuthStorage implements CredentialStore {
 		return token ? this.markAuthSourceStale(token) : false;
 	}
 
-	getCurrentAuthSourceToken(provider: string): AuthSourceToken | undefined {
-		const { candidate } = this.getAvailableAuthCandidate(provider);
-		if (!candidate?.valueFingerprint) {
+	private getAuthSourceTokenForCandidate(
+		provider: string,
+		candidate: AuthSourceCandidate,
+	): AuthSourceToken | undefined {
+		const valueFingerprint = candidate.valueFingerprint ?? candidate.resolveValueFingerprint?.();
+		if (!valueFingerprint) {
 			return undefined;
 		}
 		return {
 			provider,
 			source: candidate.source,
 			identityFingerprint: candidate.identityFingerprint,
-			valueFingerprint: candidate.valueFingerprint,
+			valueFingerprint,
 		};
+	}
+
+	getCurrentAuthSourceToken(provider: string): AuthSourceToken | undefined {
+		const { candidate } = this.getAvailableAuthCandidate(provider);
+		if (!candidate) {
+			return undefined;
+		}
+		return this.getAuthSourceTokenForCandidate(provider, candidate);
 	}
 
 	markAuthSourceStale(token: AuthSourceToken): boolean {
@@ -1042,8 +1170,7 @@ export class AuthStorage implements CredentialStore {
 				}
 			}
 		}
-
-		// Other providers preserve auth.json priority over environment variables.
+		// Stored auth wins over environment variables for non-Prime-Inference providers.
 		if (
 			providerId !== PRIME_INFERENCE_PROVIDER_ID &&
 			envKey &&
@@ -1073,23 +1200,38 @@ export class AuthStorage implements CredentialStore {
 
 	/** Logout from a provider (also clears Prime CLI credentials for Prime Inference). */
 	logout(provider: string): void {
-		if (provider === PRIME_INFERENCE_PROVIDER_ID) {
-			clearPrimeCliCredentials(this.getPrimeCliConfigPath());
+		if (provider === PRIME_INFERENCE_PROVIDER_ID && this.isPrimeCliConfigEnabled()) {
+			clearPrimeCliCredentials(this.getEnabledPrimeCliConfigPath());
 			this.clearStaleAuthSource(provider, "prime_cli");
 		}
 		this.remove(provider);
 	}
 
-	/** Prime CLI config path used for Prime Inference credentials. */
-	getPrimeCliConfigPath(): string {
-		return getPrimeCliConfigPath();
+	/** Prime CLI config path used for Prime Inference credentials, when that fallback is enabled. */
+	getPrimeCliConfigPath(): string | undefined {
+		if (!this.isPrimeCliConfigEnabled()) {
+			return undefined;
+		}
+		return getPrimeCliConfigPath(this.options.primeCliConfigPath);
+	}
+
+	private getEnabledPrimeCliConfigPath(): string {
+		const configPath = this.getPrimeCliConfigPath();
+		if (!configPath) {
+			throw new Error("Prime CLI config is not enabled");
+		}
+		return configPath;
+	}
+
+	private isPrimeCliConfigEnabled(): boolean {
+		return Boolean(this.options.usePrimeCliConfig || this.options.primeCliConfigPath);
 	}
 
 	private getPrimeCliConfig(providerId: string): PrimeCliConfig | undefined {
-		if (providerId !== PRIME_INFERENCE_PROVIDER_ID) {
+		if (providerId !== PRIME_INFERENCE_PROVIDER_ID || !this.isPrimeCliConfigEnabled()) {
 			return undefined;
 		}
-		return loadPrimeCliConfig(this.getPrimeCliConfigPath());
+		return loadPrimeCliConfig(this.options.primeCliConfigPath);
 	}
 
 	private getPrimeCliApiKey(providerId: string): string | undefined {
@@ -1097,7 +1239,10 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	setPrimeInferenceTeamSelection(team: PrimeTeam | null): void {
-		savePrimeCliTeamSelection(team, this.getPrimeCliConfigPath());
+		if (this.isPrimeCliConfigEnabled()) {
+			savePrimeCliTeamSelection(team, this.getEnabledPrimeCliConfigPath());
+			return;
+		}
 
 		const credential = this.get(PRIME_INFERENCE_PROVIDER_ID);
 		if (credential?.type !== "api_key") {
@@ -1110,7 +1255,15 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	setPrimeInferenceApiKey(apiKey: string): void {
-		const configPath = this.getPrimeCliConfigPath();
+		if (!this.isPrimeCliConfigEnabled()) {
+			this.set(PRIME_INFERENCE_PROVIDER_ID, {
+				...(this.get(PRIME_INFERENCE_PROVIDER_ID) ?? {}),
+				type: "api_key",
+				key: apiKey,
+			});
+			return;
+		}
+		const configPath = this.getEnabledPrimeCliConfigPath();
 		const config = loadPrimeCliConfig(configPath);
 		const existingCredential = this.get(PRIME_INFERENCE_PROVIDER_ID);
 		const legacyPrimeTeam = existingCredential?.type === "api_key" ? existingCredential.primeTeam : undefined;

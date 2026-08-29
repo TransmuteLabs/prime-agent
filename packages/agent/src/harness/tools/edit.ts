@@ -63,7 +63,9 @@ function prepareEditArguments(input: unknown): EditToolInput {
 			} else if (isSingleEditInput(parsed)) {
 				args.edits = [parsed];
 			}
-		} catch {}
+		} catch {
+			// Not JSON: leave the original value so schema validation reports it.
+		}
 	} else if (isSingleEditInput(args.edits)) {
 		args.edits = [args.edits];
 	}

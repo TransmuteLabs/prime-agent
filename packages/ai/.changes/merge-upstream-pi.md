@@ -1,0 +1,4 @@
+- Added MCP subsystem (`@earendil-works/pi-ai/mcp`): built-in catalog, OAuth 2.1 PKCE + DCR login for remote MCP servers, and provider registry.
+- Added a provider-neutral `serviceTier` stream option so processing-tier selection no longer has to be threaded per provider.
+- Fixed OpenAI-compatible Chat Completions ignoring an explicitly requested `toolChoice` when no tools are defined.
+- Fixed thinking signature serialization to run once after the signature is complete ([#8671](https://github.com/earendil-works/pi/pull/8671)).

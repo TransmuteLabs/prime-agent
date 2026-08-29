@@ -147,6 +147,10 @@ export class VirtualTerminal implements Terminal {
 		return this.getViewport();
 	}
 
+	getActiveBufferType(): "normal" | "alternate" {
+		return this.xterm.buffer.active.type;
+	}
+
 	/**
 	 * Get the visible viewport (what's currently on screen)
 	 * Note: You should use getViewportAfterWrite() for testing after writing data

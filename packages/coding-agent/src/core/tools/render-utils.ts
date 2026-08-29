@@ -32,6 +32,7 @@ export function replaceTabs(text: string): string {
 	return text.replace(/\t/g, "   ");
 }
 
+/** Carriage returns would repaint over the row they land on, so display text drops them. */
 export function normalizeDisplayText(text: string): string {
 	return text.replace(/\r/g, "");
 }
@@ -53,9 +54,10 @@ export function getTextOutput(
 
 	let output = textBlocks.map((c) => sanitizeBinaryOutput(stripAnsi(c.text || "")).replace(/\r/g, "")).join("\n");
 
-	const caps = getCapabilities();
 	const includeImageDimensions = options.includeImageDimensions ?? true;
-	if (imageBlocks.length > 0 && (!caps.images || !showImages)) {
+	// Image components render their own metadata row even without an image protocol,
+	// so the textual indicator belongs to callers that show no image at all.
+	if (imageBlocks.length > 0 && !showImages) {
 		const imageIndicators = imageBlocks
 			.map((img) => {
 				const mimeType = img.mimeType ?? "image/unknown";

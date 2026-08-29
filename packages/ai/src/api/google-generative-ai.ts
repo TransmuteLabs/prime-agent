@@ -24,6 +24,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { recordStreamFailure, streamFailureFromStopReason } from "../utils/stream-failure.ts";
 import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
@@ -272,7 +273,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 				const errorMessage = output.rawStopReason
 					? `Provider stopped with: ${output.rawStopReason}`
 					: "An unknown error occurred";
-				throw new Error(errorMessage);
+				throw streamFailureFromStopReason(output.rawStopReason, { message: errorMessage });
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -286,6 +287,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			recordStreamFailure(model, output, error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -308,7 +310,7 @@ export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOp
 		...buildBaseOptions(model, context, options, apiKey),
 		toolChoice: options?.toolChoice,
 	} satisfies GoogleOptions;
-	if (!options?.reasoning) {
+	if (!options?.reasoning || options.reasoning === "off") {
 		return stream(model, context, { ...base, thinking: { enabled: false } } satisfies GoogleOptions);
 	}
 

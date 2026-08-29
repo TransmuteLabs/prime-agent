@@ -83,7 +83,6 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 	const lines = splitLinesForCounting(content);
 	const totalLines = lines.length;
 
-	// Check if no truncation needed
 	if (totalLines <= maxLines && totalBytes <= maxBytes) {
 		return {
 			content,
@@ -100,7 +99,6 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 		};
 	}
 
-	// Check if first line alone exceeds byte limit
 	const firstLineBytes = Buffer.byteLength(lines[0], "utf-8");
 	if (firstLineBytes > maxBytes) {
 		return {
@@ -118,7 +116,6 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 		};
 	}
 
-	// Collect complete lines that fit
 	const outputLinesArr: string[] = [];
 	let outputBytesCount = 0;
 	let truncatedBy: "lines" | "bytes" = "lines";
@@ -136,7 +133,6 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 		outputBytesCount += lineBytes;
 	}
 
-	// If we exited due to line limit
 	if (outputLinesArr.length >= maxLines && outputBytesCount <= maxBytes) {
 		truncatedBy = "lines";
 	}
@@ -173,7 +169,6 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 	const lines = splitLinesForCounting(content);
 	const totalLines = lines.length;
 
-	// Check if no truncation needed
 	if (totalLines <= maxLines && totalBytes <= maxBytes) {
 		return {
 			content,
@@ -190,7 +185,6 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 		};
 	}
 
-	// Work backwards from the end
 	const outputLinesArr: string[] = [];
 	let outputBytesCount = 0;
 	let truncatedBy: "lines" | "bytes" = "lines";
@@ -217,7 +211,6 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 		outputBytesCount += lineBytes;
 	}
 
-	// If we exited due to line limit
 	if (outputLinesArr.length >= maxLines && outputBytesCount <= maxBytes) {
 		truncatedBy = "lines";
 	}
@@ -250,7 +243,6 @@ function truncateStringToBytesFromEnd(str: string, maxBytes: number): string {
 		return str;
 	}
 
-	// Start from the end, skip maxBytes back
 	let start = buf.length - maxBytes;
 
 	// Find a valid UTF-8 boundary (start of a character)

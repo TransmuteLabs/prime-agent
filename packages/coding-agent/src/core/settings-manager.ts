@@ -1,8 +1,8 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Transport } from "@earendil-works/pi-ai";
+import type { ServiceTier, Transport } from "@earendil-works/pi-ai";
 import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
@@ -14,7 +14,6 @@ const RECENT_MODELS_LIMIT = 20;
 export const DEFAULT_IDLE_EVICTION_MINUTES = 90;
 
 /** Local ServiceTier until pi-ai re-exports it. */
-export type ServiceTier = "auto" | "default" | "flex" | "scale" | "priority" | null;
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -39,6 +38,10 @@ export interface TelemetrySettings {
 	noticeShown?: boolean;
 }
 
+export interface BundledSkillsSettings {
+	websearch?: boolean;
+}
+
 /**
  * Remote/local MCP server an integration connects to; this is for user-declared
  * servers.
@@ -56,15 +59,21 @@ export type McpServerConfig =
 			enabled?: boolean;
 			enabledTools?: string[];
 			disabledTools?: string[];
+			startupTimeoutMs?: number;
+			callTimeoutMs?: number;
 	  }
 	| {
 			type: "stdio";
 			command: string;
 			args?: string[];
-			env?: Record<string, string>;
+			cwd?: string;
+			/** Environment variables resolved from the kernel environment. */
+			env?: Record<string, { env: string }>;
 			enabled?: boolean;
 			enabledTools?: string[];
 			disabledTools?: string[];
+			startupTimeoutMs?: number;
+			callTimeoutMs?: number;
 	  };
 
 export interface BranchSummarySettings {
@@ -153,7 +162,7 @@ export interface Settings {
 	recentModels?: string[]; // "provider/id" keys, most-recently-used first
 	defaultThinkingLevel?: ThinkingLevel;
 	defaultServiceTier?: ServiceTier;
-	rlmMaxDepth?: number; // default for new sessions; unset falls through to RLM_MAX_DEPTH, then 1
+	rlmMaxDepth?: number; // default for new sessions; unset falls through to RLM_MAX_DEPTH, then 2
 	idleEvictionMinutes?: number | "off"; // global daemon policy; default: 90
 	modelThinkingLevels?: Record<string, ThinkingLevel>; // per-model default thinking level overrides keyed by "provider/modelId"
 	transport?: TransportSetting; // default: "auto"
@@ -186,6 +195,7 @@ export interface Settings {
 	themes?: string[]; // Array of local theme file paths or directories
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
 	enableBuiltinSkills?: boolean; // default: true - load built-in skills shipped with the CLI
+	bundledSkills?: BundledSkillsSettings; // Configure built-in skills shipped with the CLI
 	terminal?: TerminalSettings;
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
@@ -318,7 +328,6 @@ export class FileSettingsStorage implements SettingsStorage {
 
 		let release: (() => void) | undefined;
 		try {
-			// Only create directory and lock if file exists or we need to write
 			const fileExists = existsSync(path);
 			if (fileExists) {
 				release = this.acquireLockSyncWithRetry(path);
@@ -326,14 +335,19 @@ export class FileSettingsStorage implements SettingsStorage {
 			const current = fileExists ? readFileSync(path, "utf-8") : undefined;
 			const next = fn(current);
 			if (next !== undefined) {
-				// Only create directory when we actually need to write
 				if (!existsSync(dir)) {
 					mkdirSync(dir, { recursive: true });
 				}
 				if (!release) {
 					release = this.acquireLockSyncWithRetry(path);
 				}
-				writeFileSync(path, next, "utf-8");
+				const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+				try {
+					writeFileSync(temporaryPath, next, { encoding: "utf-8", mode: 0o600 });
+					renameSync(temporaryPath, path);
+				} finally {
+					if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+				}
 			}
 		} finally {
 			if (release) {
@@ -486,19 +500,14 @@ export class SettingsManager {
 
 	/** Migrate old settings format to new format */
 	private static migrateSettings(settings: Record<string, unknown>): Settings {
-		// Migrate queueMode -> steeringMode
 		if ("queueMode" in settings && !("steeringMode" in settings)) {
 			settings.steeringMode = settings.queueMode;
 			delete settings.queueMode;
 		}
-
-		// Migrate legacy websockets boolean -> transport enum
 		if (!("transport" in settings) && typeof settings.websockets === "boolean") {
 			settings.transport = settings.websockets ? "websocket" : "sse";
 			delete settings.websockets;
 		}
-
-		// Migrate old skills object format to new array format
 		if (
 			"skills" in settings &&
 			typeof settings.skills === "object" &&
@@ -518,8 +527,6 @@ export class SettingsManager {
 				delete settings.skills;
 			}
 		}
-
-		// Migrate retry.maxDelayMs -> retry.provider.maxRetryDelayMs
 		if (
 			"retry" in settings &&
 			typeof settings.retry === "object" &&
@@ -767,9 +774,16 @@ export class SettingsManager {
 		await this.writeQueue;
 	}
 
-	drainErrors(): SettingsError[] {
-		const drained = [...this.errors];
-		this.errors = [];
+	drainErrors(scope?: SettingsScope): SettingsError[] {
+		if (!scope) {
+			const drained = [...this.errors];
+			this.errors = [];
+			return drained;
+		}
+		// Scoped drain leaves other scopes queued: draining everything here would
+		// swallow errors a different surface is responsible for reporting.
+		const drained = this.errors.filter((entry) => entry.scope === scope);
+		this.errors = this.errors.filter((entry) => entry.scope !== scope);
 		return drained;
 	}
 
@@ -874,6 +888,16 @@ export class SettingsManager {
 		this.globalSettings.idleEvictionMinutes = value;
 		this.markModified("idleEvictionMinutes");
 		this.save();
+	}
+
+	getBundledSkills(): { websearch: boolean } {
+		return {
+			websearch: this.settings.bundledSkills?.websearch ?? true,
+		};
+	}
+
+	getBundledWebsearchEnabled(): boolean {
+		return this.getBundledSkills().websearch;
 	}
 
 	getEnableBuiltinSkills(): boolean {
@@ -1381,7 +1405,6 @@ export class SettingsManager {
 	}
 
 	getClearOnShrink(): boolean {
-		// Settings takes precedence, then env var, then default false
 		if (this.settings.terminal?.clearOnShrink !== undefined) {
 			return this.settings.terminal.clearOnShrink;
 		}
@@ -1415,7 +1438,6 @@ export class SettingsManager {
 	}
 
 	getFullscreen(): boolean {
-		// Env var overrides the setting (both directions) for one-off runs
 		if (process.env.PI_FULLSCREEN !== undefined) {
 			return process.env.PI_FULLSCREEN === "1";
 		}
@@ -1519,6 +1541,30 @@ export class SettingsManager {
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		return tools ? [...tools] : undefined;
+	}
+
+	/** MCP execution is intentionally restricted to user/global settings. */
+	getGlobalMcpServers(): Record<string, McpServerConfig> | undefined {
+		return structuredClone(this.globalSettings.mcpServers);
+	}
+
+	setGlobalMcpServer(name: string, config: McpServerConfig, force = false): void {
+		if (this.globalSettings.mcpServers?.[name] && !force) {
+			throw new Error(`MCP server "${name}" already exists. Use --force to replace it.`);
+		}
+		this.globalSettings.mcpServers = { ...(this.globalSettings.mcpServers ?? {}), [name]: structuredClone(config) };
+		this.markModified("mcpServers", name);
+		this.save();
+	}
+
+	removeGlobalMcpServer(name: string): boolean {
+		if (!this.globalSettings.mcpServers?.[name]) return false;
+		const servers = { ...this.globalSettings.mcpServers };
+		delete servers[name];
+		this.globalSettings.mcpServers = servers;
+		this.markModified("mcpServers", name);
+		this.save();
+		return true;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

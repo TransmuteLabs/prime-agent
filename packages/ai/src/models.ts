@@ -871,6 +871,16 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
  * }
  * ```
  */
+export function supportsFastMode<TApi extends Api>(model: Model<TApi>): boolean {
+	const eligibleId =
+		model.id === "gpt-5.4" || model.id === "gpt-5.5" || model.id === "gpt-5.6" || model.id.startsWith("gpt-5.6-");
+	return (
+		eligibleId &&
+		((model.provider === "openai-codex" && model.api === "openai-codex-responses") ||
+			(model.provider === "openai" && model.api === "openai-responses"))
+	);
+}
+
 export function hasApi<TApi extends Api>(model: Model<Api>, api: TApi): model is Model<TApi> {
 	return model.api === api;
 }

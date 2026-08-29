@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ENV_AGENT_DIR } from "../src/config.ts";
 import { getThemeExportColors } from "../src/modes/interactive/theme/theme.ts";
 
 type ThemeFile = {
@@ -17,21 +18,23 @@ type ThemeFile = {
 
 describe("getThemeExportColors", () => {
 	let tempRoot: string;
+	let agentDir: string;
 	let previousAgentDir: string | undefined;
 
 	beforeEach(() => {
 		tempRoot = mkdtempSync(join(tmpdir(), "pi-theme-export-"));
-		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = join(tempRoot, "agent");
-		mkdirSync(join(process.env.PI_CODING_AGENT_DIR, "themes"), { recursive: true });
+		previousAgentDir = process.env[ENV_AGENT_DIR];
+		agentDir = join(tempRoot, "agent");
+		process.env[ENV_AGENT_DIR] = agentDir;
+		mkdirSync(join(agentDir, "themes"), { recursive: true });
 	});
 
 	afterEach(() => {
 		rmSync(tempRoot, { recursive: true, force: true });
 		if (previousAgentDir === undefined) {
-			delete process.env.PI_CODING_AGENT_DIR;
+			delete process.env[ENV_AGENT_DIR];
 		} else {
-			process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			process.env[ENV_AGENT_DIR] = previousAgentDir;
 		}
 	});
 
@@ -57,10 +60,7 @@ describe("getThemeExportColors", () => {
 			},
 		};
 
-		writeFileSync(
-			join(process.env.PI_CODING_AGENT_DIR!, "themes", "custom-export-vars.json"),
-			JSON.stringify(customTheme, null, 2),
-		);
+		writeFileSync(join(agentDir, "themes", "custom-export-vars.json"), JSON.stringify(customTheme, null, 2));
 
 		expect(getThemeExportColors("custom-export-vars")).toEqual({
 			pageBg: "#112233",
@@ -90,10 +90,7 @@ describe("getThemeExportColors", () => {
 			},
 		};
 
-		writeFileSync(
-			join(process.env.PI_CODING_AGENT_DIR!, "themes", "custom-export-recursive.json"),
-			JSON.stringify(customTheme, null, 2),
-		);
+		writeFileSync(join(agentDir, "themes", "custom-export-recursive.json"), JSON.stringify(customTheme, null, 2));
 
 		expect(getThemeExportColors("custom-export-recursive")).toEqual({
 			pageBg: "#abcdef",

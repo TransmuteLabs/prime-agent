@@ -5,14 +5,14 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
 import { spawn } from "child_process";
 import { expandTildePath } from "../config.ts";
+import type { AgentSessionEvent } from "../core/agent-session.ts";
 import type { AgentSessionRuntimeConfig } from "../core/agent-session-config.ts";
 import { type AgentCronJob, formatAgentCronJob } from "../core/cron-jobs.ts";
-import type { AgentConnectionSessionEvent } from "../modes/agent-connection/types.ts";
 import { DaemonClient, type DaemonClientMessageListener } from "../modes/daemon/daemon-client.ts";
 import type { DaemonOutbound, DaemonResponse } from "../modes/daemon/daemon-protocol.ts";
 import { matchesSessionIdSuffix } from "../modes/daemon/daemon-session-id.ts";
 import type { SessionSummary } from "../modes/daemon/daemon-session-list.ts";
-import { defaultDaemonSocketPath } from "../modes/daemon/daemon-socket.ts";
+import { defaultDaemonSocketPath, normalizeSocketPath } from "../modes/daemon/daemon-socket.ts";
 import { isLocalPath } from "../utils/paths.ts";
 import { isValidThinkingLevel } from "./args.ts";
 import { formatSessionListTable } from "./daemon-list-format.ts";
@@ -107,7 +107,7 @@ function parseDaemonClientCommand(args: string[]): ParsedDaemonClientCommand {
 			if (!value) {
 				throw new Error(`${arg} requires a value`);
 			}
-			socketPath = value;
+			socketPath = normalizeSocketPath(value);
 			index++;
 			continue;
 		}
@@ -1254,7 +1254,6 @@ class DaemonAttachTerminal {
 	private rl?: Interface;
 	private isStreaming = false;
 	private readonly prompt = chalk.green("prime-agent> ");
-
 	private readonly client: DaemonClient;
 	private readonly activeSessionId: string;
 
@@ -1418,7 +1417,7 @@ class DaemonAttachTerminal {
 		}
 	}
 
-	private handleSessionEvent(event: AgentConnectionSessionEvent): void {
+	private handleSessionEvent(event: AgentSessionEvent): void {
 		switch (event.type) {
 			case "agent_start":
 				this.isStreaming = true;

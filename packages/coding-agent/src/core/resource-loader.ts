@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME, getBundledSkillsDir } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
@@ -171,6 +171,9 @@ export interface DefaultResourceLoaderOptions {
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
 	noContextFiles?: boolean;
+	/** Directory of built-in skills shipped with the package. Defaults to the bundled skills dir; pass null to disable. */
+	bundledSkillsDir?: string | null;
+	extraBuiltinSkillOverrides?: () => string[];
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
@@ -199,6 +202,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private settingsManager: SettingsManager;
 	private eventBus: EventBus;
 	private packageManager: DefaultPackageManager;
+	private bundledSkillsDir: string | null;
 	private additionalExtensionPaths: string[];
 	private additionalSkillPaths: string[];
 	private additionalPromptTemplatePaths: string[];
@@ -256,10 +260,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
 		this.eventBus = options.eventBus ?? createEventBus();
+		this.bundledSkillsDir = options.bundledSkillsDir === undefined ? getBundledSkillsDir() : options.bundledSkillsDir;
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
 			agentDir: this.agentDir,
 			settingsManager: this.settingsManager,
+			bundledSkillsDir: this.bundledSkillsDir,
+			extraBuiltinSkillOverrides: options.extraBuiltinSkillOverrides,
 		});
 		this.additionalExtensionPaths = options.additionalExtensionPaths ?? [];
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
@@ -303,6 +310,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getExtensions(): LoadExtensionsResult {
 		return this.extensionsResult;
+	}
+
+	/** Extension file paths the last reload actually loaded (after settings overrides). */
+	getLoadedExtensionPaths(): string[] {
+		return this.loadedExtensionPaths;
 	}
 
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
@@ -471,6 +483,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		this.lastSkillPaths = skillPaths;
 		this.updateSkillsFromPaths(skillPaths, metadataByPath);
+		// Surface resolution-time skill warnings (e.g. missing bundled skills dir).
+		this.skillDiagnostics.push(...resolvedPaths.diagnostics);
 		for (const p of this.additionalSkillPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -546,6 +560,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.loaded = true;
 	}
 
+	private loadedExtensionPaths: string[] = [];
+
 	private async loadCurrentExtensionSet(options: { includeInlineFactories: boolean }): Promise<LoadExtensionsResult> {
 		const resolvedPaths = await this.packageManager.resolve();
 		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
@@ -560,6 +576,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		if (!options.includeInlineFactories) {
 			return extensionsResult;
 		}
+		this.loadedExtensionPaths = extensionPaths;
 
 		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 		extensionsResult.extensions.push(...inlineExtensions.extensions);
@@ -575,6 +592,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		extensionPaths: string[],
 		preTrustExtensions: LoadExtensionsResult | undefined,
 	): Promise<LoadExtensionsResult> {
+		// Set before inline factories run so a factory can see which file-based
+		// extensions actually loaded this cycle (e.g. the built-in Herdr reporter
+		// defers to Herdr's own file-based integration only when it is active).
+		this.loadedExtensionPaths = extensionPaths;
 		if (!preTrustExtensions) {
 			const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
 			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);

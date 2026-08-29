@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
 	Agent,
 	type AgentEvent,
+	type AgentMessage,
 	type AgentTool,
 	type AgentToolUpdateCallback,
 	type StreamFn,
@@ -110,6 +111,7 @@ describe("Agent", () => {
 		expect(agent.state.systemPrompt).toBe("");
 		expect(agent.state.model).toBeDefined();
 		expect(agent.state.thinkingLevel).toBe("off");
+		expect(agent.state.serviceTier).toBe("default");
 		expect(agent.state.tools).toEqual([]);
 		expect(agent.state.messages).toEqual([]);
 		expect(agent.state.isStreaming).toBe(false);
@@ -126,12 +128,14 @@ describe("Agent", () => {
 				systemPrompt: "You are a helpful assistant.",
 				model: customModel,
 				thinkingLevel: "low",
+				serviceTier: "priority",
 			},
 		});
 
 		expect(agent.state.systemPrompt).toBe("You are a helpful assistant.");
 		expect(agent.state.model).toBe(customModel);
 		expect(agent.state.thinkingLevel).toBe("low");
+		expect(agent.state.serviceTier).toBe("priority");
 	});
 
 	it("should subscribe to events", () => {
@@ -606,9 +610,11 @@ describe("Agent", () => {
 		expect(agent.state.isStreaming).toBe(true);
 
 		// continue() should reject
-		await expect(agent.continue()).rejects.toThrow(
-			"Agent is already processing. Wait for completion before continuing.",
-		);
+		await expect(agent.continue()).rejects.toMatchObject({
+			name: "AgentContinueError",
+			code: "busy",
+			message: "Agent is already processing. Wait for completion before continuing.",
+		});
 
 		// Cleanup
 		agent.abort();
@@ -806,5 +812,57 @@ describe("Agent", () => {
 
 		await agent.prompt("hello again");
 		expect(receivedSessionId).toBe("session-def");
+	});
+
+	it("forwards the service tier to streamFunction options", async () => {
+		let receivedServiceTier: string | null | undefined;
+		const agent = new Agent({
+			initialState: { serviceTier: "priority" },
+			streamFn: (_model, _context, options) => {
+				receivedServiceTier = options?.serviceTier;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("ok") });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("hello");
+		expect(receivedServiceTier).toBe("priority");
+	});
+
+	it("removes a whole queued batch when one message matches", () => {
+		const agent = new Agent({ streamFn: unusedStreamFunction });
+		const prefix: AgentMessage = { role: "user", content: [{ type: "text", text: "Prefix" }], timestamp: Date.now() };
+		const prompt: AgentMessage = {
+			role: "user",
+			content: [{ type: "text", text: "Prompt" }],
+			timestamp: Date.now() + 1,
+		};
+		const next: AgentMessage = { role: "user", content: [{ type: "text", text: "Next" }], timestamp: Date.now() + 2 };
+		agent.followUp([prefix, prompt]);
+		agent.followUp(next);
+
+		expect(agent.removeQueuedMessages((message) => message === prompt)).toEqual([prefix, prompt]);
+		expect(agent.hasQueuedMessages()).toBe(true);
+	});
+
+	it("normalizes an off thinking level to no provider reasoning selection", async () => {
+		let reasoning: unknown;
+		const agent = new Agent({
+			initialState: { thinkingLevel: "off" },
+			streamFn: (_model, _context, options) => {
+				reasoning = options?.reasoning;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("ok") });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("hello");
+		expect(reasoning).toBeUndefined();
 	});
 });

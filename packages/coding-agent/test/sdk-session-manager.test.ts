@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -26,7 +26,7 @@ describe("createAgentSession session manager defaults", () => {
 	});
 
 	it("uses agentDir for the default persisted session path", async () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5");
+		const model = getBuiltinModel("anthropic", "claude-sonnet-4-5");
 		expect(model).toBeTruthy();
 
 		const { session } = await createAgentSession({
@@ -35,8 +35,7 @@ describe("createAgentSession session manager defaults", () => {
 			model: model!,
 		});
 
-		const safePath = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-		const expectedSessionDir = join(agentDir, "sessions", safePath);
+		const expectedSessionDir = join(agentDir, "sessions");
 		const sessionDir = session.sessionManager.getSessionDir();
 		const sessionFile = session.sessionManager.getSessionFile();
 
@@ -47,7 +46,7 @@ describe("createAgentSession session manager defaults", () => {
 	});
 
 	it("keeps an explicit sessionManager override", async () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5");
+		const model = getBuiltinModel("anthropic", "claude-sonnet-4-5");
 		expect(model).toBeTruthy();
 
 		const sessionManager = SessionManager.inMemory(cwd);
@@ -65,7 +64,7 @@ describe("createAgentSession session manager defaults", () => {
 	});
 
 	it("derives cwd from an explicit sessionManager when cwd is omitted", async () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5");
+		const model = getBuiltinModel("anthropic", "claude-sonnet-4-5");
 		expect(model).toBeTruthy();
 
 		const sessionCwd = join(tempDir, "session-project");
@@ -75,14 +74,15 @@ describe("createAgentSession session manager defaults", () => {
 			agentDir,
 			model: model!,
 			sessionManager,
+			tools: ["ipython"],
 		});
 
 		expect(session.sessionManager).toBe(sessionManager);
-		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd}`);
+		expect(session.systemPrompt).toContain(`Working directory: ${sessionCwd}`);
 
-		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
-		expect(bashTool).toBeTruthy();
-		const result = await bashTool!.execute("test", { command: "pwd" });
+		const ipythonTool = session.agent.state.tools.find((tool) => tool.name === "ipython");
+		expect(ipythonTool).toBeTruthy();
+		const result = await ipythonTool!.execute("test", { code: "import os\nprint(os.getcwd())" });
 		const output = result.content
 			.filter((item): item is { type: "text"; text: string } => item.type === "text")
 			.map((item) => item.text)
@@ -91,41 +91,5 @@ describe("createAgentSession session manager defaults", () => {
 		expect(realpathSync(output.trim())).toBe(realpathSync(sessionCwd));
 
 		session.dispose();
-	});
-
-	it("exposes current session state to the built-in bash tool", async () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5");
-		expect(model).toBeTruthy();
-
-		const { session } = await createAgentSession({
-			cwd,
-			agentDir,
-			model: model!,
-			thinkingLevel: "high",
-		});
-		expect(session.sessionFile).toBeTruthy();
-		expect(session.systemPrompt).toContain(
-			"You can inspect PI_* environment variables for current model and session details.",
-		);
-
-		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
-		expect(bashTool).toBeTruthy();
-		const result = await bashTool!.execute("test", {
-			command: `printf '%s\\n' "$PI_SESSION_ID" "$PI_SESSION_FILE" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"`,
-		});
-		const output = result.content
-			.filter((item): item is { type: "text"; text: string } => item.type === "text")
-			.map((item) => item.text)
-			.join("");
-
-		expect(output.trim().split("\n")).toEqual([
-			session.sessionId,
-			session.sessionFile,
-			model!.provider,
-			model!.id,
-			session.thinkingLevel,
-		]);
-
-		session.dispose();
-	});
+	}, 120_000);
 });

@@ -159,7 +159,8 @@ describe("AgentSession dynamic tool registration", () => {
 			origin: "top-level",
 		});
 		expect(session.getActiveToolNames()).toContain("dynamic_tool");
-		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
+		// Tool schemas carry descriptions; the RLM doctrine lists no tool snippets (regression #3592).
+		expect(session.systemPrompt).not.toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).toContain("- Use dynamic_tool when the user asks for dynamic behavior tests.");
 
 		session.dispose();

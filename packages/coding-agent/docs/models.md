@@ -207,7 +207,7 @@ A constant thinking-token cap can go here too, but it will not follow `thinkingB
 
 ### Thinking Level Map
 
-Use `thinkingLevelMap` on a model to describe model-specific thinking controls. Keys are Prime Agent thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`.
+Use `thinkingLevelMap` on a model to describe model-specific thinking controls. Keys are Prime Agent thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
 
 Values are tristate:
 

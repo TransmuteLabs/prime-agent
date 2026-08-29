@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
+import { recordOrphanProcessState } from "../core/orphan-process-journal.ts";
 
 export interface ShellConfig {
 	shell: string;
@@ -119,6 +120,34 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 	return { shell: "sh", args: ["-c"] };
 }
 
+// Hardcoded literals: ProgramFiles env vars are ambient attacker-influenceable
+// input, the same trust-laundering class as PATH.
+const WINDOWS_GIT_BASH_PATHS = ["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"];
+
+/**
+ * Absolute default shell for the kernel's bash(): explicit shellPath wins; POSIX
+ * uses /bin/bash else /bin/sh (absolute, never PATH — the kernel inherits a
+ * user-influenced PATH); win32 uses only the canonical Git Bash install paths,
+ * never PATH (a repo-controlled PATH/where.exe must not pick the kernel shell).
+ * undefined = no shell found: kernel startup must not fail, bash() raises its
+ * teaching error.
+ */
+export function resolveKernelBashShell(customShellPath?: string): string | undefined {
+	const explicit = customShellPath?.trim();
+	if (explicit) {
+		return explicit;
+	}
+	if (process.platform !== "win32") {
+		return existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
+	}
+	for (const path of WINDOWS_GIT_BASH_PATHS) {
+		if (existsSync(path)) {
+			return path;
+		}
+	}
+	return undefined;
+}
+
 export const POWERSHELL_ARGS = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"] as const;
 
 /** Resolve PowerShell on Windows, preferring PowerShell 7 when available. */
@@ -197,15 +226,20 @@ const trackedDetachedChildPids = new Set<number>();
 
 export function trackDetachedChildPid(pid: number): void {
 	trackedDetachedChildPids.add(pid);
+	// The journal outlives this process, so the daemon reaper can still find the
+	// child if we die before untracking it.
+	recordOrphanProcessState(pid, true);
 }
 
 export function untrackDetachedChildPid(pid: number): void {
 	trackedDetachedChildPids.delete(pid);
+	recordOrphanProcessState(pid, false);
 }
 
 export function killTrackedDetachedChildren(): void {
 	for (const pid of trackedDetachedChildPids) {
 		killProcessTree(pid);
+		recordOrphanProcessState(pid, false);
 	}
 	trackedDetachedChildPids.clear();
 }

@@ -1,0 +1,3 @@
+- Added `Agent.removeQueuedMessages()` and batch-aware steering and follow-up queues, so a batch enqueued together is delivered and removed together.
+- Added agent-level `serviceTier` state that is forwarded to the provider stream options.
+- Fixed Windows `NodeExecutionEnv` aborts crashing when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).

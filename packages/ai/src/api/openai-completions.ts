@@ -164,6 +164,8 @@ function isOpenAIReasoningDetail(detail: unknown): detail is OpenAIReasoningDeta
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption;
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	/** Explicit reasoning toggle. undefined preserves the provider/model default. */
+	reasoningEnabled?: boolean;
 	/** Token budgets per thinking level. Used when `compat.thinkingTokenBudgetField` or `compat.supportsThinkingTokenBudget` is set, or by `{ "$var": "thinking.budget" }`. */
 	thinkingBudgets?: ThinkingBudgets;
 }
@@ -258,16 +260,31 @@ function fillMissingCommonReasoningDetailFields(
 }
 
 function appendOpenAIReasoningDetail(details: OpenAIReasoningDetail[], detail: OpenAIReasoningDetail): void {
-	const lastDetail = details[details.length - 1];
-	if (detail.type === "reasoning.text" && lastDetail?.type === "reasoning.text") {
-		lastDetail.text += detail.text;
-		lastDetail.signature ||= detail.signature;
-		fillMissingCommonReasoningDetailFields(lastDetail, detail);
+	// `index` names the logical detail a fragment belongs to, so interleaved indices continue
+	// their own entry rather than their neighbour. An index-less detail carries no such identity
+	// and its position in the replayed sequence is the only thing that places it, so it is a
+	// barrier: nothing merges across it.
+	let target: OpenAIReasoningDetail | undefined;
+	for (let i = details.length - 1; i >= 0; i--) {
+		const entry = details[i];
+		if (entry.index === undefined || detail.index === undefined) {
+			target = i === details.length - 1 ? entry : undefined;
+			break;
+		}
+		if (entry.index === detail.index) {
+			target = entry;
+			break;
+		}
+	}
+	if (detail.type === "reasoning.text" && target?.type === "reasoning.text") {
+		target.text += detail.text;
+		target.signature ||= detail.signature;
+		fillMissingCommonReasoningDetailFields(target, detail);
 		return;
 	}
-	if (detail.type === "reasoning.summary" && lastDetail?.type === "reasoning.summary") {
-		lastDetail.summary += detail.summary;
-		fillMissingCommonReasoningDetailFields(lastDetail, detail);
+	if (detail.type === "reasoning.summary" && target?.type === "reasoning.summary") {
+		target.summary += detail.summary;
+		fillMissingCommonReasoningDetailFields(target, detail);
 		return;
 	}
 	details.push({ ...detail });
@@ -334,9 +351,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 		// Keep them in memory during streaming and serialize once when the block is finalized.
 		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
 		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
-			if (streamedReasoningDetails !== undefined) {
-				block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
-			}
+			if (streamedReasoningDetails === undefined) return;
+			block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
 		};
 
 		try {
@@ -347,6 +363,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				compat.supportsOpenAIGrammarTools,
 			);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
+			// Anthropic bills a 1h cache write at 2x input; the wire usage does not say which TTL
+			// produced the write, so the request's own cache_control is the only source.
+			const cacheWriteTtl = getCompatCacheControl(compat, cacheRetention)?.ttl;
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const client = createClient(
 				model,
@@ -561,7 +580,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					output.responseModel ||= chunk.model;
 				}
 				if (chunk.usage) {
-					output.usage = parseChunkUsage(chunk.usage, model);
+					output.usage = parseChunkUsage(chunk.usage, model, cacheWriteTtl);
 				}
 
 				const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined;
@@ -570,7 +589,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				// Fallback: some providers (e.g., Moonshot) return usage
 				// in choice.usage instead of the standard chunk.usage
 				if (!chunk.usage && (choice as any).usage) {
-					output.usage = parseChunkUsage((choice as any).usage, model);
+					output.usage = parseChunkUsage((choice as any).usage, model, cacheWriteTtl);
 				}
 
 				if (choice.finish_reason) {
@@ -739,12 +758,15 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 		...buildBaseOptions(model, context, options, options?.apiKey),
 		toolChoice: options?.toolChoice,
 	} satisfies OpenAICompletionsOptions;
-	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
+	const requestedReasoning = options?.reasoning;
+	const clampedReasoning =
+		requestedReasoning !== undefined ? clampThinkingLevel(model, requestedReasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
 
 	return stream(model, context, {
 		...base,
 		reasoningEffort,
+		reasoningEnabled: clampedReasoning !== undefined ? clampedReasoning !== "off" : undefined,
 		thinkingBudgets: options?.thinkingBudgets,
 	} satisfies OpenAICompletionsOptions);
 };
@@ -786,7 +808,6 @@ function createClient(
 		}
 	}
 
-	// Merge options headers last so they can override defaults
 	if (optionsHeaders) {
 		Object.assign(headers, optionsHeaders);
 	}
@@ -929,14 +950,19 @@ function buildParams(
 				model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 		}
 	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
-		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
-		const openRouterParams = params as typeof params & { reasoning?: { effort?: string } };
-		if (options?.reasoningEffort) {
+		// OpenRouter distinguishes an omitted reasoning preference (use the model
+		// default), an explicit toggle, and an explicit effort selection.
+		const openRouterParams = params as typeof params & { reasoning?: { enabled?: boolean; effort?: string } };
+		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			openRouterParams.reasoning = {
 				effort: model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort,
 			};
-		} else if (model.thinkingLevelMap?.off !== null) {
-			openRouterParams.reasoning = { effort: model.thinkingLevelMap?.off ?? "none" };
+		} else if (options?.reasoningEnabled === true) {
+			openRouterParams.reasoning = { enabled: true };
+		} else if (options?.reasoningEnabled === false && model.thinkingLevelMap?.off !== null) {
+			openRouterParams.reasoning = compat.supportsReasoningEffort
+				? { effort: model.thinkingLevelMap?.off ?? "none" }
+				: { enabled: false };
 		}
 	} else if (compat.thinkingFormat === "ant-ling" && model.reasoning && options?.reasoningEffort) {
 		const effort = model.thinkingLevelMap?.[options.reasoningEffort];
@@ -960,12 +986,11 @@ function buildParams(
 			stringThinkingParams.thinking = model.thinkingLevelMap?.off ?? "none";
 		}
 	} else if (options?.reasoningEffort && model.reasoning && compat.supportsReasoningEffort) {
-		// OpenAI-style reasoning_effort
 		(params as any).reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
-	} else if (!options?.reasoningEffort && model.reasoning && compat.supportsReasoningEffort) {
+	} else if (options?.reasoningEnabled === false && model.reasoning && compat.supportsReasoningEffort) {
 		const offValue = model.thinkingLevelMap?.off;
-		if (typeof offValue === "string") {
-			(params as any).reasoning_effort = offValue;
+		if (offValue !== null) {
+			(params as any).reasoning_effort = offValue ?? "none";
 		}
 	}
 
@@ -1367,6 +1392,9 @@ export function convertMessages(
 			) {
 				assistantMsg.reasoning_content = "";
 			}
+			if (preservedReasoningDetails && assistantMsg.content === null && !assistantMsg.tool_calls) {
+				assistantMsg.content = "";
+			}
 			// Skip assistant messages that have no content and no tool calls.
 			// Some providers require "either content or tool_calls, but not none".
 			// Other providers also don't accept empty assistant messages.
@@ -1376,7 +1404,7 @@ export function convertMessages(
 				content !== null &&
 				content !== undefined &&
 				(typeof content === "string" ? content.length > 0 : content.length > 0);
-			if (!hasContent && !assistantMsg.tool_calls) {
+			if (!hasContent && !assistantMsg.tool_calls && !preservedReasoningDetails) {
 				continue;
 			}
 			params.push(assistantMsg);
@@ -1388,7 +1416,6 @@ export function convertMessages(
 			for (; j < transformedMessages.length && transformedMessages[j].role === "toolResult"; j++) {
 				const toolMsg = transformedMessages[j] as ToolResultMessage;
 
-				// Extract text and image content
 				const textResult = toolMsg.content
 					.filter(isTextContentBlock)
 					.map((block) => block.text)
@@ -1521,6 +1548,7 @@ function parseChunkUsage(
 		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
+	cacheWriteTtl?: OpenAICompatCacheControl["ttl"],
 ): AssistantMessage["usage"] {
 	const promptTokens = rawUsage.prompt_tokens || 0;
 	const cacheReadTokens =
@@ -1548,6 +1576,7 @@ function parseChunkUsage(
 		cacheWrite: cacheWriteTokens,
 		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
+		...(cacheWriteTtl === "1h" ? { cacheWrite1h: cacheWriteTokens } : {}),
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 	calculateCost(model, usage);

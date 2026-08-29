@@ -10,12 +10,11 @@ type InteractiveModePrototype = {
 };
 
 type ImportCommandContext = {
-	clearStatusIndicator: () => void;
-	runtimeHost: { importFromJsonl: (inputPath: string, cwdOverride?: string) => Promise<{ cancelled: boolean }> };
+	stopWorkingLoader: () => void;
+	agentConnection: { importFromJsonl: (inputPath: string, cwdOverride?: string) => Promise<{ cancelled: boolean }> };
 	showError: (message: string) => void;
 	showStatus: (message: string) => void;
 	showExtensionConfirm: (title: string, message: string) => Promise<boolean>;
-	handleRuntimeSessionChange: () => Promise<void>;
 	renderCurrentSessionState: () => void;
 	handleFatalRuntimeError: (prefix: string, error: unknown) => Promise<never>;
 	promptForMissingSessionCwd: (error: unknown) => Promise<string | undefined>;
@@ -50,19 +49,18 @@ describe("InteractiveMode /import parsing", () => {
 		);
 	});
 
-	it("passes unquoted path to runtimeHost.importFromJsonl", async () => {
+	it("passes unquoted path to agentConnection.importFromJsonl", async () => {
 		const importFromJsonl = vi.fn(async () => ({ cancelled: false }));
 		const showExtensionConfirm = vi.fn(async () => true);
 		const showStatus = vi.fn();
 		const showError = vi.fn();
 
 		const context: ImportCommandContext = {
-			clearStatusIndicator: vi.fn(),
-			runtimeHost: { importFromJsonl },
+			stopWorkingLoader: vi.fn(),
+			agentConnection: { importFromJsonl },
 			showError,
 			showStatus,
 			showExtensionConfirm,
-			handleRuntimeSessionChange: vi.fn(async () => {}),
 			renderCurrentSessionState: vi.fn(),
 			handleFatalRuntimeError: vi.fn(async () => {
 				throw new Error("unexpected fatal error");
@@ -82,19 +80,18 @@ describe("InteractiveMode /import parsing", () => {
 		expect(showStatus).toHaveBeenCalledWith("Session imported from: path/to/session.jsonl");
 	});
 
-	it("passes unquoted apostrophe path to runtimeHost.importFromJsonl unchanged", async () => {
+	it("passes unquoted apostrophe path to agentConnection.importFromJsonl unchanged", async () => {
 		const importFromJsonl = vi.fn(async () => ({ cancelled: false }));
 		const showExtensionConfirm = vi.fn(async () => true);
 		const showStatus = vi.fn();
 		const showError = vi.fn();
 
 		const context: ImportCommandContext = {
-			clearStatusIndicator: vi.fn(),
-			runtimeHost: { importFromJsonl },
+			stopWorkingLoader: vi.fn(),
+			agentConnection: { importFromJsonl },
 			showError,
 			showStatus,
 			showExtensionConfirm,
-			handleRuntimeSessionChange: vi.fn(async () => {}),
 			renderCurrentSessionState: vi.fn(),
 			handleFatalRuntimeError: vi.fn(async () => {
 				throw new Error("unexpected fatal error");
@@ -122,12 +119,11 @@ describe("InteractiveMode /import parsing", () => {
 		});
 
 		const context: ImportCommandContext = {
-			clearStatusIndicator: vi.fn(),
-			runtimeHost: { importFromJsonl },
+			stopWorkingLoader: vi.fn(),
+			agentConnection: { importFromJsonl },
 			showError,
 			showStatus,
 			showExtensionConfirm,
-			handleRuntimeSessionChange: vi.fn(async () => {}),
 			renderCurrentSessionState: vi.fn(),
 			handleFatalRuntimeError,
 			promptForMissingSessionCwd: vi.fn(async () => undefined),

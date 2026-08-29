@@ -1,8 +1,15 @@
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, ServiceTier } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
+import type { AgentSessionMessageController } from "./agent-messages.ts";
+import type { AgentObserveController } from "./agent-observe.ts";
+import type { AgentExecutionMode } from "./agent-session-config.ts";
+import { installAgentTraceUpload } from "./agent-traces.ts";
+import type { AgentAutonomousConfig } from "./autonomous.ts";
+import type { AgentRlmHeartbeatController } from "./cron-jobs.ts";
+import { createHerdrAgentStateExtension } from "./extensions/builtin/herdr-agent-state.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { McpManager } from "./mcp/mcp-manager.ts";
 import { ModelRegistry } from "./model-registry.ts";
@@ -13,9 +20,11 @@ import {
 	type ResourceLoader,
 	type ResourceLoaderReloadOptions,
 } from "./resource-loader.ts";
+import type { SubagentRuntimeHost } from "./rlm-runtime.ts";
 import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./sdk.ts";
 import type { SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
+import { installAgentTelemetry, isTelemetryEnabled } from "./telemetry.ts";
 
 /**
  * Non-fatal issues collected while creating services or sessions.
@@ -45,6 +54,14 @@ export interface CreateAgentSessionServicesOptions {
 	extensionFlagValues?: Map<string, boolean | string>;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
 	resourceLoaderReloadOptions?: ResourceLoaderReloadOptions;
+	/**
+	 * Skip the built-in Herdr reporter for these services. Set for RLM subagent
+	 * runtimes: they inherit the parent's HERDR_* pane identity, so their own
+	 * reporter would race the parent's on the same pane and a subagent quit
+	 * would release the pane while the parent is still running.
+	 */
+	noBuiltinHerdrReporter?: boolean;
+	telemetryDisabled?: true;
 }
 
 /**
@@ -53,17 +70,40 @@ export interface CreateAgentSessionServicesOptions {
  * Use this after services exist and any cwd-bound model/tool/session options
  * have been resolved against those services.
  */
-export interface CreateAgentSessionFromServicesOptions {
-	services: AgentSessionServices;
-	sessionManager: SessionManager;
-	sessionStartEvent?: SessionStartEvent;
+export interface AgentSessionCreationOptions {
 	model?: Model<any>;
 	thinkingLevel?: ThinkingLevel;
+	serviceTier?: ServiceTier;
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	tools?: string[];
 	excludeTools?: CreateAgentSessionOptions["excludeTools"];
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
+	initialActiveToolNames?: string[];
+	allowedToolNames?: string[];
+	includeGoals?: boolean;
+	includeCompactSkill?: boolean;
+	agentMessageController?: AgentSessionMessageController;
+	agentObserveController?: AgentObserveController;
+	rlmDepth?: number;
+	rlmMaxDepth?: number;
+	rlmSessionDir?: string;
+	rlmParentNodeId?: string;
+	rlmParentAgent?: string;
+	subagentRuntimeHost?: SubagentRuntimeHost;
+	rlmHeartbeatController?: AgentRlmHeartbeatController;
+	prewarmIpythonKernel?: boolean;
+	autonomous?: AgentAutonomousConfig;
+	serializedRefine?: boolean;
+	executionMode?: AgentExecutionMode;
+	telemetryDisabled?: true;
+	initialGoal?: { objective: string; tokenBudget?: number };
+}
+
+export interface CreateAgentSessionFromServicesOptions extends AgentSessionCreationOptions {
+	services: AgentSessionServices;
+	sessionManager: SessionManager;
+	sessionStartEvent?: SessionStartEvent;
 }
 
 /**
@@ -155,28 +195,39 @@ export async function createAgentSessionServices(
 	// integration skills by whether the user is logged in (enable-by-login).
 	const mcpManager = new McpManager({
 		authStorage: modelRegistry.authStorage,
-		getUserServers: () => settingsManager.getMcpServers(),
+		getUserServers: () => settingsManager.getGlobalMcpServers(),
 	});
-	const resourceLoader = new DefaultResourceLoader({
+	const userExtensionFactories = options.resourceLoaderOptions?.extensionFactories ?? [];
+	// The built-in Herdr reporter defers to Herdr's own file-based integration
+	// when the loader actually loaded it; two reporters would race on the same
+	// pane. noExtensions is a full opt-out: it disables the built-in reporter too.
+	const skipHerdrReporter = options.noBuiltinHerdrReporter || options.resourceLoaderOptions?.noExtensions;
+	const builtinExtensionFactories = skipHerdrReporter
+		? []
+		: [createHerdrAgentStateExtension(() => resourceLoader.getLoadedExtensionPaths())];
+	const resourceLoader: DefaultResourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,
 		agentDir,
 		settingsManager,
-		skillsOverride: (base) => {
-			const disabled = new Set(
-				mcpManager
-					.getDisabledBuiltinSkillOverrides()
-					.map((pattern) => pattern.replace(/^-/, "").replace(/\/SKILL\.md$/, "")),
-			);
-			return {
-				skills: base.skills.filter((skill) => !disabled.has(skill.name)),
-				diagnostics: base.diagnostics,
-			};
-		},
+		extensionFactories: [...builtinExtensionFactories, ...userExtensionFactories],
+		extraBuiltinSkillOverrides: () => mcpManager.getDisabledBuiltinSkillOverrides(),
 	});
 	await resourceLoader.reload(options.resourceLoaderReloadOptions);
 
 	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
+	if (
+		!options.telemetryDisabled &&
+		isTelemetryEnabled(settingsManager) &&
+		!settingsManager.getTelemetryNoticeShown()
+	) {
+		diagnostics.push({
+			type: "info",
+			message:
+				"Prime Agent sends pseudonymous usage and performance metrics without prompts, responses, tool content, file paths, or repository data. Disable this with telemetry.enabled=false, PRIME_AGENT_TELEMETRY=0, DO_NOT_TRACK=1, or offline mode.",
+		});
+		settingsManager.setTelemetryNoticeShown(true);
+	}
 	const extensionsResult = resourceLoader.getExtensions();
 	for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
 		try {
@@ -227,7 +278,11 @@ export async function createAgentSessionServices(
 export async function createAgentSessionFromServices(
 	options: CreateAgentSessionFromServicesOptions,
 ): Promise<CreateAgentSessionResult> {
-	return createAgentSession({
+	installAgentTraceUpload(options.sessionManager, {
+		authStorage: options.services.modelRuntime.authStorage,
+		settingsManager: options.services.settingsManager,
+	});
+	const result = await createAgentSession({
 		cwd: options.services.cwd,
 		agentDir: options.services.agentDir,
 		modelRuntime: options.services.modelRuntime,
@@ -237,11 +292,37 @@ export async function createAgentSessionFromServices(
 		mcpManager: options.services.mcpManager,
 		model: options.model,
 		thinkingLevel: options.thinkingLevel,
+		serviceTier: options.serviceTier,
 		scopedModels: options.scopedModels,
 		tools: options.tools,
 		excludeTools: options.excludeTools,
 		noTools: options.noTools,
 		customTools: options.customTools,
+		initialActiveToolNames: options.initialActiveToolNames,
+		allowedToolNames: options.allowedToolNames,
+		includeGoals: options.includeGoals,
+		includeCompactSkill: options.includeCompactSkill,
+		agentMessageController: options.agentMessageController,
+		agentObserveController: options.agentObserveController,
+		rlmDepth: options.rlmDepth,
+		rlmMaxDepth: options.rlmMaxDepth,
+		rlmSessionDir: options.rlmSessionDir,
+		rlmParentNodeId: options.rlmParentNodeId,
+		rlmParentAgent: options.rlmParentAgent,
+		subagentRuntimeHost: options.subagentRuntimeHost,
+		rlmHeartbeatController: options.rlmHeartbeatController,
 		sessionStartEvent: options.sessionStartEvent,
+		prewarmIpythonKernel: options.prewarmIpythonKernel,
+		autonomous: options.autonomous,
+		serializedRefine: options.serializedRefine,
+		initialGoal: options.initialGoal,
 	});
+	if (result.session.rlmDepth === 0 && !options.telemetryDisabled) {
+		installAgentTelemetry(result.session, {
+			agentDir: options.services.agentDir,
+			settingsManager: options.services.settingsManager,
+			executionMode: options.executionMode,
+		});
+	}
+	return result;
 }

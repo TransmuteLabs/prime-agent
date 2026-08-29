@@ -77,29 +77,59 @@ type LoadedResourcesContext = {
 
 type RebindContext = {
 	unsubscribe?: () => void;
+	localSessionHost?: undefined;
+	toolDefinitionCache: { clear: () => void };
+	bindLocalSessionExtensions: boolean;
 	applyRuntimeSettings: () => void;
-	renderCurrentSessionState: () => void;
+	renderSessionStateNow: () => Promise<void>;
 	bindCurrentSessionExtensions: () => Promise<void>;
 	subscribeToAgent: () => void;
+	refreshConnectionQueue: () => Promise<void>;
+	refreshHeartbeatCatalog: () => Promise<void>;
 	updateAvailableProviderCount: () => Promise<void>;
 	updateEditorBorderColor: () => void;
 	updateTerminalTitle: () => void;
+	getGoalState: () => undefined;
+	setGoalAnnouncementBaseline: (goal: undefined) => void;
+	syncGoalTray: (goal: undefined) => void;
+	syncWorkingLoader: () => void;
 };
+
+/** Members the rebind touches but this regression does not exercise. */
+function rebindScaffolding(): Omit<
+	RebindContext,
+	"applyRuntimeSettings" | "renderSessionStateNow" | "bindCurrentSessionExtensions" | "subscribeToAgent"
+> {
+	return {
+		toolDefinitionCache: { clear: () => {} },
+		bindLocalSessionExtensions: true,
+		refreshConnectionQueue: async () => {},
+		refreshHeartbeatCatalog: async () => {},
+		updateAvailableProviderCount: async () => {},
+		updateEditorBorderColor: () => {},
+		updateTerminalTitle: () => {},
+		getGoalState: () => undefined,
+		setGoalAnnouncementBaseline: () => {},
+		syncGoalTray: () => {},
+		syncWorkingLoader: () => {},
+	};
+}
 
 type ReloadCommandContext = {
 	hideThinkingBlock: boolean;
-	session: {
-		isStreaming: boolean;
-		isCompacting: boolean;
+	toolOutputExpanded: boolean;
+	bindLocalSessionExtensions: boolean;
+	isAgentStreaming: () => boolean;
+	isAgentCompacting: () => boolean;
+	agentConnection: {
 		reload: (options?: { beforeSessionStart?: () => void | Promise<void> }) => Promise<void>;
-		resourceLoader: { getThemes: () => { themes: [] } };
-		extensionRunner: unknown;
-		modelRegistry: { getError: () => string | undefined };
 	};
+	modelRegistry: { getError: () => string | undefined };
+	toolDefinitionCache: { clear: () => void };
+	uiServices: { getThemes: () => [] };
 	settingsManager: {
-		getHttpIdleTimeoutMs: () => number;
 		getHideThinkingBlock: () => boolean;
-		getOutputPad: () => 0 | 1;
+		getTheme: () => string | undefined;
 		getEditorPaddingX: () => number;
 		getAutocompleteMaxVisible: () => number;
 		getShowHardwareCursor: () => boolean;
@@ -117,9 +147,9 @@ type ReloadCommandContext = {
 	};
 	editor: unknown;
 	defaultEditor: { setPaddingX: (padding: number) => void; setAutocompleteMaxVisible: (maxVisible: number) => void };
-	themeController: { applyFromSettings: () => Promise<void> };
 	resetExtensionUI: () => void;
 	rebuildChatFromMessages: () => void;
+	refreshConnectionCatalog: () => Promise<void>;
 	setupAutocompleteProvider: () => void;
 	setupExtensionShortcuts: (runner: unknown) => void;
 	showLoadedResources: (options: unknown) => void;
@@ -135,43 +165,43 @@ type InteractiveModePrototype = {
 		options?: { extensions?: Array<{ path: string }>; force?: boolean; showDiagnosticsWhenQuiet?: boolean },
 	): void;
 	rebindCurrentSession(this: RebindContext, options?: { renderBeforeBind?: boolean }): Promise<void>;
-	handleReloadCommand(this: ReloadCommandContext): Promise<void>;
+	handleReloadCommand(this: ReloadCommandContext): Promise<boolean>;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
 
 type ReloadCommandContextOverrides = Omit<
 	Partial<ReloadCommandContext>,
-	"session" | "settingsManager" | "keybindings" | "editorContainer" | "ui" | "defaultEditor" | "themeController"
+	"agentConnection" | "settingsManager" | "keybindings" | "editorContainer" | "ui" | "defaultEditor"
 > & {
-	session?: Partial<ReloadCommandContext["session"]>;
+	agentConnection?: Partial<ReloadCommandContext["agentConnection"]>;
 	settingsManager?: Partial<ReloadCommandContext["settingsManager"]>;
 	keybindings?: Partial<ReloadCommandContext["keybindings"]>;
 	editorContainer?: Partial<ReloadCommandContext["editorContainer"]>;
 	ui?: Partial<ReloadCommandContext["ui"]>;
 	defaultEditor?: Partial<ReloadCommandContext["defaultEditor"]>;
-	themeController?: Partial<ReloadCommandContext["themeController"]>;
 };
 
 function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {}): ReloadCommandContext {
 	const editor = overrides.editor ?? {};
 	return {
 		hideThinkingBlock: overrides.hideThinkingBlock ?? false,
-		session: {
-			isStreaming: false,
-			isCompacting: false,
+		toolOutputExpanded: false,
+		bindLocalSessionExtensions: false,
+		isAgentStreaming: overrides.isAgentStreaming ?? (() => false),
+		isAgentCompacting: overrides.isAgentCompacting ?? (() => false),
+		agentConnection: {
 			reload: async (options) => {
 				await options?.beforeSessionStart?.();
 			},
-			resourceLoader: { getThemes: () => ({ themes: [] }) },
-			extensionRunner: {},
-			modelRegistry: { getError: () => undefined },
-			...overrides.session,
+			...overrides.agentConnection,
 		},
+		modelRegistry: overrides.modelRegistry ?? { getError: () => undefined },
+		toolDefinitionCache: { clear: () => {} },
+		uiServices: { getThemes: () => [] },
 		settingsManager: {
-			getHttpIdleTimeoutMs: () => 0,
 			getHideThinkingBlock: () => false,
-			getOutputPad: () => 1,
+			getTheme: () => undefined,
 			getEditorPaddingX: () => 1,
 			getAutocompleteMaxVisible: () => 10,
 			getShowHardwareCursor: () => false,
@@ -189,11 +219,11 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		},
 		editor,
 		defaultEditor: { setPaddingX: () => {}, setAutocompleteMaxVisible: () => {}, ...overrides.defaultEditor },
-		themeController: { applyFromSettings: async () => {}, ...overrides.themeController },
 		customHeader: overrides.customHeader,
 		builtInHeader: overrides.builtInHeader,
 		resetExtensionUI: overrides.resetExtensionUI ?? (() => {}),
 		rebuildChatFromMessages: overrides.rebuildChatFromMessages ?? (() => {}),
+		refreshConnectionCatalog: overrides.refreshConnectionCatalog ?? (async () => {}),
 		setupAutocompleteProvider: overrides.setupAutocompleteProvider ?? (() => {}),
 		setupExtensionShortcuts: overrides.setupExtensionShortcuts ?? (() => {}),
 		showLoadedResources: overrides.showLoadedResources ?? (() => {}),
@@ -287,8 +317,11 @@ describe("regression #5943: session_start transient UI", () => {
 
 		try {
 			const context: RebindContext = {
+				...rebindScaffolding(),
 				applyRuntimeSettings: () => events.push("apply"),
-				renderCurrentSessionState: () => events.push("render"),
+				renderSessionStateNow: async () => {
+					events.push("render");
+				},
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
@@ -297,9 +330,6 @@ describe("regression #5943: session_start transient UI", () => {
 					});
 				},
 				subscribeToAgent: () => events.push("subscribe"),
-				updateAvailableProviderCount: async () => {},
-				updateEditorBorderColor: () => {},
-				updateTerminalTitle: () => {},
 			};
 
 			await interactiveModePrototype.rebindCurrentSession.call(context, { renderBeforeBind: true });
@@ -328,8 +358,11 @@ describe("regression #5943: session_start transient UI", () => {
 
 		try {
 			const context: RebindContext = {
+				...rebindScaffolding(),
 				applyRuntimeSettings: () => {},
-				renderCurrentSessionState: () => events.push("render"),
+				renderSessionStateNow: async () => {
+					events.push("render");
+				},
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
@@ -346,9 +379,6 @@ describe("regression #5943: session_start transient UI", () => {
 						events.push(`${event.type}:${event.message.role}:${getMessageText(event)}`);
 					});
 				},
-				updateAvailableProviderCount: async () => {},
-				updateEditorBorderColor: () => {},
-				updateTerminalTitle: () => {},
 			};
 
 			await interactiveModePrototype.rebindCurrentSession.call(context, { renderBeforeBind: true });
@@ -380,8 +410,11 @@ describe("regression #5943: session_start transient UI", () => {
 
 		try {
 			const context: RebindContext = {
+				...rebindScaffolding(),
 				applyRuntimeSettings: () => {},
-				renderCurrentSessionState: () => events.push("render"),
+				renderSessionStateNow: async () => {
+					events.push("render");
+				},
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
@@ -398,13 +431,12 @@ describe("regression #5943: session_start transient UI", () => {
 						events.push(`${event.type}:${event.message.role}:${getMessageText(event)}`);
 					});
 				},
-				updateAvailableProviderCount: async () => {},
-				updateEditorBorderColor: () => {},
-				updateTerminalTitle: () => {},
 			};
 
 			await interactiveModePrototype.rebindCurrentSession.call(context, { renderBeforeBind: true });
-			await harness.session.agent.waitForIdle();
+			// The session admits queued input through its own pump, so the agent barrier alone can
+			// return before a handler-sent message has started its turn.
+			await harness.session.waitForIdle();
 
 			expect(events.slice(0, 3)).toEqual(["render", "subscribe", "bind"]);
 			expect(events).toContain("message_start:user:user from start");
@@ -454,7 +486,7 @@ describe("regression #5943: session_start transient UI", () => {
 		let context: ReloadCommandContext;
 		context = createReloadCommandContext({
 			settingsManager: { getHideThinkingBlock: () => true },
-			session: {
+			agentConnection: {
 				reload: async (options) => {
 					events.push("reload");
 					await options?.beforeSessionStart?.();
@@ -488,7 +520,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 		const context = createReloadCommandContext({
 			editor,
-			session: {
+			agentConnection: {
 				reload: async (options) => {
 					await options?.beforeSessionStart?.();
 					markReloadWaiting();

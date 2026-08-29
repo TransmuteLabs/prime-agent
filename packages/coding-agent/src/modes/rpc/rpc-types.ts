@@ -5,13 +5,23 @@
  * Responses and events are emitted as JSON lines on stdout.
  */
 
-import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model } from "@earendil-works/pi-ai";
+import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.ts";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type {
+	AgentCronJob,
+	AgentHeartbeatDeliveryMode,
+	AgentHeartbeatManagementAction,
+	AgentHeartbeatUpdateAction,
+} from "../../core/cron-jobs.ts";
+import type { GoalState } from "../../core/goals.ts";
+import type { RefinementResult } from "../../core/refinement/index.ts";
+import type { SessionActionSnapshot } from "../../core/session-action-store.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
-import type { SourceInfo } from "../../core/source-info.ts";
+import type { AgentConnectionHeartbeat, AgentConnectionSourceInfo } from "../agent-connection/types.ts";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -45,6 +55,7 @@ export type RpcCommand =
 
 	// Compaction
 	| { id?: string; type: "compact"; customInstructions?: string }
+	| { id?: string; type: "refine"; instructions?: string; rollbackId?: string; global?: boolean }
 	| { id?: string; type: "set_auto_compaction"; enabled: boolean }
 
 	// Retry
@@ -69,6 +80,42 @@ export type RpcCommand =
 
 	// Messages
 	| { id?: string; type: "get_messages" }
+	| {
+			id?: string;
+			type: "send_message";
+			targetActiveSessionId: string;
+			message: string;
+	  }
+	| { id?: string; type: "agent_messages_status" }
+	| { id?: string; type: "agent_messages_pause" }
+	| { id?: string; type: "agent_messages_resume" }
+	| { id?: string; type: "agent_messages_clear" }
+
+	// Scheduling
+	| { id?: string; type: "list_schedules"; includeInactive?: boolean }
+	| { id?: string; type: "add_schedule"; schedule: string; prompt: string }
+	| { id?: string; type: "cancel_schedule"; jobId: string }
+	| { id?: string; type: "list_heartbeats" }
+	| { id?: string; type: "get_heartbeat" }
+	| {
+			id?: string;
+			type: "set_heartbeat";
+			schedule: string;
+			prompt: string;
+			deliveryMode?: AgentHeartbeatDeliveryMode;
+	  }
+	| { id?: string; type: "update_heartbeat"; action: AgentHeartbeatUpdateAction }
+	| {
+			id?: string;
+			type: "manage_heartbeat";
+			activeSessionId: string;
+			jobId: string;
+			action: AgentHeartbeatManagementAction;
+	  }
+
+	// Active session and subagent observation
+	| { id?: string; type: "observe"; activeSessionId: string }
+	| { id?: string; type: "unobserve"; activeSessionId: string }
 
 	// Commands (available for invocation via prompt)
 	| { id?: string; type: "get_commands" };
@@ -86,7 +133,7 @@ export interface RpcSlashCommand {
 	/** What kind of command this is */
 	source: "extension" | "prompt" | "skill";
 	/** Source metadata for the owning resource */
-	sourceInfo: SourceInfo;
+	sourceInfo: AgentConnectionSourceInfo;
 }
 
 // ============================================================================
@@ -106,6 +153,8 @@ export interface RpcSessionState {
 	autoCompactionEnabled: boolean;
 	messageCount: number;
 	pendingMessageCount: number;
+	sessionActions: SessionActionSnapshot;
+	goal: GoalState;
 }
 
 // ============================================================================
@@ -177,6 +226,7 @@ export type RpcResponse =
 
 	// Compaction
 	| { id?: string; type: "response"; command: "compact"; success: true; data: CompactionResult }
+	| { id?: string; type: "response"; command: "refine"; success: true; data: RefinementResult }
 	| { id?: string; type: "response"; command: "set_auto_compaction"; success: true }
 
 	// Retry
@@ -225,6 +275,45 @@ export type RpcResponse =
 
 	// Messages
 	| { id?: string; type: "response"; command: "get_messages"; success: true; data: { messages: AgentMessage[] } }
+	| { id?: string; type: "response"; command: "send_message"; success: true; data: AgentSessionMessageReceipt }
+	| {
+			id?: string;
+			type: "response";
+			command: "agent_messages_status" | "agent_messages_pause" | "agent_messages_resume";
+			success: true;
+			data: AgentSessionMessageSafetyStatus;
+	  }
+	| { id?: string; type: "response"; command: "agent_messages_clear"; success: true; data: { cleared: number } }
+
+	// Scheduling
+	| { id?: string; type: "response"; command: "list_schedules"; success: true; data: { jobs: AgentCronJob[] } }
+	| { id?: string; type: "response"; command: "add_schedule"; success: true; data: { job: AgentCronJob } }
+	| { id?: string; type: "response"; command: "cancel_schedule"; success: true; data: { job: AgentCronJob } }
+	| {
+			id?: string;
+			type: "response";
+			command: "list_heartbeats";
+			success: true;
+			data: { heartbeats: AgentConnectionHeartbeat[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_heartbeat";
+			success: true;
+			data: { heartbeat: AgentCronJob | null };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "set_heartbeat" | "update_heartbeat" | "manage_heartbeat";
+			success: true;
+			data: { heartbeat: AgentCronJob | null };
+	  }
+
+	// Active session and subagent observation
+	| { id?: string; type: "response"; command: "observe"; success: true; data: { messages: AgentMessage[] } }
+	| { id?: string; type: "response"; command: "unobserve"; success: true }
 
 	// Commands
 	| {
@@ -295,3 +384,7 @@ export type RpcExtensionUIResponse =
 // ============================================================================
 
 export type RpcCommandType = RpcCommand["type"];
+
+export type RpcObservedSessionEvent =
+	| { type: "observed_session_event"; activeSessionId: string; event: AgentEvent }
+	| { type: "observed_session_closed"; activeSessionId: string; error?: string };

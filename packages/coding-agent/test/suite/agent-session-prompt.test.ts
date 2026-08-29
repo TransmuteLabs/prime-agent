@@ -10,6 +10,7 @@ import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestResourceLoader } from "../utilities.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
+import { createDeferred } from "./scheduling.ts";
 
 describe("AgentSession prompt characterization", () => {
 	const harnesses: Harness[] = [];
@@ -156,6 +157,7 @@ describe("AgentSession prompt characterization", () => {
 			getSkills: () => ({
 				skills: [
 					{
+						kind: "markdown" as const,
 						name: "test",
 						description: "Test skill",
 						filePath: skillPath,
@@ -502,5 +504,43 @@ describe("AgentSession prompt characterization", () => {
 		await expect(harness.session.prompt("hi")).rejects.toThrow(
 			`No API key found for ${harness.getModel().provider}.`,
 		);
+	});
+
+	it("preserves the active extension system prompt when max depth changes mid-run", async () => {
+		const responseStarted = createDeferred();
+		const responseGate = createDeferred();
+		const harness = await createHarness({
+			rlmDepth: 1,
+			rlmMaxDepth: 1,
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async (event) => ({
+						systemPrompt: `${event.systemPrompt}
+
+active extension doctrine`,
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			async () => {
+				responseStarted.resolve();
+				await responseGate.promise;
+				return fauxAssistantMessage("done");
+			},
+		]);
+
+		const promptPromise = harness.session.prompt("start");
+		await responseStarted.promise;
+		expect(harness.session.agent.state.systemPrompt).toContain("active extension doctrine");
+		expect(harness.session.agent.state.systemPrompt).not.toContain("A callable `rlm`");
+
+		await harness.session.setRlmMaxDepth(2);
+
+		expect(harness.session.agent.state.systemPrompt).toContain("A callable `rlm`");
+		expect(harness.session.agent.state.systemPrompt).toContain("active extension doctrine");
+		responseGate.resolve();
+		await promptPromise;
 	});
 });

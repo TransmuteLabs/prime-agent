@@ -110,6 +110,8 @@ export type CacheRetention = "none" | "short" | "long";
 
 export type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 
+export type ServiceTier = "auto" | "default" | "flex" | "scale" | "priority" | null;
+
 /** Provider-scoped environment overrides. Values take precedence over process.env. */
 export type ProviderEnv = Record<string, string>;
 export type ProviderHeaders = Record<string, string | null>;
@@ -198,6 +200,8 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * Providers that do not support this option ignore it.
 	 */
 	transport?: Transport;
+	/** Provider-neutral processing tier. Providers that do not support it ignore the value. */
+	serviceTier?: ServiceTier;
 	/**
 	 * Prompt cache retention preference. Providers map this to their supported values.
 	 * Default: "short".
@@ -315,7 +319,8 @@ export interface AnthropicAllowedFallbackModel {
 export interface SimpleStreamOptions extends StreamOptions {
 	/** Provider-neutral tool selection for simple requests. When omitted, adapters use provider-specific behavior. */
 	toolChoice?: ToolChoice;
-	reasoning?: ThinkingLevel;
+	/** Explicit model reasoning selection. Omit to preserve the provider default; "off" asks to disable it. */
+	reasoning?: ModelThinkingLevel;
 	/** Ask a capable provider to return a durable handle and continue the request asynchronously. */
 	deferred?: boolean | { window?: "15m" | "1h" | "24h" };
 	/** Custom token budgets for thinking levels (token-based providers only) */

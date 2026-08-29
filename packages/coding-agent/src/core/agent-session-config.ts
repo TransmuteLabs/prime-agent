@@ -15,6 +15,7 @@ export interface AgentSessionRuntimeConfig {
 	thinking?: ThinkingLevel;
 	models?: string[];
 	tools?: string[];
+	excludeTools?: string[];
 	noTools?: boolean;
 	noBuiltinTools?: boolean;
 	extensions?: string[];
@@ -35,9 +36,7 @@ export interface AgentSessionRuntimeConfig {
 	 * so it survives the appMode="daemon" context switch.
 	 */
 	serializedRefine?: boolean;
-	/** User-facing client mode that created this session. The daemon is transport, not an execution mode. */
 	executionMode?: AgentExecutionMode;
-	/** Opt-out-only policy carried across daemon process boundaries. */
 	telemetryDisabled?: true;
 	/**
 	 * Initial goal to seed when creating a new top-level session (rlmDepth 0).
@@ -45,6 +44,21 @@ export interface AgentSessionRuntimeConfig {
 	 * thread_goal_state entry (idempotent restart/rehydration).
 	 */
 	initialGoal?: { objective: string; tokenBudget?: number };
+}
+
+export type DurableAgentSessionRuntimeConfig = Pick<
+	AgentSessionRuntimeConfig,
+	"cwd" | "agentDir" | "sessionDir" | "telemetryDisabled"
+>;
+
+/** Only non-secret host settings needed to locate and govern durable daemon state. */
+export function durableAgentSessionRuntimeConfig(config: AgentSessionRuntimeConfig): DurableAgentSessionRuntimeConfig {
+	return {
+		...(typeof config.cwd === "string" ? { cwd: config.cwd } : {}),
+		...(typeof config.agentDir === "string" ? { agentDir: config.agentDir } : {}),
+		...(typeof config.sessionDir === "string" ? { sessionDir: config.sessionDir } : {}),
+		...(config.telemetryDisabled === true ? { telemetryDisabled: true as const } : {}),
+	};
 }
 
 export function mergeAgentSessionRuntimeConfig(
@@ -66,6 +80,7 @@ export function mergeAgentSessionRuntimeConfig(
 		thinking: override.thinking ?? base.thinking,
 		models: cloneArray(override.models ?? base.models),
 		tools: cloneArray(override.tools ?? base.tools),
+		excludeTools: cloneArray(override.excludeTools ?? base.excludeTools),
 		noTools: override.noTools ?? base.noTools,
 		noBuiltinTools: override.noBuiltinTools ?? base.noBuiltinTools,
 		extensions: cloneArray(override.extensions ?? base.extensions),
@@ -95,6 +110,7 @@ function cloneAgentSessionRuntimeConfig(config: AgentSessionRuntimeConfig): Agen
 		appendSystemPrompt: cloneArray(config.appendSystemPrompt),
 		models: cloneArray(config.models),
 		tools: cloneArray(config.tools),
+		excludeTools: cloneArray(config.excludeTools),
 		extensions: cloneArray(config.extensions),
 		skills: cloneArray(config.skills),
 		promptTemplates: cloneArray(config.promptTemplates),

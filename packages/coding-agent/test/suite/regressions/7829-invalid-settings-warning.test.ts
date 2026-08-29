@@ -32,6 +32,15 @@ describe("issue #7829 invalid settings warning", () => {
 				ui: { requestRender: vi.fn() },
 				version: "test",
 				showWarning: (InteractiveMode.prototype as unknown as { showWarning(message: string): void }).showWarning,
+				showError: (InteractiveMode.prototype as unknown as { showError(message: string): void }).showError,
+				showStatus: (InteractiveMode.prototype as unknown as { showStatus(message: string): void }).showStatus,
+				restorePromptStashOnOpen: vi.fn(),
+				runStartupOnboarding: vi.fn(async () => {}),
+				getModelFallbackWarningAction: vi.fn(() => "suppress"),
+				getCurrentModel: vi.fn(() => undefined),
+				getCurrentCwd: vi.fn(() => process.cwd()),
+				settingsManager: harness.settingsManager,
+				modelRegistry: { getError: () => undefined },
 				session: harness.session,
 				checkForPackageUpdates: vi.fn().mockResolvedValue([]),
 				checkTmuxKeyboardSetup: vi.fn().mockResolvedValue(undefined),
@@ -43,9 +52,8 @@ describe("issue #7829 invalid settings warning", () => {
 			void run.call(context);
 
 			await vi.waitFor(() => {
-				expect(render(chatContainer)).toContain(
-					"Warning: Invalid settings file /tmp/settings.json: malformed JSON",
-				);
+				// Warnings carry the fork's glyph prefix, not pi's "Warning: " label.
+				expect(render(chatContainer)).toContain("⚠ Invalid settings file /tmp/settings.json: malformed JSON");
 			});
 		} finally {
 			if (previousOffline === undefined) delete process.env.PI_OFFLINE;

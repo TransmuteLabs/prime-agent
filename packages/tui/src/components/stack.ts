@@ -138,12 +138,15 @@ export function allocateStackSizes(
 	availableSize: number | undefined,
 	gap: number,
 ): number[] {
-	const sizes = entries.map((entry, index) =>
-		clampSize(
-			entry.basis === undefined || entry.basis === "auto" ? (intrinsicSizes[index] ?? 0) : entry.basis,
-			entry,
-		),
-	);
+	const sizes = entries.map((entry, index) => {
+		const intrinsic = intrinsicSizes[index] ?? 0;
+		// A basis is only the starting size for distributing free space. Without an available
+		// size there is none, so a growing entry keeps its content instead of being clamped to
+		// a basis it can never grow out of.
+		const growsWithoutSpace = availableSize === undefined && (entry.grow ?? 0) > 0;
+		const basis = entry.basis === undefined || entry.basis === "auto" || growsWithoutSpace ? intrinsic : entry.basis;
+		return clampSize(basis, entry);
+	});
 	if (availableSize === undefined) return sizes;
 
 	const contentSize = Math.max(0, Math.floor(availableSize) - Math.max(0, entries.length - 1) * gap);

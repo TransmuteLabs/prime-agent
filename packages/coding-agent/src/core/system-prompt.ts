@@ -11,7 +11,7 @@ export interface BuildSystemPromptOptions {
 	customPrompt?: string;
 	/** Active tools. Tool schemas carry tool descriptions outside the prompt body. */
 	selectedTools?: string[];
-	/** Optional one-line tool snippets keyed by tool name. Used only for custom prompts. */
+	/** Optional one-line tool snippets keyed by tool name. The RLM prompt does not enumerate tools: tool schemas carry their descriptions (pinned by regression #3592). */
 	toolSnippets?: Record<string, string>;
 	/** Additional guideline bullets appended to the system prompt. */
 	promptGuidelines?: string[];
@@ -33,6 +33,8 @@ export interface BuildSystemPromptOptions {
 	rlmParentAgent?: string;
 	/** Global harness state to inject as compact persistent context. */
 	harnessState?: HarnessState;
+	/** Enabled user-configured servers available through the generic kernel MCP API. */
+	genericMcpServers?: string[];
 }
 
 /** Build the system prompt with tools, guidelines, and context */
@@ -69,6 +71,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const visibleSkills = skills.filter((skill) => !skill.disableModelInvocation);
 	const visiblePythonSkillImportNames = getPythonSkillRuntimeInfo(visibleSkills).map((skill) => skill.importName);
 	const hasRefineSkill = visibleSkills.some((skill) => skill.name === REFINE_SKILL_NAME);
+	const genericMcpSection = hasIpython ? formatGenericMcpGuidance(options.genericMcpServers) : "";
 
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -111,6 +114,10 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			prompt += `\n\n${formatHarnessStateForPrompt(harnessState, { includeIpythonExamples: hasIpython, includeShellExamples: hasBash, includeRefineExamples: hasIpython && hasRefineSkill })}`;
 		}
 
+		if (genericMcpSection) {
+			prompt += `\n\n${genericMcpSection}`;
+		}
+
 		if (appendSection) {
 			prompt += appendSection;
 		}
@@ -145,6 +152,10 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		prompt += `\n\n${formatHarnessStateForPrompt(harnessState, { includeIpythonExamples: hasIpython, includeShellExamples: hasBash, includeRefineExamples: hasIpython && hasRefineSkill })}`;
 	}
 
+	if (genericMcpSection) {
+		prompt += `\n\n${genericMcpSection}`;
+	}
+
 	const guidelines = formatPromptGuidelines(promptGuidelines);
 	if (guidelines) {
 		prompt += `\n\n# Additional Guidance\n\n${guidelines}`;
@@ -171,6 +182,22 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	}
 
 	return prompt;
+}
+
+function formatGenericMcpGuidance(servers: string[] | undefined): string {
+	const enabledServers = [...new Set(servers ?? [])].sort((left, right) => left.localeCompare(right));
+	if (enabledServers.length === 0) return "";
+
+	return [
+		"# Generic MCP Connections",
+		"",
+		"Generic MCP connections are accessed through the pre-imported Python `mcp` object in the Python REPL, not as top-level native tool namespaces or installed Python skills.",
+		`Enabled generic MCP servers: ${enabledServers.map((server) => `\`${server}\``).join(", ")}.`,
+		...enabledServers.map(
+			(server) =>
+				`For \`${server}\`, first discover its tools with \`await mcp.list_tools("${server}")\`, then call one with \`await mcp.call_tool("${server}", "<tool>", arguments)\`.`,
+		),
+	].join("\n");
 }
 
 function formatPromptGuidelines(promptGuidelines: string[] | undefined): string {

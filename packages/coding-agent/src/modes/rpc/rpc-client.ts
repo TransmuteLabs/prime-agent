@@ -7,17 +7,35 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
+import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.ts";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type {
+	AgentCronJob,
+	AgentHeartbeatDeliveryMode,
+	AgentHeartbeatManagementAction,
+	AgentHeartbeatUpdateAction,
+} from "../../core/cron-jobs.ts";
+import type { RefinementResult } from "../../core/refinement/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { AgentConnectionHeartbeat } from "../agent-connection/types.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type {
+	RpcCommand,
+	RpcObservedSessionEvent,
+	RpcResponse,
+	RpcSessionState,
+	RpcSlashCommand,
+} from "./rpc-types.ts";
 
 // ============================================================================
 // Types
 // ============================================================================
+
+/** Extended response timeout for refine requests, which run an LLM pass. */
+export const REFINE_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** Distributive Omit that works with union types */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -48,6 +66,7 @@ export interface ModelInfo {
 }
 
 export type RpcEventListener = (event: JsonAgentSessionEvent) => void;
+export type RpcObservedSessionListener = (event: RpcObservedSessionEvent) => void;
 
 // ============================================================================
 // RPC Client
@@ -57,6 +76,7 @@ export class RpcClient {
 	private process: ChildProcess | null = null;
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
+	private observedSessionListeners: RpcObservedSessionListener[] = [];
 	private pendingRequests: Map<string, { resolve: (response: RpcResponse) => void; reject: (error: Error) => void }> =
 		new Map();
 	private requestId = 0;
@@ -175,6 +195,16 @@ export class RpcClient {
 			const index = this.eventListeners.indexOf(listener);
 			if (index !== -1) {
 				this.eventListeners.splice(index, 1);
+			}
+		};
+	}
+
+	onObservedSessionEvent(listener: RpcObservedSessionListener): () => void {
+		this.observedSessionListeners.push(listener);
+		return () => {
+			const index = this.observedSessionListeners.indexOf(listener);
+			if (index !== -1) {
+				this.observedSessionListeners.splice(index, 1);
 			}
 		};
 	}
@@ -320,6 +350,27 @@ export class RpcClient {
 	}
 
 	/**
+	 * Refine editable continual harness state.
+	 */
+	async refine(
+		options: { instructions?: string; rollbackId?: string; global?: boolean } = {},
+	): Promise<RefinementResult> {
+		// Refinement runs an LLM pass that routinely exceeds the default 30s response
+		// timeout, so use the same extended window as the daemon refine path.
+		const command = { type: "refine", instructions: options.instructions, rollbackId: options.rollbackId } as {
+			type: "refine";
+			instructions?: string;
+			rollbackId?: string;
+			global?: boolean;
+		};
+		if (options.global !== undefined) {
+			command.global = options.global;
+		}
+		const response = await this.send(command, REFINE_REQUEST_TIMEOUT_MS);
+		return this.getData(response);
+	}
+
+	/**
 	 * Set auto-compaction enabled/disabled.
 	 */
 	async setAutoCompaction(enabled: boolean): Promise<void> {
@@ -445,6 +496,97 @@ export class RpcClient {
 		return this.getData<{ messages: AgentMessage[] }>(response).messages;
 	}
 
+	async sendAgentMessage(targetActiveSessionId: string, message: string): Promise<AgentSessionMessageReceipt> {
+		const response = await this.send({
+			type: "send_message",
+			targetActiveSessionId,
+			message,
+		});
+		return this.getData(response);
+	}
+
+	async getAgentMessageStatus(): Promise<AgentSessionMessageSafetyStatus> {
+		return this.getData(await this.send({ type: "agent_messages_status" }));
+	}
+
+	async pauseAgentMessages(): Promise<AgentSessionMessageSafetyStatus> {
+		return this.getData(await this.send({ type: "agent_messages_pause" }));
+	}
+
+	async resumeAgentMessages(): Promise<AgentSessionMessageSafetyStatus> {
+		return this.getData(await this.send({ type: "agent_messages_resume" }));
+	}
+
+	async clearAgentMessages(): Promise<number> {
+		const response = await this.send({ type: "agent_messages_clear" });
+		return this.getData<{ cleared: number }>(response).cleared;
+	}
+
+	async listSchedules(includeInactive?: boolean): Promise<AgentCronJob[]> {
+		const response = await this.send({ type: "list_schedules", includeInactive });
+		return this.getData<{ jobs: AgentCronJob[] }>(response).jobs;
+	}
+
+	async addSchedule(schedule: string, prompt: string): Promise<AgentCronJob> {
+		const response = await this.send({ type: "add_schedule", schedule, prompt });
+		return this.getData<{ job: AgentCronJob }>(response).job;
+	}
+
+	async cancelSchedule(jobId: string): Promise<AgentCronJob> {
+		const response = await this.send({ type: "cancel_schedule", jobId });
+		return this.getData<{ job: AgentCronJob }>(response).job;
+	}
+
+	async listHeartbeats(): Promise<AgentConnectionHeartbeat[]> {
+		const response = await this.send({ type: "list_heartbeats" });
+		return this.getData<{ heartbeats: AgentConnectionHeartbeat[] }>(response).heartbeats;
+	}
+
+	async getHeartbeat(): Promise<AgentCronJob | null> {
+		const response = await this.send({ type: "get_heartbeat" });
+		return this.getData<{ heartbeat: AgentCronJob | null }>(response).heartbeat;
+	}
+
+	async setHeartbeat(
+		schedule: string,
+		prompt: string,
+		deliveryMode?: AgentHeartbeatDeliveryMode,
+	): Promise<AgentCronJob> {
+		const response = await this.send({ type: "set_heartbeat", schedule, prompt, deliveryMode });
+		const heartbeat = this.getData<{ heartbeat: AgentCronJob | null }>(response).heartbeat;
+		if (!heartbeat) {
+			throw new Error("Daemon did not return the created heartbeat");
+		}
+		return heartbeat;
+	}
+
+	async updateHeartbeat(action: AgentHeartbeatUpdateAction): Promise<AgentCronJob | null> {
+		const response = await this.send({ type: "update_heartbeat", action });
+		return this.getData<{ heartbeat: AgentCronJob | null }>(response).heartbeat;
+	}
+
+	async manageHeartbeat(
+		activeSessionId: string,
+		jobId: string,
+		action: AgentHeartbeatManagementAction,
+	): Promise<AgentCronJob> {
+		const response = await this.send({ type: "manage_heartbeat", activeSessionId, jobId, action });
+		const heartbeat = this.getData<{ heartbeat: AgentCronJob | null }>(response).heartbeat;
+		if (!heartbeat) {
+			throw new Error("Daemon did not return the managed heartbeat");
+		}
+		return heartbeat;
+	}
+
+	async observe(activeSessionId: string): Promise<AgentMessage[]> {
+		const response = await this.send({ type: "observe", activeSessionId });
+		return this.getData<{ messages: AgentMessage[] }>(response).messages;
+	}
+
+	async unobserve(activeSessionId: string): Promise<void> {
+		await this.send({ type: "unobserve", activeSessionId });
+	}
+
 	/**
 	 * Get available commands (extension commands, prompt templates, skills).
 	 */
@@ -524,6 +666,16 @@ export class RpcClient {
 				pending.resolve(data as RpcResponse);
 				return;
 			}
+			if (data.type === "observed_session_event" || data.type === "observed_session_closed") {
+				for (const listener of [...this.observedSessionListeners]) {
+					try {
+						listener(data as RpcObservedSessionEvent);
+					} catch {
+						// Listener failures must not block other RPC subscribers.
+					}
+				}
+				return;
+			}
 
 			// Otherwise it's an event
 			for (const listener of this.eventListeners) {
@@ -545,7 +697,7 @@ export class RpcClient {
 		this.pendingRequests.clear();
 	}
 
-	private async send(command: RpcCommandBody): Promise<RpcResponse> {
+	private async send(command: RpcCommandBody, timeoutMs = 30000): Promise<RpcResponse> {
 		const childProcess = this.process;
 		const stdin = childProcess?.stdin;
 		if (!childProcess || !stdin) {
@@ -572,7 +724,7 @@ export class RpcClient {
 			const timeout = setTimeout(() => {
 				this.pendingRequests.delete(id);
 				reject(new Error(`Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`));
-			}, 30000);
+			}, timeoutMs);
 
 			this.pendingRequests.set(id, {
 				resolve: (response) => {

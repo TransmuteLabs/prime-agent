@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
 	type Api,
@@ -40,8 +41,16 @@ import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
 import { getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
+import { openAICodexModelsUrl, readOpenAICodexAccountId, readOpenAICodexModelIds } from "./codex-model-discovery.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
+import { PRIME_INFERENCE_PROVIDER_ID } from "./prime-inference-auth.ts";
+import {
+	asProviderHeaderSource,
+	PrivatePrimeInferenceAuthorization,
+	withPrivatePrimeInferenceAuthorization,
+} from "./prime-inference-authorization.ts";
+import { isPrivatePrimeInferenceModel } from "./prime-inference-models.ts";
 import {
 	type AuthStatus,
 	type CompatibilityRequestConfig,
@@ -126,6 +135,13 @@ function mergeHeaders(
 	return merged;
 }
 
+/** Drop header removals, which express "unset" in provider config but have no meaning in a fetch. */
+function definedHeaders(headers: ProviderHeaders | undefined): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(headers ?? {}).flatMap(([name, value]) => (value === null ? [] : [[name, value] as const])),
+	);
+}
+
 /** Configured pi-ai Models collection used by coding-agent and SDK consumers. */
 export class ModelRuntime implements Models {
 	private readonly models: MutableModels;
@@ -149,7 +165,11 @@ export class ModelRuntime implements Models {
 	private availabilityErrorSeq = 0;
 	private readonly providerAvailabilitySeq = new Map<string, number>();
 	private availabilityError: string | undefined;
+	/** Newest availability pass in flight; a superseded caller follows it instead of starting another. */
+	private latestAvailabilityPass: Promise<boolean> | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
+	private readonly privatePrimeAuthorization: PrivatePrimeInferenceAuthorization;
+	private openAICodexModelsCache: { authFingerprint: string; modelIds: Set<string>; refreshedAt: number } | undefined;
 
 	private constructor(
 		credentials: RuntimeCredentials,
@@ -163,7 +183,27 @@ export class ModelRuntime implements Models {
 		this.config = config;
 		this.modelsPath = modelsPath;
 		this.modelNetworkEnabled = modelNetworkEnabled;
-		this.defaultBuiltins = new Map(providers.map((provider) => [provider.id, provider]));
+		this.privatePrimeAuthorization = new PrivatePrimeInferenceAuthorization({
+			credentials,
+			teamHeaders: () =>
+				asProviderHeaderSource(credentials.underlyingStore)?.getProviderHeaders(PRIME_INFERENCE_PROVIDER_ID),
+			explicitModelIds: () =>
+				new Set(
+					(this.config.getProvider(PRIME_INFERENCE_PROVIDER_ID)?.models ?? [])
+						.filter((model) => isPrivatePrimeInferenceModel({ provider: PRIME_INFERENCE_PROVIDER_ID, ...model }))
+						.map((model) => model.id),
+				),
+			cacheDir: () => (this.modelsPath ? dirname(this.modelsPath) : undefined),
+			networkEnabled: () => this.modelNetworkEnabled,
+		});
+		this.defaultBuiltins = new Map(
+			providers.map((provider) => [
+				provider.id,
+				provider.id === PRIME_INFERENCE_PROVIDER_ID
+					? withPrivatePrimeInferenceAuthorization(provider, this.privatePrimeAuthorization)
+					: provider,
+			]),
+		);
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
 		this.rebuildProviders();
@@ -282,7 +322,8 @@ export class ModelRuntime implements Models {
 		};
 	}
 
-	private async runAvailabilityRefresh(seq: number, errorSeq: number, signal: AbortSignal): Promise<void> {
+	/** Resolves false when a newer refresh superseded this pass, leaving the snapshot untouched. */
+	private async runAvailabilityRefresh(seq: number, errorSeq: number, signal: AbortSignal): Promise<boolean> {
 		const providers = this.models.getProviders();
 		const [available, checks, credentials] = await Promise.all([
 			this.models.getAvailable(undefined, { signal }),
@@ -296,7 +337,7 @@ export class ModelRuntime implements Models {
 			),
 			this.credentials.list({ signal }),
 		]);
-		if (seq !== this.availabilityRefreshSeq) return;
+		if (seq !== this.availabilityRefreshSeq) return false;
 		const auth = new Map(checks);
 		const configuredProviders = new Set(
 			checks
@@ -311,24 +352,59 @@ export class ModelRuntime implements Models {
 			auth,
 		};
 		if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
+		return true;
 	}
 
-	private queueAvailabilityRefresh(signal?: AbortSignal): Promise<void> {
+	private queueAvailabilityRefresh(signal?: AbortSignal): Promise<boolean> {
 		const seq = ++this.availabilityRefreshSeq;
 		for (const [providerId, providerSeq] of this.providerAvailabilitySeq) {
 			this.providerAvailabilitySeq.set(providerId, providerSeq + 1);
 		}
 		const errorSeq = ++this.availabilityErrorSeq;
 		const effectiveSignal = operationSignal(signal);
-		return this.runAvailabilityRefresh(seq, errorSeq, effectiveSignal).catch((error) => {
+		const pass = this.runAvailabilityRefresh(seq, errorSeq, effectiveSignal).catch((error) => {
 			if (errorSeq === this.availabilityErrorSeq && !effectiveSignal.aborted) {
 				this.availabilityError = error instanceof Error ? error.message : String(error);
 			}
 			throw error;
 		});
+		this.trackAvailabilityPass(pass);
+		return pass;
 	}
 
-	private async refreshProviderAvailability(providerId: string, signal: AbortSignal): Promise<void> {
+	/** Record the newest pass so a superseded caller can await the one that displaced it. */
+	private trackAvailabilityPass(pass: Promise<boolean>): void {
+		const tracked = pass.then(
+			(applied) => applied,
+			() => false,
+		);
+		this.latestAvailabilityPass = tracked;
+		void tracked.finally(() => {
+			if (this.latestAvailabilityPass === tracked) this.latestAvailabilityPass = undefined;
+		});
+	}
+
+	/**
+	 * Run an availability pass and resolve once one has actually published. Starting a
+	 * second pass on supersession would livelock two concurrent callers against each
+	 * other, so a loser follows the pass that displaced it.
+	 */
+	private async settledAvailabilityRefresh(signal?: AbortSignal): Promise<void> {
+		let pass = this.queueAvailabilityRefresh(signal);
+		while (!(await pass)) {
+			const winner = this.latestAvailabilityPass;
+			if (!winner || winner === pass) return;
+			pass = winner;
+		}
+	}
+
+	private refreshProviderAvailability(providerId: string, signal: AbortSignal): Promise<void> {
+		const pass = this.runProviderAvailabilityRefresh(providerId, signal);
+		this.trackAvailabilityPass(pass.then(() => true));
+		return pass;
+	}
+
+	private async runProviderAvailabilityRefresh(providerId: string, signal: AbortSignal): Promise<void> {
 		// Invalidate any full availability pass that started before this credential change.
 		++this.availabilityRefreshSeq;
 		const providerSeq = (this.providerAvailabilitySeq.get(providerId) ?? 0) + 1;
@@ -415,12 +491,84 @@ export class ModelRuntime implements Models {
 				throw error;
 			}
 		}
-		await this.queueAvailabilityRefresh(options?.signal);
+		// A superseded pass leaves the snapshot untouched, so returning here would hand
+		// back the state from before the change that superseded it.
+		await this.settledAvailabilityRefresh(options?.signal);
 		return this.snapshot.available;
 	}
 
 	getAvailableSnapshot(): readonly Model<Api>[] {
 		return this.snapshot.available;
+	}
+
+	/**
+	 * Models that can actually run a request now: the available set narrowed to what
+	 * each provider's own catalog admits. `/model` offers the unfiltered available
+	 * list, so a model dropped here stays visible there.
+	 */
+	async getExecutableModels(): Promise<readonly Model<Api>[]> {
+		await this.privatePrimeAuthorization.refresh();
+		const availableModels = await this.getAvailable();
+		const codexModels = availableModels.filter((model) => model.provider === "openai-codex");
+		if (codexModels.length === 0) return availableModels;
+
+		const withoutCodex = () => availableModels.filter((model) => model.provider !== "openai-codex");
+		const cachedCatalog = (fingerprint: string): Set<string> | undefined => {
+			const cached = this.openAICodexModelsCache;
+			return cached?.authFingerprint === fingerprint && Date.now() - cached.refreshedAt < 300_000
+				? cached.modelIds
+				: undefined;
+		};
+
+		let resolution: AuthResult | undefined;
+		try {
+			resolution = await this.getAuth(codexModels[0]!);
+		} catch {
+			return withoutCodex();
+		}
+		const apiKey = resolution?.auth.apiKey;
+		if (!apiKey) return withoutCodex();
+
+		const authFingerprint = createHash("sha256").update(apiKey).digest("hex");
+		const cached = cachedCatalog(authFingerprint);
+		if (cached) {
+			return availableModels.filter((model) => model.provider !== "openai-codex" || cached.has(model.id));
+		}
+
+		const accountId = readOpenAICodexAccountId(apiKey);
+		if (!accountId) return withoutCodex();
+		try {
+			const response = await fetch(openAICodexModelsUrl(resolution?.auth.baseUrl ?? codexModels[0]!.baseUrl), {
+				headers: {
+					...definedHeaders(resolution?.auth.headers),
+					Authorization: `Bearer ${apiKey}`,
+					"chatgpt-account-id": accountId,
+					originator: "pi",
+				},
+				signal: AbortSignal.timeout(5_000),
+			});
+			if (!response.ok) {
+				throw new Error(`OpenAI Codex model discovery failed with HTTP ${response.status}`);
+			}
+			const modelIds = readOpenAICodexModelIds(await response.json());
+			this.openAICodexModelsCache = { authFingerprint, modelIds, refreshedAt: Date.now() };
+			return availableModels.filter((model) => model.provider !== "openai-codex" || modelIds.has(model.id));
+		} catch {
+			const fallback = cachedCatalog(authFingerprint);
+			if (fallback) {
+				return availableModels.filter((model) => model.provider !== "openai-codex" || fallback.has(model.id));
+			}
+			return withoutCodex();
+		}
+	}
+
+	/** Whether a model is usable now. Private Prime Inference models need a live authorization check. */
+	async canUseModel(model: Model<Api>): Promise<boolean> {
+		if (!this.hasConfiguredAuth(model.provider)) return false;
+		if (!isPrivatePrimeInferenceModel(model)) return true;
+		await this.privatePrimeAuthorization.refresh();
+		const available = await this.getAvailable();
+		return available.some((candidate) => candidate.provider === model.provider && candidate.id === model.id);
 	}
 
 	getError(): string | undefined {
@@ -482,11 +630,17 @@ export class ModelRuntime implements Models {
 			this.extensionProviders.get(providerOrModel.provider),
 			{ ...(resolution.env ?? {}), ...(overrides.env ?? {}) },
 		);
+		// A team selection lives beside the credential rather than in provider config,
+		// so it reaches the request here; pi-ai's own team-id fallback applies when the
+		// store has no selection. models.json headers stay the topmost layer.
+		const storedHeaders = asProviderHeaderSource(this.credentials.underlyingStore)?.getProviderHeaders(
+			providerOrModel.provider,
+		);
 		return {
 			...resolution,
 			auth: {
 				...resolution.auth,
-				headers: mergeHeaders(resolution.auth.headers, configuredHeaders),
+				headers: mergeHeaders(mergeHeaders(resolution.auth.headers, storedHeaders), configuredHeaders),
 			},
 		};
 	}
@@ -726,6 +880,9 @@ export class ModelRuntime implements Models {
 		};
 		const errors = new Map(result.errors);
 		this.updateModelSnapshot();
+		// The availability filter for private Prime Inference models reads a memoized
+		// decision, so it has to be refreshed before the pass that consults it.
+		await this.privatePrimeAuthorization.refresh();
 		if (options.providers) {
 			await Promise.all(
 				[...new Set(options.providers)].map(async (providerId) => {
@@ -740,7 +897,7 @@ export class ModelRuntime implements Models {
 			);
 		} else {
 			try {
-				await this.queueAvailabilityRefresh(options.signal);
+				await this.settledAvailabilityRefresh(options.signal);
 			} catch {
 				// Availability errors are recorded by the latest pass; refreshed models remain usable.
 			}

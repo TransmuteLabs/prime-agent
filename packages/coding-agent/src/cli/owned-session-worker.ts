@@ -7,9 +7,10 @@ import type { AgentSession } from "../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import {
 	clearOrphanProcessJournal,
-	isOrphanProcessIdentityCurrent,
+	killOrphanProcess,
 	ORPHAN_PROCESS_JOURNAL_ENV,
 	readActiveOrphanProcesses,
+	shouldReapOrphanProcess,
 } from "../core/orphan-process-journal.ts";
 import { SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../core/session-lease.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../modes/rpc/jsonl.ts";
@@ -297,19 +298,10 @@ export async function runOwnedSessionWorkerFrontend(
 			}
 		}
 		for (const orphan of readActiveOrphanProcesses(orphanProcessJournalPath, workerPid)) {
-			if (!isOrphanProcessIdentityCurrent(orphan)) {
+			if (!shouldReapOrphanProcess(orphan)) {
 				continue;
 			}
-			const { pid } = orphan;
-			try {
-				process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL");
-			} catch {
-				try {
-					process.kill(pid, "SIGKILL");
-				} catch {
-					// The detached resource may already have exited.
-				}
-			}
+			killOrphanProcess(orphan.pid);
 		}
 		clearOrphanProcessJournal(orphanProcessJournalPath);
 	};

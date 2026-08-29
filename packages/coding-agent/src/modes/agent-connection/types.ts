@@ -1,7 +1,7 @@
-import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, ImageContent, Model, TextContent, Transport, Usage } from "@earendil-works/pi-ai";
+import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { Api, ImageContent, Model, ServiceTier, TextContent, Transport, Usage } from "@earendil-works/pi-ai";
 import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.ts";
-import type { AgentSessionEvent } from "../../core/agent-session.ts";
+import type { AuthSourceToken } from "../../core/auth-storage.ts";
 import type { AgentAutonomousStatus } from "../../core/autonomous.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
@@ -12,8 +12,11 @@ import type {
 	AgentHeartbeatManagementAction,
 	AgentHeartbeatUpdateAction,
 } from "../../core/cron-jobs.ts";
+import type { ReplayBuiltInToolName } from "../../core/extensions/index.ts";
 import type { InputSource } from "../../core/extensions/types.ts";
 import type { GoalState } from "../../core/goals.ts";
+import type { KernelSentAgentMessage } from "../../core/kernel/index.ts";
+import type { AcpMcpServerConfig } from "../../core/mcp/acp-mcp-types.ts";
 import type { RefinementResult } from "../../core/refinement/index.ts";
 import type { RlmMaxDepthStatus, SetRlmMaxDepthResult } from "../../core/rlm-max-depth.ts";
 import type {
@@ -24,7 +27,6 @@ import type {
 } from "../../core/session-action-store.ts";
 import type { DeleteSessionFileResult } from "../../core/session-file-actions.ts";
 import type { SessionStats } from "../../core/session-stats.ts";
-import type { ServiceTier } from "../daemon/prime-port-ai-compat.ts";
 
 /**
  * Client-side interaction boundary consumed by InteractiveMode.
@@ -296,12 +298,12 @@ export interface AgentConnectionParentMetadata {
 export interface AgentConnectionSnapshot {
 	state: AgentConnectionState;
 	messages: AgentMessage[];
-	/** In-flight assistant message, kept separate from finalized transcript messages. */
+	/** In-flight assistant message, separate from finalized transcript messages. */
 	streamingMessage?: AgentMessage;
 	sessionContext?: AgentConnectionSessionContext;
 	sessionTree?: { tree: AgentConnectionSessionTreeNode[]; leafId: string | null };
 	parent?: AgentConnectionParentMetadata;
-	/** Live RLM child agents (including grandchildren) known to the host at snapshot time. */
+	/** Live RLM children, including descendants, known to the host at snapshot time. */
 	children?: AgentConnectionRlmChildAgentSnapshot[];
 	lastEventSequence?: number;
 	lastEventCursor?: AgentConnectionEventCursor;
@@ -340,6 +342,8 @@ export interface AgentConnectionState {
 	leafId: string | null;
 	autoCompactionEnabled: boolean;
 	messageCount: number;
+	/** Queued steering plus follow-up messages not yet delivered to the agent. */
+	pendingMessageCount: number;
 	sessionActions: SessionActionSnapshot;
 	compactionCount: number;
 	goal: GoalState;
@@ -347,7 +351,7 @@ export interface AgentConnectionState {
 	scopedModels: AgentConnectionScopedModel[];
 	activeToolNames: string[];
 	contextUsage: SessionStats["contextUsage"];
-	/** One-line recap of the agent's recent work, shown above the prompt. */
+	/** One-line recent-work recap for the prompt UI. */
 	recap?: string;
 }
 
@@ -430,13 +434,12 @@ export interface AgentConnectionToolDefinition {
 	promptGuidelines?: string[];
 	parameters: unknown;
 	renderShell?: "default" | "self";
-	replayBuiltInToolName?: string;
+	replayBuiltInToolName?: ReplayBuiltInToolName;
 }
 
-/** Prompt admission failure; only a confirmed cancellation is retry-safe. */
+/** Only confirmed cancellation makes prompt-admission failure retry-safe. */
 export class AgentConnectionPromptAdmissionError extends Error {
 	readonly cancelled: boolean;
-
 	readonly status: "cancelled" | "owned" | "unknown" | "unsupported";
 
 	constructor(message: string, status: "cancelled" | "owned" | "unknown" | "unsupported", options?: ErrorOptions) {
@@ -452,7 +455,7 @@ export interface AgentConnectionPromptOptions {
 	streamingBehavior?: "steer" | "followUp";
 	queueIfBusy?: boolean;
 	source?: InputSource;
-	/** Cancel admission while it is still waiting; accepted prompts remain session-owned. */
+	/** Cancels only while admission waits; accepted prompts remain session-owned. */
 	signal?: AbortSignal;
 }
 
@@ -471,7 +474,7 @@ export interface AgentConnectionSideQuestionTurn {
 
 export interface AgentConnectionExecuteBashOptions {
 	excludeFromContext?: boolean;
-	/** Run without recording into the session (side-conversation bash). */
+	/** Side-conversation bash is not recorded into the session. */
 	transient?: boolean;
 	/**
 	 * Caller-generated id echoed on the run's bash_start/bash_end events, so the
@@ -518,7 +521,7 @@ export interface AgentConnectionQueueState {
 
 export type AgentConnectionQueuedMessageLane = QueuedMessageLane;
 export type AgentConnectionQueuedMessageMutation = QueuedMessageMutation;
-/** "unsupported" is returned only by remote connections whose daemon predates queued-message mutation. */
+/** `unsupported` means an older remote daemon lacks queued-message mutation. */
 export type AgentConnectionQueuedMessageMutationStatus = QueuedMessageMutationStatus | "unsupported";
 
 export interface AgentConnectionHeartbeat {
@@ -545,9 +548,9 @@ export interface AgentConnectionRlmChildAgentActivity {
 export interface AgentConnectionRlmChildAgentSnapshot {
 	id: string;
 	parentId?: string;
-	/** The child's own daemon active-session id, for attaching to it directly. */
+	/** Child daemon active-session id, for direct attachment. */
 	activeSessionId?: string;
-	/** Stable daemon-visible session name for addressing/displaying the child. */
+	/** Stable daemon-visible child name for addressing and display. */
 	sessionName?: string;
 	/** Exact provider/model selector used by the child. */
 	model?: string;
@@ -556,20 +559,75 @@ export interface AgentConnectionRlmChildAgentSnapshot {
 	durationMs?: number;
 	answerPreview?: string;
 	repliedSinceTask?: boolean;
-	/** Number of tool executions the subagent has started so far. */
 	toolUseCount?: number;
-	/** Context size (tokens) of the subagent's latest turn. */
 	tokenCount?: number;
-	/** Latest recap of what the subagent is doing. */
 	recap?: string;
 	sessionDir: string;
 	activity?: AgentConnectionRlmChildAgentActivity;
-	/** Failure reason when status is "error". */
 	error?: string;
 }
 
-/** Connection-layer session events mirror AgentSessionEvent (wire-compatible). */
-export type AgentConnectionSessionEvent = AgentSessionEvent;
+export type AgentConnectionSessionEvent =
+	| Exclude<AgentEvent, { type: "agent_end" }>
+	| { type: "agent_end"; messages: AgentMessage[]; willRetry: boolean }
+	| { type: "agent_settled" }
+	| { type: "queue_update"; steering: readonly string[]; followUp: readonly string[] }
+	| { type: "entry_appended"; entry: AgentConnectionSessionEntry }
+	| {
+			type: "summarization_retry_scheduled";
+			attempt: number;
+			maxAttempts: number;
+			delayMs: number;
+			errorMessage: string;
+	  }
+	| { type: "summarization_retry_attempt_start"; source: "branchSummary" }
+	| {
+			type: "summarization_retry_attempt_start";
+			source: "compaction";
+			reason: "manual" | "threshold" | "overflow" | "requested";
+	  }
+	| { type: "summarization_retry_finished" }
+	| { type: "bash_execution_update"; id?: string; delta: string }
+	| { type: "ipython_sent_agent_message"; toolCallId: string; message: KernelSentAgentMessage }
+	| { type: "session_action_update"; actions: SessionActionSnapshot }
+	| {
+			type: "compaction_start";
+			reason: "manual" | "threshold" | "overflow" | "requested";
+			customInstructions?: string;
+	  }
+	| { type: "session_info_changed"; name: string | undefined }
+	| { type: "thinking_level_changed"; level: ThinkingLevel }
+	| { type: "service_tier_changed"; serviceTier: ServiceTier }
+	| {
+			type: "compaction_end";
+			reason: "manual" | "threshold" | "overflow" | "requested";
+			result: CompactionResult | undefined;
+			aborted: boolean;
+			willRetry: boolean;
+			errorMessage?: string;
+			errorSeverity?: "warning" | "error";
+			customInstructions?: string;
+	  }
+	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
+	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
+	| { type: "auth_stale"; provider: string; sourceTokens?: readonly AuthSourceToken[] }
+	| { type: "rlm_child_update"; child: AgentConnectionRlmChildAgentSnapshot }
+	| { type: "recap_update"; recap: string | undefined }
+	| { type: "goal_update"; goal: GoalState }
+	| { type: "bash_start"; command: string; excludeFromContext: boolean; transient?: boolean; runId?: string }
+	| { type: "bash_output"; chunk: string }
+	| {
+			type: "bash_end";
+			exitCode: number | undefined;
+			cancelled: boolean;
+			truncated: boolean;
+			fullOutputPath?: string;
+			errorMessage?: string;
+			transient?: boolean;
+			runId?: string;
+	  }
+	| { type: "refine_complete"; result: RefinementResult }
+	| { type: "refine_failed"; error: string };
 
 export type AgentConnectionEvent =
 	| { type: "session_event"; event: AgentConnectionSessionEvent }
@@ -586,12 +644,22 @@ export type AgentConnectionEvent =
 export type AgentConnectionEventListener = (event: AgentConnectionEvent) => void | Promise<void>;
 export type AgentConnectionBeforeSessionInvalidateListener = () => void;
 
+export interface AgentConnectionHeadlessCompletionOptions {
+	/** Wait for descendant terminal publication and the parent turns it triggers. */
+	waitForRlmQuiescence?: boolean;
+}
+
+export interface AgentConnectionSessionInputPause {
+	release(): Promise<void>;
+}
+
 export interface AgentConnection {
 	subscribe(listener: AgentConnectionEventListener): () => void;
 	onBeforeSessionInvalidate(listener: AgentConnectionBeforeSessionInvalidateListener): () => void;
 
 	getState(): Promise<AgentConnectionState>;
 	getInitialSnapshot(): Promise<AgentConnectionSnapshot>;
+	getRlmChildSnapshots(): Promise<AgentConnectionRlmChildAgentSnapshot[]>;
 	getMessages(): Promise<AgentMessage[]>;
 	getSessionHeader(): Promise<AgentConnectionSessionHeader | undefined>;
 	getCommands(): Promise<AgentConnectionSlashCommand[]>;
@@ -615,6 +683,7 @@ export interface AgentConnection {
 	): Promise<AgentConnectionQueuedMessageMutationStatus>;
 	clearQueue(): Promise<AgentConnectionQueueState>;
 	abortAndClearQueue(): Promise<AgentConnectionQueueState>;
+	acquireSessionInputPause(leaseKey: string): Promise<AgentConnectionSessionInputPause>;
 	listCronJobs(options?: { includeInactive?: boolean }): Promise<AgentCronJob[]>;
 	listHeartbeats(): Promise<AgentConnectionHeartbeat[]>;
 	manageHeartbeat(
@@ -638,11 +707,13 @@ export interface AgentConnection {
 	clearAgentMessages(): Promise<number>;
 	getUserMessagesForForking(): Promise<AgentConnectionUserMessage[]>;
 	getLastAssistantText(): Promise<string | undefined>;
-	/** The system prompt currently in effect for the model (with any per-turn extension changes). */
 	getSystemPrompt(): Promise<string>;
 	getToolDefinition(name: string): Promise<AgentConnectionToolDefinition | undefined>;
 	setSessionEntryLabel(entryId: string, label: string | undefined): Promise<void>;
 	respondToExtensionUiRequest(requestId: string, response: AgentConnectionExtensionUiResponse): Promise<void>;
+	supportsAcpMcpServers?(): boolean;
+	replaceAcpMcpServers?(servers: readonly AcpMcpServerConfig[], ownerId: string): Promise<void>;
+	releaseAcpMcpServers?(ownerId: string, serverNames: readonly string[]): Promise<void>;
 
 	prompt(message: string, options?: AgentConnectionPromptOptions): Promise<void>;
 	promptAndWait(message: string, options?: AgentConnectionPromptOptions): Promise<void>;
@@ -650,11 +721,10 @@ export interface AgentConnection {
 	abortSideQuestion(id: string): Promise<boolean>;
 	steer(message: string, images?: ImageContent[]): Promise<void>;
 	followUp(message: string, images?: ImageContent[]): Promise<void>;
-	/** Request cancellation of the active turn and return once the request is accepted. */
 	abort(): Promise<void>;
 	cancelRlmChild(childId: string): Promise<boolean>;
 	waitForIdle(): Promise<void>;
-	waitForHeadlessCompletion(): Promise<AgentAutonomousStatus>;
+	waitForHeadlessCompletion(options?: AgentConnectionHeadlessCompletionOptions): Promise<AgentAutonomousStatus>;
 
 	/**
 	 * Run a user-initiated bash command (! / !! prefix). Resolution timing is
@@ -683,7 +753,12 @@ export interface AgentConnection {
 	abortBranchSummary(): Promise<void>;
 	abortRetry(): Promise<void>;
 
-	reload(): Promise<void>;
+	/**
+	 * Reload settings, extensions and resources. `beforeSessionStart` runs after teardown and
+	 * before the reloaded session emits session_start, so a client can rebuild its view before
+	 * any start handler notifies into it.
+	 */
+	reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void>;
 	newSession(options?: AgentConnectionNewSessionOptions): Promise<{ cancelled: boolean }>;
 	switchSession(sessionPath: string, options?: AgentConnectionSwitchSessionOptions): Promise<{ cancelled: boolean }>;
 	fork(entryId: string, options?: AgentConnectionForkOptions): Promise<{ cancelled: boolean; selectedText?: string }>;
@@ -700,7 +775,7 @@ export interface AgentConnection {
 	renameSavedSession(sessionPath: string, name: string): Promise<void>;
 	deleteSavedSession(sessionPath: string): Promise<DeleteSessionFileResult>;
 
-	/** Read-only watcher on another live session (a subagent); undefined if the transport can't reach it. */
+	/** Read-only live-session watcher; unavailable transports return undefined. */
 	watchSession(activeSessionId: string): Promise<AgentConnectionSessionWatcher | undefined>;
 
 	dispose(): Promise<void>;

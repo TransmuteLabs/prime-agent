@@ -56,6 +56,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { recordStreamFailure, streamFailureFromStopReason } from "../utils/stream-failure.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
@@ -318,7 +319,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				throw new Error("Bedrock stream ended without a stop reason");
 			}
 			if (output.stopReason === "error" || output.stopReason === "aborted") {
-				throw new Error(output.errorMessage || "An unknown error occurred");
+				throw streamFailureFromStopReason(output.rawStopReason, { message: output.errorMessage });
 			}
 
 			// A stream can settle without stopping every block, so finalize here too.
@@ -331,6 +332,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
+			recordStreamFailure(model, output, error);
 			if (output.stopReason === "error") {
 				appendBedrockFailureDiagnostic(output, error, responseRequestId);
 			}
@@ -517,7 +519,7 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 		...buildBaseOptions(model, context, options, undefined),
 		toolChoice: options?.toolChoice,
 	} satisfies BedrockOptions;
-	if (!options?.reasoning) {
+	if (!options?.reasoning || options.reasoning === "off") {
 		return stream(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}
 

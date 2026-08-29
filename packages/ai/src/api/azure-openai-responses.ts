@@ -16,6 +16,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { recordStreamFailure, streamFailureFromStopReason } from "../utils/stream-failure.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -138,7 +139,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 				throw new Error("Azure OpenAI Responses stream ended without a stop reason");
 			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error(output.errorMessage || "An unknown error occurred");
+				throw streamFailureFromStopReason(output.rawStopReason, { message: output.errorMessage });
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -152,6 +153,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatAzureOpenAIError(error);
+			recordStreamFailure(model, output, error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

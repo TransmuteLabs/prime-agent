@@ -160,6 +160,7 @@ export {
 	sliceByColumn,
 	stripTerminalSequences,
 	truncateToWidth,
+	urlAtColumn,
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "./utils.ts";

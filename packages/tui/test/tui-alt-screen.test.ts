@@ -942,6 +942,56 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("opens a bare URL when the transcript carries no OSC 8 metadata", async () => {
+		const terminal = new RecordingTerminal(40, 2);
+		const openedUrls: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			openUrl: (url) => openedUrls.push(url),
+		});
+		tui.addChild(new Text("see https://example.com/docs, ok", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;6;1M");
+		terminal.sendInput("\x1b[<0;6;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(openedUrls, ["https://example.com/docs"]);
+
+		// The trailing comma is prose, not part of the target.
+		terminal.sendInput("\x1b[<0;29;1M");
+		terminal.sendInput("\x1b[<0;29;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(openedUrls, ["https://example.com/docs"]);
+
+		tui.stop();
+	});
+
+	it("does not hand non-http schemes or control-character targets to the opener", async () => {
+		const terminal = new RecordingTerminal(30, 3);
+		const openedUrls: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			openUrl: (url) => openedUrls.push(url),
+		});
+		tui.addChild(
+			new Text(
+				`${hyperlink("secrets", "file:///etc/passwd")}\n${hyperlink("nul", "https://example.com/\u0000bad")}\n${hyperlink("bad", "not a url")}`,
+				0,
+				0,
+			),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		for (const row of [1, 2, 3]) {
+			terminal.sendInput(`\x1b[<0;2;${row}M`);
+			terminal.sendInput(`\x1b[<0;2;${row}m`);
+			await terminal.waitForRender();
+		}
+		assert.deepStrictEqual(openedUrls, []);
+
+		tui.stop();
+	});
+
 	it("selects visible text with the mouse and copies it with OSC 52 after a generic release", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);

@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 type CloneCommandContext = {
-	sessionManager: { getLeafId: () => string | null };
-	runtimeHost: {
+	// The leaf and the fork both come from the connection: /clone works the same
+	// against a daemon-hosted session as against a local one.
+	agentConnection: {
+		getSessionTree: () => Promise<{ leafId: string | null }>;
 		fork: (entryId: string, options?: { position?: "before" | "at" }) => Promise<{ cancelled: boolean }>;
 	};
-	renderCurrentSessionState: () => void;
+	renderCurrentSessionState: () => Promise<void>;
 	editor: { setText: (text: string) => void };
 	showStatus: (message: string) => void;
 	showError: (message: string) => void;
@@ -22,15 +24,14 @@ const interactiveModePrototype = InteractiveMode.prototype as unknown as Interac
 describe("InteractiveMode /clone", () => {
 	it("clones the current leaf into a new session", async () => {
 		const fork = vi.fn(async () => ({ cancelled: false }));
-		const renderCurrentSessionState = vi.fn();
+		const renderCurrentSessionState = vi.fn(async () => {});
 		const setText = vi.fn();
 		const showStatus = vi.fn();
 		const showError = vi.fn();
 		const requestRender = vi.fn();
 
 		const context: CloneCommandContext = {
-			sessionManager: { getLeafId: () => "leaf-123" },
-			runtimeHost: { fork },
+			agentConnection: { getSessionTree: async () => ({ leafId: "leaf-123" }), fork },
 			renderCurrentSessionState,
 			editor: { setText },
 			showStatus,
@@ -41,7 +42,7 @@ describe("InteractiveMode /clone", () => {
 		await interactiveModePrototype.handleCloneCommand.call(context);
 
 		expect(fork).toHaveBeenCalledWith("leaf-123", { position: "at" });
-		expect(renderCurrentSessionState).not.toHaveBeenCalled();
+		expect(renderCurrentSessionState).toHaveBeenCalledOnce();
 		expect(setText).toHaveBeenCalledWith("");
 		expect(showStatus).toHaveBeenCalledWith("Cloned to new session");
 		expect(showError).not.toHaveBeenCalled();
@@ -54,9 +55,8 @@ describe("InteractiveMode /clone", () => {
 		const showError = vi.fn();
 
 		const context: CloneCommandContext = {
-			sessionManager: { getLeafId: () => null },
-			runtimeHost: { fork },
-			renderCurrentSessionState: vi.fn(),
+			agentConnection: { getSessionTree: async () => ({ leafId: null }), fork },
+			renderCurrentSessionState: vi.fn(async () => {}),
 			editor: { setText: vi.fn() },
 			showStatus,
 			showError,

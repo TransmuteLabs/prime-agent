@@ -12,6 +12,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { AuthSourceToken, AuthStatus, AuthStorage } from "./auth-storage.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import { isPrivatePrimeInferenceModel } from "./prime-inference-models.ts";
 import type { ProviderConfigInput } from "./provider-composer.ts";
 
 export type { ProviderConfigInput } from "./provider-composer.ts";
@@ -53,8 +54,14 @@ export class ModelRegistry {
 		models: Model<Api>[];
 		configuredProviders: string[];
 	}> {
-		await this.refresh(options);
-		const models = this.getAll();
+		const availableModels = await this.refreshAvailableModels(options);
+		// An unauthorized private model is not part of the catalog a client may pick from.
+		const availablePrivateModels = new Set(
+			availableModels.filter(isPrivatePrimeInferenceModel).map((model) => `${model.provider}/${model.id}`),
+		);
+		const models = this.getAll().filter(
+			(model) => !isPrivatePrimeInferenceModel(model) || availablePrivateModels.has(`${model.provider}/${model.id}`),
+		);
 		const configuredProviders = [
 			...new Set(models.filter((model) => this.hasConfiguredAuth(model)).map((model) => model.provider)),
 		];
@@ -62,7 +69,12 @@ export class ModelRegistry {
 	}
 
 	async canUseModel(model: Model<Api>): Promise<boolean> {
-		return this.hasConfiguredAuth(model);
+		return this.runtime.canUseModel(model);
+	}
+
+	/** Models that can actually run a request now (subagent delegation, model search). */
+	async getExecutableModels(): Promise<Model<Api>[]> {
+		return [...(await this.runtime.getExecutableModels())];
 	}
 
 	getError(): string | undefined {
@@ -83,6 +95,11 @@ export class ModelRegistry {
 
 	hasConfiguredAuth(model: Model<Api>): boolean {
 		return this.runtime.hasConfiguredAuth(model.provider);
+	}
+
+	/** Live credential probe for auth stored after the last snapshot refresh. */
+	async hasResolvableAuth(model: Model<Api>): Promise<boolean> {
+		return (await this.runtime.checkAuth(model.provider)) !== undefined;
 	}
 
 	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
@@ -124,10 +141,18 @@ export class ModelRegistry {
 			return stored;
 		}
 		const runtimeStatus = this.runtime.getProviderAuthStatus(provider);
-		if (stored.source === "stale" && !runtimeStatus.configured) {
+		// The runtime reports "stored" from the presence of a credential entry, which the
+		// auth store has just declared stale; letting that win would keep offering the
+		// credential a 401 already rejected. Other runtime sources are not tracked here.
+		if (stored.source === "stale" && (!runtimeStatus.configured || runtimeStatus.source === "stored")) {
 			return stored;
 		}
 		return runtimeStatus;
+	}
+
+	/** Token identifying the auth source a request would use, for marking it stale on a 401. */
+	getProviderAuthSourceToken(provider: string): AuthSourceToken | undefined {
+		return this.authStorage.getCurrentAuthSourceToken(provider);
 	}
 
 	/** The persistent auth.json store backing this registry's runtime. */

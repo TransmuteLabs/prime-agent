@@ -118,6 +118,12 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 | `app.session.tree` | *(none)* | Open session tree navigator (`/tree`) |
 | `app.session.fork` | *(none)* | Fork current session (`/fork`) |
 | `app.session.resume` | *(none)* | Open session resume picker (`/resume`) |
+| `app.session.togglePath` | `ctrl+p` | Toggle path display |
+| `app.session.toggleSort` | `ctrl+s` | Toggle sort mode |
+| `app.session.toggleNamedFilter` | `ctrl+n` | Toggle named-only filter |
+| `app.session.rename` | `ctrl+r` | Rename session |
+| `app.session.delete` | `ctrl+d` | Delete session |
+| `app.session.deleteNoninvasive` | `ctrl+backspace` | Delete session when query is empty |
 
 ### Models and Thinking
 
@@ -125,6 +131,7 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 |--------|---------|-------------|
 | `app.model.select` | `ctrl+l` | Open model selector |
 | `app.model.toggleScope` | `alt+s` | Toggle between all and scoped models |
+| `app.model.selectAsDefault` | `ctrl+s` | Set the highlighted model as the default |
 | `app.thinking.toggle` | `ctrl+t` | Collapse or expand thinking blocks |
 
 ### Configuration Menu
@@ -141,6 +148,7 @@ Use `tab` to cycle forward and `shift+tab` to cycle backward through Providers, 
 |--------|---------|-------------|
 | `app.tools.expand` | `ctrl+o` | Collapse or expand tool output |
 | `app.messages.expand` | `ctrl+p` | Collapse or expand agent-to-agent messages |
+| `app.edits.expand` | `ctrl+j` | Collapse or expand edit diffs |
 | `app.message.copy` | `ctrl+x` | Copy the last agent message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
 | `app.message.followUp` | `alt+enter` (`ctrl+q` on Windows and WSL) | Queue follow-up message |
 | `app.message.navigateOlder` | `alt+up` | Select the next older pending message |

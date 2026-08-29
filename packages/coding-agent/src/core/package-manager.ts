@@ -37,11 +37,12 @@ import type { Readable } from "node:stream";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { gt, maxSatisfying, rcompare, satisfies, valid, validRange } from "semver";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME, getBundledSkillsDir } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
@@ -82,6 +83,7 @@ export interface ResolvedPaths {
 	skills: ResolvedResource[];
 	prompts: ResolvedResource[];
 	themes: ResolvedResource[];
+	diagnostics: ResourceDiagnostic[];
 }
 
 export type MissingSourceAction = "install" | "skip" | "error";
@@ -131,6 +133,10 @@ interface PackageManagerOptions {
 	cwd: string;
 	agentDir: string;
 	settingsManager: SettingsManager;
+	/** Directory of built-in skills shipped with the package. Defaults to the bundled skills dir; pass null to disable. */
+	bundledSkillsDir?: string | null;
+	/** Extra force-exclude patterns for built-in skills (e.g. unauthenticated MCP integrations). */
+	extraBuiltinSkillOverrides?: () => string[];
 }
 
 type SourceScope = "user" | "project" | "temporary";
@@ -171,6 +177,7 @@ interface ResourceAccumulator {
 	skills: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	prompts: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	themes: Map<string, { metadata: PathMetadata; enabled: boolean }>;
+	diagnostics: ResourceDiagnostic[];
 }
 
 /**
@@ -268,7 +275,9 @@ function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
 			if (patterns.length > 0) {
 				ig.add(patterns);
 			}
-		} catch {}
+		} catch {
+			// An unreadable ignore file contributes no patterns; the scan continues.
+		}
 	}
 }
 
@@ -807,6 +816,8 @@ export class DefaultPackageManager implements PackageManager {
 	private cwd: string;
 	private agentDir: string;
 	private settingsManager: SettingsManager;
+	private bundledSkillsDir: string | null;
+	private extraBuiltinSkillOverrides: () => string[];
 	private globalNpmRoot: string | undefined;
 	private globalNpmRootCommandKey: string | undefined;
 	private progressCallback: ProgressCallback | undefined;
@@ -815,6 +826,8 @@ export class DefaultPackageManager implements PackageManager {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager;
+		this.bundledSkillsDir = options.bundledSkillsDir === undefined ? getBundledSkillsDir() : options.bundledSkillsDir;
+		this.extraBuiltinSkillOverrides = options.extraBuiltinSkillOverrides ?? (() => []);
 	}
 
 	setProgressCallback(callback: ProgressCallback | undefined): void {
@@ -2499,6 +2512,34 @@ export class DefaultPackageManager implements PackageManager {
 			userAgentsBaseDir,
 		);
 
+		if (this.bundledSkillsDir && this.settingsManager.getEnableBuiltinSkills()) {
+			const builtinMetadata: PathMetadata = {
+				source: "builtin",
+				scope: "user",
+				origin: "top-level",
+				baseDir: this.bundledSkillsDir,
+			};
+			const builtinEntries = collectAutoSkillEntries(this.bundledSkillsDir, "pi");
+			// Bundled skills must ship with the package; warn instead of silently exposing none.
+			if (builtinEntries.length === 0) {
+				accumulator.diagnostics.push({
+					type: "warning",
+					message: existsSync(this.bundledSkillsDir)
+						? "built-in skills directory contains no skills; this build may be packaged incorrectly"
+						: "built-in skills directory not found; this build may be packaged incorrectly",
+					path: this.bundledSkillsDir,
+				});
+			}
+			const builtinSkillOverrides = [
+				...userOverrides.skills,
+				// Web search stays disabled until explicitly enabled.
+				...(this.settingsManager.getBundledWebsearchEnabled() ? [] : ["-websearch/SKILL.md"]),
+				// MCP integration skills stay disabled until their authentication is available.
+				...this.extraBuiltinSkillOverrides(),
+			];
+			addResources("skills", builtinEntries, builtinMetadata, builtinSkillOverrides, this.bundledSkillsDir);
+		}
+
 		addResources(
 			"prompts",
 			collectAutoPromptEntries(userDirs.prompts),
@@ -2570,6 +2611,7 @@ export class DefaultPackageManager implements PackageManager {
 			skills: new Map(),
 			prompts: new Map(),
 			themes: new Map(),
+			diagnostics: [],
 		};
 	}
 
@@ -2598,6 +2640,7 @@ export class DefaultPackageManager implements PackageManager {
 			skills: mapToResolved(accumulator.skills),
 			prompts: mapToResolved(accumulator.prompts),
 			themes: mapToResolved(accumulator.themes),
+			diagnostics: accumulator.diagnostics,
 		};
 	}
 

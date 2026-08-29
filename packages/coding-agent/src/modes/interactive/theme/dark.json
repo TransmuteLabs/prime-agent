@@ -32,7 +32,7 @@
 		"muted": "gray",
 		"dim": "dimGray",
 		"text": "text",
-		"thinkingText": "gray",
+		"thinkingText": "#707070",
 		"selectedBg": "selectedBg",
 		"scrollbarThumb": "selectedBg",
 		"searchMatchBg": "selectedBg",
@@ -47,7 +47,7 @@
 		"toolErrorBg": "toolErrorBg",
 		"toolTitle": "text",
 		"toolOutput": "gray",
-		"mdHeading": "#f0c674",
+		"mdHeading": "#b294bb",
 		"mdLink": "#81a2be",
 		"mdLinkUrl": "dimGray",
 		"mdCode": "accent",
@@ -57,8 +57,8 @@
 		"mdQuoteBorder": "gray",
 		"mdHr": "gray",
 		"mdListBullet": "accent",
-		"toolDiffAdded": "green",
-		"toolDiffRemoved": "red",
+		"toolDiffAdded": "#3fb950",
+		"toolDiffRemoved": "#f85149",
 		"toolDiffContext": "gray",
 		"toolDiffAddedBg": "toolDiffAddedBg",
 		"toolDiffRemovedBg": "toolDiffRemovedBg",
@@ -79,7 +79,7 @@
 		"thinkingXhigh": "#d183e8",
 		"thinkingMax": "#ff5fff",
 		"bashMode": "green",
-		"toolPanelBg": "selectedBg"
+		"toolPanelBg": "#262630"
 	},
 	"export": {
 		"pageBg": "#18181e",

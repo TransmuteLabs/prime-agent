@@ -446,12 +446,15 @@ export class Theme {
 		this.sourceInfo = options.sourceInfo;
 		this.mode = mode;
 		this.fgColors = new Map();
+		// A derived key is only as good as the key it derives from: an absent source leaves the
+		// entry unset rather than mapping it to undefined, which fgAnsi/bgAnsi cannot render.
 		const colors = {
 			...fgColors,
 			thinkingMax: fgColors.thinkingMax ?? fgColors.thinkingXhigh,
 			searchMatchText: fgColors.searchMatchText ?? fgColors.text,
 		};
-		for (const [key, value] of Object.entries(colors) as [ThemeColor, string | number][]) {
+		for (const [key, value] of Object.entries(colors) as [ThemeColor, string | number | undefined][]) {
+			if (value === undefined) continue;
 			this.fgColors.set(key, fgAnsi(value, mode));
 		}
 		this.bgColors = new Map();
@@ -460,10 +463,14 @@ export class Theme {
 			scrollbarThumb: bgColors.scrollbarThumb ?? bgColors.selectedBg,
 			searchMatchBg: bgColors.searchMatchBg ?? bgColors.selectedBg,
 		};
-		for (const [key, value] of Object.entries(backgrounds) as [ThemeBg, string | number][]) {
+		const definedBackgrounds = Object.entries(backgrounds).filter(([, value]) => value !== undefined) as [
+			ThemeBg,
+			string | number,
+		][];
+		for (const [key, value] of definedBackgrounds) {
 			this.bgColors.set(key, bgAnsi(value, mode));
 		}
-		this.bgColorValues = new Map(Object.entries(backgrounds) as [ThemeBg, string | number][]);
+		this.bgColorValues = new Map(definedBackgrounds);
 	}
 
 	fg(color: ThemeColor, text: string): string {
@@ -657,9 +664,11 @@ let BUILTIN_THEMES: Record<string, ThemeJson> | undefined;
 function getBuiltinThemes(): Record<string, ThemeJson> {
 	if (!BUILTIN_THEMES) {
 		const themesDir = getThemesDir();
+		const primePath = path.join(themesDir, "prime.json");
 		const darkPath = path.join(themesDir, "dark.json");
 		const lightPath = path.join(themesDir, "light.json");
 		BUILTIN_THEMES = {
+			prime: JSON.parse(stripBom(fs.readFileSync(primePath, "utf-8"))) as ThemeJson,
 			dark: JSON.parse(stripBom(fs.readFileSync(darkPath, "utf-8"))) as ThemeJson,
 			light: JSON.parse(stripBom(fs.readFileSync(lightPath, "utf-8"))) as ThemeJson,
 		};
@@ -1019,7 +1028,8 @@ export async function detectTerminalThemeForAuto({
 }
 
 export function getDefaultTheme(): string {
-	return detectTerminalBackgroundFromEnv().theme;
+	// The brand theme is dark-first; only a light terminal falls back to the light theme.
+	return detectTerminalBackgroundFromEnv().theme === "light" ? "light" : "prime";
 }
 
 // ============================================================================
@@ -1509,7 +1519,10 @@ export function getSelectListTheme(): SelectListTheme {
 export function getEditorTheme(): EditorTheme {
 	return {
 		borderColor: (text: string) => theme.fg("borderMuted", text),
+		backgroundColor: theme.getEditorBackgroundColor(),
+		autocompleteBackgroundColor: (text: string) => theme.getPopupBackgroundColor()(text),
 		selectList: getSelectListTheme(),
+		commandColor: (text: string) => theme.fg("accent", text),
 	};
 }
 

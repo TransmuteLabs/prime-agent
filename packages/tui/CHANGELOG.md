@@ -1,317 +1,168 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.0] - 2026-08-21
+
+## [0.7.4] - 2026-08-19
+
+## [0.7.3] - 2026-08-17
+
+- Fixed hyperlinks not being clickable in fullscreen mode on terminals that gate native link handling while mouse reporting is active (e.g. Ghostty); left-clicking a link now opens it directly.
+
+## [0.7.2] - 2026-08-11
+
+## [0.7.1] - 2026-08-07
+
+## [0.7.0] - 2026-08-05
+
+## [0.6.1] - 2026-08-05
+
+## [0.6.0] - 2026-08-04
+
+## [0.5.1] - 2026-08-04
+
+## [0.5.0] - 2026-08-03
+
+## [0.4.0] - 2026-08-01
+
+## [0.3.3] - 2026-07-23
+
+- Changed `SelectList` selection cursor from `→` to `›` for consistency with tree and user-message selectors.
+- Changed slash-command autocomplete to show argument hints and source tags inline, selected descriptions separately, and directional hidden-result counts.
+
+
+## [0.3.2] - 2026-07-20
+
+- Removed the fullscreen image fallback instruction and kept fullscreen overlays from emitting terminal graphics ([#437](https://github.com/PrimeIntellect-ai/prime-agent/pull/437) by [@snimu](https://github.com/snimu)).
+- Changed the fullscreen follow shortcut from `Alt+Down` to `Ctrl+Shift+Down` for more reliable terminal input ([ENG-4684](https://linear.app/primeintellect/issue/ENG-4684/altdown-doesnt-work)).
+- Fixed terminal width, slicing, and wrapping helpers misreading standard CSI and DCS escape sequences.
+- Fixed autocomplete popups overlapping the prompt's top edge.
+
+## [0.3.1] - 2026-07-15
+
+- Fixed fullscreen Markdown table selections copying borders instead of tab-separated cell content ([ENG-4629](https://linear.app/primeintellect/issue/ENG-4629/respect-table-boundaries-when-selecting)).
+- Fixed fullscreen drag selection so holding at a transcript edge scrolls through offscreen text ([ENG-4644](https://linear.app/primeintellect/issue/ENG-4644/copy-issues)).
+- Fixed slash-command and skill autocomplete not appearing for references typed in the middle of prompts ([ENG-4628](https://linear.app/primeintellect/issue/ENG-4628/support-skill-and-command-autocomplete-mid-prompt)).
+- Fixed focused full-pane overlays becoming slow to navigate on wider terminals.
+- Fixed plain-text truncation emitting ANSI resets, marked shortened descriptions with an ellipsis, and rendered autocomplete in content-sized popup surfaces that close when editing leaves the completion context ([ENG-4542](https://linear.app/primeintellect/issue/ENG-4542/command-descriptions-are-cut-off-on-narrow-screens)).
+
+## [0.3.0] - 2026-07-13
+
+- Fixed fullscreen TUI handoffs temporarily releasing raw input and leaking keyboard-protocol timers, which caused flicker and echoed arrow escape sequences while opening sessions.
+
+## [0.2.9] - 2026-07-13
+
+- Fixed fullscreen dock selection so prompt text can be copied ([#342](https://github.com/PrimeIntellect-ai/prime-agent/pull/342)).
+
+## [0.2.8] - 2026-07-09
+
+## [0.2.7] - 2026-07-08
+
+- Fixed full TUI redraws to preserve terminal scrollback on resize and shrink redraws ([#331](https://github.com/PrimeIntellect-ai/prime-agent/pull/331) by [@sethkarten](https://github.com/sethkarten)).
+- Fixed fullscreen overlays that request native mouse behavior suspending mouse tracking while visible.
+- Added fullscreen handoff support so callers can switch alternate-screen views without replaying content into primary scrollback.
+
+## [0.2.6] - 2026-07-06
+
+- Fixed fullscreen overlay selection so login URLs can be copied.
+
+## [0.2.5] - 2026-07-06
+
+- Added fullscreen viewport rendering with alternate-screen scrolling, follow controls, mouse selection, and clipboard copy hooks ([#316](https://github.com/PrimeIntellect-ai/prime-agent/pull/316)).
+
+## [0.2.4] - 2026-07-01
+
+## [0.2.3] - 2026-06-30
+
+## [0.2.2] - 2026-06-25
+
+- Added `fuzzyFilterScored`, returning scored matches so callers can break ties by recency; `fuzzyFilter` delegates to it unchanged ([#251](https://github.com/PrimeIntellect-ai/prime-agent/issues/251)).
+- Changed the editor to expose `rlmChildLabel` (whitespace-normalized full prompt) and centralized the "still working" pulse glyph in `working-icon.ts` for shared use across panels and lists ([#247](https://github.com/PrimeIntellect-ai/prime-agent/issues/247)).
+
+## [0.2.1] - 2026-06-23
+
+## [0.2.0] - 2026-06-23
 
 ### Added
 
-- Added environment and programmatic overrides for OSC 8 hyperlinks, inline image protocols, and truecolor terminal capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
-- Added a `TuiAltScreen` `copyOnSelect` option plus helpers to detect and copy the active fullscreen text selection programmatically ([#7720](https://github.com/earendil-works/pi/issues/7720)).
+- Added an optional `commandColor` to the editor theme so a leading slash command stays highlighted while its argument is being typed.
+- Added editor support for atomic pasted-image markers, resolving markers by presence so undo and dequeue keep them intact.
+
+## [0.1.9] - 2026-06-22
+
+## [0.1.8] - 2026-06-21
+
+## [0.1.7] - 2026-06-18
 
 ### Fixed
 
-- Fixed main-screen rendering crashing when image-heavy output exceeded V8's string length limit ([#8028](https://github.com/earendil-works/pi/issues/8028)).
-- Fixed autocomplete ordering for nested results ([#8669](https://github.com/earendil-works/pi/pull/8669)).
-- Fixed fullscreen double-click word selection splitting paths and kebab-case tokens on `/` and `-` ([#7746](https://github.com/earendil-works/pi/issues/7746)).
+- Fixed TUI flicker when attaching to long or streaming sessions by only preserving scrollback when the transcript grows, not when it shrinks.
 
-## [0.84.3] - 2026-08-24
+## [0.1.6] - 2026-06-17
 
 ### Fixed
-- Fixed duplicate fullscreen right-click paste in VS Code-based terminals on Windows ([#8186](https://github.com/earendil-works/pi/issues/8186)).
-- Fixed padded text exceeding narrow terminal widths ([#8252](https://github.com/earendil-works/pi/issues/8252)).
-- Fixed wrapped Markdown table links leaking color into borders and neighboring cells, including tables inside blockquotes ([#8335](https://github.com/earendil-works/pi/issues/8335)).
 
-## [0.84.2] - 2026-08-14
+- Fixed the viewport not staying anchored when collapsing or expanding tool output, preserving scrollback images instead of forcing a full redraw.
+
+## [0.1.5] - 2026-06-16
+
+### Fixed
+
+- Fixed `Alt+Up`/`Alt+Down` key matching in non-kitty terminals so the bindings are recognized outside kitty's keyboard protocol.
+- Fixed autocomplete to respect slash-command alias resolution so aliased commands complete to their canonical form.
+
+## [0.1.4] - 2026-06-15
+
+## [0.1.3] - 2026-06-12
+
+## [0.1.2] - 2026-06-12
+
+## [0.1.1] - 2026-06-11
+
+## [0.1.0] - 2026-06-11
+
+## [0.0.10] - 2026-06-08
 
 ### Added
 
-- Added unbound single-line transcript scrolling actions, `tui.altScreen.lineUp` and `tui.altScreen.lineDown`, for fullscreen TUI keybindings ([#7903](https://github.com/earendil-works/pi/pull/7903) by [@midastruth](https://github.com/midastruth)).
-- Added incremental primary-scroll-view search to the fullscreen TUI with configurable match styles, `Ctrl+Shift+F`, and next/previous navigation with `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G`.
+- Added an optional `promptPrefix` to the editor that renders a leading prompt indicator with correct wrapping and padding, with overridable hooks for subclasses.
 
 ### Changed
 
-- Reduced alternate-screen per-frame allocation churn roughly 9-18x by painting full-width layout rows as direct line references instead of recompositing every visible row through ANSI/grapheme segmentation on each frame.
+- Changed `Editor.cancelAutocomplete` from private to protected so subclasses can cancel autocomplete before handling interrupts.
 
-### Fixed
+## [0.0.9] - 2026-06-04
 
-- Fixed fullscreen mouse drag selection and OSC 8 link activation in terminals that report generic SGR mouse release button codes ([#7963](https://github.com/earendil-works/pi/issues/7963)).
-- Fixed fullscreen transcript search snapping back to the current match during manual scrolling and fragmented SGR mouse input leaking into the search query.
-- Fixed required LaTeX arguments starting on a new line being parsed as empty ([#7760](https://github.com/earendil-works/pi/issues/7760)).
-- Fixed LaTeX control spaces split across line endings causing complete expressions to fall back to raw source.
-- Fixed focused fullscreen overlays not receiving mouse wheel or viewport scroll keys such as PageUp and PageDown ([#7894](https://github.com/earendil-works/pi/issues/7894)).
-- Fixed split `Alt+Enter` input over SSH being misread as Escape, added `PI_TUI_ESC_TIMEOUT` for high-latency terminals, and limited that timeout to lone Escape input ([#7899](https://github.com/earendil-works/pi/pull/7899) by [@powerfooI](https://github.com/powerfooI)).
-- Fixed idle fullscreen sessions repainting and clearing text selection when the terminal loses focus ([#7892](https://github.com/earendil-works/pi/pull/7892) by [@terrorobe](https://github.com/terrorobe)).
-- Fixed fullscreen selection copy falsely reporting success when OSC 52 is unsupported by allowing host clipboard integration and reporting verified failures ([#8110](https://github.com/earendil-works/pi/pull/8110) by [@Panoplos](https://github.com/Panoplos)).
+## [0.0.8] - 2026-06-04
 
-## [0.84.1] - 2026-08-07
+## [0.0.7] - 2026-06-01
+
+## [0.0.6] - 2026-05-27
+
+## [0.0.5] - 2026-05-26
 
 ### Added
 
-- Added unbound half-page transcript scrolling actions, `tui.altScreen.halfPageUp` and `tui.altScreen.halfPageDown`, for fullscreen TUI keybindings ([#7735](https://github.com/earendil-works/pi/issues/7735)).
-- Added double-click word and whitespace selection, granularity-aware drag selection, and triple-click paragraph selection in the fullscreen TUI ([#7725](https://github.com/earendil-works/pi/issues/7725), [#7733](https://github.com/earendil-works/pi/pull/7733) by [@volsa](https://github.com/volsa)).
-- Added an optional right-click paste handler to the alternate-screen TUI, currently enabled on Windows.
+- Added a terminal-colors module that probes the terminal's default foreground/background via OSC queries and exposes helpers to adapt surfaces to dark or light terminals.
 
-### Fixed
+## [0.0.4] - 2026-05-21
 
-- Fixed LaTeX relation, multiplication, and named-operator spacing, and correctly composed matrices with stacked fractions, operator limits, and adjacent matrices.
-- Reduced fullscreen mouse event volume under tmux, Zellij, and GNU Screen by using button-motion tracking instead of all-motion tracking.
-
-## [0.84.0] - 2026-08-06
+## [0.0.2] - 2026-05-20
 
 ### Added
 
-- Added terminal-friendly Unicode rendering for LaTeX expressions in Markdown, including inline and display math, fractions, scripts, common symbols, aligned equations, cases, and matrices.
-- Added the shared `TuiMode` type and `mode` discriminants to the main-screen and alternate-screen TUI renderers.
-- Added TUI lifecycle and render-state handoff APIs for replacing renderers without replaying main-screen content.
-- Exported the bundled `Marked` parser and token types.
-- Added width-aware source transforms to the `Markdown` component.
-- Added interface-compatible main-screen and alternate-screen TUI renderers with application-owned scrolling ([#7304](https://github.com/earendil-works/pi/issues/7304)).
-- Added alternate-screen `VStack`, `HStack`, and nested `ScrollView` layouts with constrained sizing, sticky regions, and pointer-targeted scrolling.
-- Added edge auto-scrolling for alternate-screen drag selection across off-screen scroll-view content.
-- Added proportional scrollbars with mouse dragging, Home/End document navigation, transient `auto` mode, and an `always` mode that reserves the rightmost column; scrollbar modes can be changed at runtime.
-- Added page scrolling and OSC 133 semantic prompt navigation to the alternate-screen viewport.
-- Added configurable previous/next prompt history actions for navigation independent of vertical cursor movement.
-- Added stacked transient notifications to the alternate-screen renderer ([#7361](https://github.com/earendil-works/pi/pull/7361)).
-
-### Changed
-
-- Reduced the default alternate-screen mouse wheel step from three lines to one for finer scrolling.
+- Added `VersionedRenderCache` for width/version-keyed render caching of expensive TUI components.
+- Added optional background surface rendering for editor components.
+- Added scrollback overlay rendering for full-screen overlays that should preserve native terminal scrollback.
 
 ### Fixed
 
-- Fixed Windows Shift+Enter detection by extending the native Win32 helper to report modifier key state.
-- Fixed the npm package omitting the source and build script needed to rebuild the Windows native addon.
-- Fixed the npm package omitting the source and build script needed to rebuild the Darwin native addon.
-- Fixed Windows console truecolor detection when Windows Terminal does not provide `WT_SESSION` to child shells.
-- Fixed terminal width accounting for Indic conjunct grapheme clusters ([#6987](https://github.com/earendil-works/pi/pull/6987) by [@petrroll](https://github.com/petrroll)).
-- Fixed phantom alternate-screen text selection from unmatched mouse events when changing terminal pane focus.
-- Fixed spaces in searchable settings queries changing the selected value instead of filtering multi-word labels.
-- Fixed alternate-screen Kitty images crossing vertical layout clip boundaries and overlapping sticky regions while scrolling.
-- Fixed alternate-screen redraws retransmitting Kitty image data when placements move or recently offscreen images return, dropping adjacent row content when reusing placements, rendering fixed-basis scroll content twice per frame, and scanning clipped transcript rows while painting.
-- Fixed fullscreen transcript navigation leaving no editor-accessible `Home`, `End`, `PageUp`, or `PageDown` variants by adding Ctrl-modified editor bindings ([#7574](https://github.com/earendil-works/pi/issues/7574)).
-- Fixed keyboard input rendering latency on Windows by letting input preempt the throttled render timer.
-- Fixed nested stack layouts ignoring child minimum sizes.
-- Fixed batched terminal color-scheme reports being parsed as one malformed response ([#7550](https://github.com/earendil-works/pi/pull/7550)).
-- Fixed terminal progress clearing to emit the complete OSC 9;4 sequence ([#7581](https://github.com/earendil-works/pi/pull/7581)).
-- Fixed iTerm2 image payloads omitting the size metadata required by the xterm.js image addon ([#7612](https://github.com/earendil-works/pi/pull/7612)).
-- Fixed width truncation leaving OSC 8 hyperlinks unterminated ([#7657](https://github.com/earendil-works/pi/pull/7657) by [@xXJSONDeruloXx](https://github.com/xXJSONDeruloXx)).
+- Fixed raw tabs in rendered TUI lines to preserve painted backgrounds across indentation.
 
-## [0.83.0] - 2026-07-29
-
-### Fixed
-
-- Fixed long image fallback paths overflowing narrow terminals, shortened home-directory paths, and made absolute paths clickable when terminal hyperlinks are available ([#7262](https://github.com/earendil-works/pi/pull/7262)).
-
-## [0.82.1] - 2026-07-25
-
-## [0.82.0] - 2026-07-24
-
-### Fixed
-
-- Fixed debug and crash logs to use the configured TUI log directory, including `PI_CODING_AGENT_DIR`, instead of always writing under `~/.pi/agent` ([#6958](https://github.com/earendil-works/pi/pull/6958) by [@davidbrai](https://github.com/davidbrai)).
-- Fixed narrow terminals crashing when the editor's bottom scroll indicator exceeded the terminal width ([#7015](https://github.com/earendil-works/pi/pull/7015) by [@christianklotz](https://github.com/christianklotz)).
-
-## [0.81.1] - 2026-07-21
-
-## [0.81.0] - 2026-07-21
-
-### Fixed
-
-- Fixed terminal shutdown to clear the editor's inverted software cursor before restoring the hardware cursor, avoiding a duplicate cursor artifact ([#6790](https://github.com/earendil-works/pi/pull/6790) by [@dam9000](https://github.com/dam9000)).
-- Fixed ANSI-aware text wrapping to recognize CRLF and CR line endings while preserving styles across lines ([#6764](https://github.com/earendil-works/pi/pull/6764) by [@xz-dev](https://github.com/xz-dev)).
-- Fixed editor paste registry corruption when deleting paste markers: undo now restores the paste registry together with the text, and marker renumbering shifts registry entries in ascending id order, so submitted prompts no longer contain literal `[paste #N ...]` markers or the wrong paste's content ([#6844](https://github.com/earendil-works/pi/issues/6844)).
-
-## [0.80.10] - 2026-07-16
-
-## [0.80.9] - 2026-07-16
-
-## [0.80.8] - 2026-07-16
-
-### Fixed
-
-- Fixed terminal output to normalize tab characters consistently ([#6697](https://github.com/earendil-works/pi-mono/pull/6697) by [@xz-dev](https://github.com/xz-dev)).
-
-## [0.80.7] - 2026-07-14
-
-### Fixed
-
-- Fixed legacy terminal decoding for Alt+symbol key combinations such as `Alt+,` and `Alt+.` ([#6523](https://github.com/earendil-works/pi-mono/pull/6523) by [@ribelo](https://github.com/ribelo)).
-
-## [0.80.6] - 2026-07-09
-
-## [0.80.5] - 2026-07-09
-
-## [0.80.4] - 2026-07-09
-
-### Fixed
-
-- Fixed editor paste marker accounting when paste markers are deleted or terminal state is cleared, preventing stale paste state after marker removal ([#6397](https://github.com/earendil-works/pi/pull/6397) by [@affanali2k3](https://github.com/affanali2k3)).
-
-## [0.80.3] - 2026-06-30
+## [0.0.1] - 2026-05-18
 
 ### Added
 
-- Added an opt-in Markdown renderer option to preserve source backslash escapes for transcript rendering ([#6105](https://github.com/earendil-works/pi/issues/6105)).
-
-## [0.80.2] - 2026-06-23
-
-## [0.80.1] - 2026-06-23
-
-## [0.80.0] - 2026-06-23
-
-### Changed
-
-- Added `Ctrl+J` as a default newline keybinding alongside `Shift+Enter`.
-
-## [0.79.10] - 2026-06-22
-
-## [0.79.9] - 2026-06-20
-
-### Fixed
-
-- Fixed Markdown streaming code fence rendering so partial closing fences no longer make code blocks shrink or flicker while content streams ([#5846](https://github.com/earendil-works/pi/pull/5846) by [@xl0](https://github.com/xl0)).
-
-## [0.79.8] - 2026-06-19
-
-## [0.79.7] - 2026-06-18
-
-### Added
-
-- Added terminal color-scheme query and notification support for light/dark appearance detection (`TUI.queryTerminalColorScheme()`, `TUI.onTerminalColorSchemeChange()`, and `TUI.setTerminalColorSchemeNotifications()`) ([#5874](https://github.com/earendil-works/pi/pull/5874)).
-- Added Warp terminal detection for Kitty graphics inline image support ([#5841](https://github.com/earendil-works/pi/pull/5841) by [@dodiego](https://github.com/dodiego)).
-- Exported `sliceByColumn` for ANSI-aware horizontal column slicing.
-
-## [0.79.6] - 2026-06-16
-
-## [0.79.5] - 2026-06-16
-
-### Changed
-
-- Updated Markdown parsing to `marked` 18.0.5.
-
-### Fixed
-
-- Fixed editor Cursor Up handling so non-empty drafts jump to the start of the line before browsing input history ([#5789](https://github.com/earendil-works/pi/pull/5789) by [@4h9fbZ](https://github.com/4h9fbZ)).
-
-## [0.79.4] - 2026-06-15
-
-### Added
-
-- Added terminal background color query support for OSC 11 replies ([#5385](https://github.com/earendil-works/pi/pull/5385) by [@vegarsti](https://github.com/vegarsti)).
-
-### Fixed
-
-- Fixed overlay compositing over CJK wide characters so borders stay aligned when an overlay starts inside a full-width cell ([#5297](https://github.com/earendil-works/pi/issues/5297)).
-- Fixed WezTerm inline Kitty image rendering during full redraw fallbacks so image padding rows are reserved before the placement is drawn without regressing tall-image placement ([#5618](https://github.com/earendil-works/pi/issues/5618), [#4415](https://github.com/earendil-works/pi/issues/4415)).
-
-## [0.79.3] - 2026-06-13
-
-## [0.79.2] - 2026-06-12
-
-### Fixed
-
-- Fixed Markdown source list marker preservation to include unordered markers, so standalone `+` user messages no longer render as `-` ([#5657](https://github.com/earendil-works/pi/issues/5657)).
-- Fixed slash-separated fuzzy queries so provider/model completions remain matchable after insertion.
-- Fixed WezTerm inline Kitty image rendering so reserved row clears do not erase all but the top strip of tool image previews ([#5618](https://github.com/earendil-works/pi/issues/5618)).
-- Fixed editor wrapping for CJK text to break at character boundaries instead of leaving large trailing gaps ([#5585](https://github.com/earendil-works/pi/pull/5585) by [@haoqixu](https://github.com/haoqixu)).
-- Fixed loose Markdown list rendering to preserve blank-line separation between list items ([#5562](https://github.com/earendil-works/pi/pull/5562) by [@Perlence](https://github.com/Perlence)).
-
-## [0.79.1] - 2026-06-09
-
-### Added
-
-- Added `AutocompleteProvider.triggerCharacters` so editor autocomplete can naturally trigger on provider-defined token prefixes ([#4703](https://github.com/earendil-works/pi/issues/4703)).
-
-### Fixed
-
-- Fixed IME hardware cursor positioning while slash-command autocomplete is visible ([#5283](https://github.com/earendil-works/pi/pull/5283) by [@smoosex](https://github.com/smoosex)).
-- Fixed prompt history navigation to restore the current draft when returning from history browsing ([#5494](https://github.com/earendil-works/pi/issues/5494)).
-- Fixed wrapping for mixed Latin and CJK text so unspaced CJK runs can break at grapheme boundaries without leaving large trailing gaps ([#5495](https://github.com/earendil-works/pi/issues/5495)).
-
-## [0.79.0] - 2026-06-08
-
-### Fixed
-
-- Fixed prompt history navigation to place the cursor at the start when browsing upward and at the end when browsing downward, so repeated Up/Down traverses multiline prompts immediately ([#5454](https://github.com/earendil-works/pi/issues/5454)).
-- Fixed intermittent Shift+Enter handling by making Kitty keyboard protocol fallback response-driven instead of timeout-driven ([#5188](https://github.com/earendil-works/pi/issues/5188)).
-- Fixed TUI rendering to clear stale lines when content shrinks to zero.
-- Fixed autocomplete suggestions to re-query after editor cursor movement ([#5499](https://github.com/earendil-works/pi/pull/5499) by [@Roman-Galeev](https://github.com/Roman-Galeev)).
-
-## [0.78.1] - 2026-06-04
-
-### Fixed
-
-- Fixed overlay focus restoration so non-capturing overlays remain interactive after UI rerenders and explicit focus release ([#5235](https://github.com/earendil-works/pi/pull/5235) by [@nicobailon](https://github.com/nicobailon)).
-- Fixed tab width accounting in column slicing and overlay compositing so tab-containing output cannot exceed the terminal width ([#5218](https://github.com/earendil-works/pi/issues/5218)).
-
-## [0.78.0] - 2026-05-29
-
-### Fixed
-
-- Fixed ANSI text wrapping to avoid stack overflows on very long wrapped lines ([#5185](https://github.com/earendil-works/pi-mono/issues/5185)).
-- Clarified the IME hardware cursor docs to state that cursor visibility remains opt-in ([#5200](https://github.com/earendil-works/pi-mono/issues/5200)).
-- Fixed OSC 8 hyperlinks to pass through tmux when the client supports them ([#5189](https://github.com/earendil-works/pi-mono/pull/5189) by [@mpazik](https://github.com/mpazik)).
-
-## [0.77.0] - 2026-05-28
-
-### Fixed
-
-- Fixed keyboard protocol negotiation to ignore mismatched or delayed terminal responses, avoiding false Kitty keyboard protocol detection ([#5091](https://github.com/earendil-works/pi/pull/5091) by [@mitsuhiko](https://github.com/mitsuhiko)).
-
-## [0.76.0] - 2026-05-27
-
-### Added
-
-- Added an opt-in Markdown renderer option to preserve source ordered-list markers for transcript rendering ([#5013](https://github.com/earendil-works/pi/issues/5013)).
-
-### Fixed
-
-- Fixed `Shift+Enter` in Apple Terminal by detecting local macOS modifier state when Terminal.app sends plain Return.
-- Fixed Windows Terminal capability detection to enable OSC 8 hyperlinks, preserving clickable long URLs across wrapped lines ([#4923](https://github.com/earendil-works/pi/issues/4923)).
-- Fixed JetBrains terminal capability detection to enable truecolor while disabling unsupported OSC 8 hyperlinks ([#5037](https://github.com/earendil-works/pi-mono/pull/5037) by [@Perlence](https://github.com/Perlence)).
-- Fixed editor and input word navigation/deletion to use Unicode word boundaries while preserving ASCII punctuation boundaries ([#5022](https://github.com/earendil-works/pi-mono/pull/5022) by [@haoqixu](https://github.com/haoqixu), [#5067](https://github.com/earendil-works/pi-mono/pull/5067) by [@haoqixu](https://github.com/haoqixu), [#5068](https://github.com/earendil-works/pi-mono/pull/5068) by [@haoqixu](https://github.com/haoqixu)).
-
-## [0.75.5] - 2026-05-23
-
-### Changed
-
-- Replaced the optional `koffi` dependency for Windows VT input with a tiny vendored native helper, reducing install size while preserving Shift+Tab handling ([#4480](https://github.com/earendil-works/pi/issues/4480)).
-
-## [0.75.4] - 2026-05-20
-
-### Changed
-
-- Removed the package-level development watch script now that the root TypeScript check validates strip-only-compatible sources.
-
-### Fixed
-
-- Fixed loader initialization so indicator startup cannot run before frames are initialized.
-- Fixed truecolor capability detection to align terminal image rendering with the interactive theme detector.
-
-## [0.75.3] - 2026-05-18
-
-## [0.75.2] - 2026-05-18
-
-## [0.75.1] - 2026-05-18
-
-## [0.75.0] - 2026-05-17
-
-### Breaking Changes
-
-- Raised the minimum supported Node.js version to 22.19.0.
-
-## [0.74.1] - 2026-05-16
-
-### Added
-
-- Added markdown list-item wrapping that preserves indentation for wrapped continuation lines ([#4327](https://github.com/earendil-works/pi-mono/pull/4327) by [@Perlence](https://github.com/Perlence)).
-
-### Fixed
-
-- Fixed markdown task-list checkbox rendering ([#4379](https://github.com/earendil-works/pi-mono/pull/4379) by [@Perlence](https://github.com/Perlence)).
-- Fixed markdown rendering robustness for very large markdown files ([#4463](https://github.com/earendil-works/pi-mono/pull/4463) by [@ndanielherrera](https://github.com/ndanielherrera)).
-- Fixed Kitty image placement when the viewport is shorter than the rendered image ([#4461](https://github.com/earendil-works/pi-mono/pull/4461) by [@xu0o0](https://github.com/xu0o0)).
-- Fixed WezTerm Kitty keyboard protocol edge cases so escape handling remains correct ([#4482](https://github.com/earendil-works/pi-mono/pull/4482) by [@Felixoid](https://github.com/Felixoid)).
-- Fixed inline image rendering to cap portrait images by height instead of always scaling them to the configured maximum width.
+- Added marquee TUI components and a Prime-branded theme as part of the initial Prime Agent fork from pi-mono.
 
 ## [0.74.0] - 2026-05-07
 
@@ -483,6 +334,7 @@
 - Fixed slash-command Tab completion from immediately chaining into argument autocomplete after completing the command name, restoring flows like `/model` that submit into a selector dialog ([#2577](https://github.com/badlogic/pi-mono/issues/2577))
 - Fixed stale content and incorrect viewport tracking after TUI content shrinks or transient components inflate the working area ([#2126](https://github.com/badlogic/pi-mono/pull/2126) by [@Perlence](https://github.com/Perlence))
 - Fixed `@` autocomplete to debounce editor-triggered searches, cancel in-flight `fd` lookups cleanly, and keep suggestions visible while results refresh ([#1278](https://github.com/badlogic/pi-mono/issues/1278))
+
 
 ## [0.62.0] - 2026-03-23
 
@@ -1120,158 +972,3 @@
 ### Fixed
 
 - **Readline-style Ctrl+W**: Now skips trailing whitespace before deleting the preceding word, matching standard readline behavior. ([#306](https://github.com/badlogic/pi-mono/pull/306) by [@kim0](https://github.com/kim0))
-
-## [0.7.2] - 2026-08-11
-
-## [0.7.1] - 2026-08-07
-
-## [0.7.0] - 2026-08-05
-
-## [0.6.1] - 2026-08-05
-
-## [0.6.0] - 2026-08-04
-
-## [0.5.1] - 2026-08-04
-
-## [0.5.0] - 2026-08-03
-
-## [0.4.0] - 2026-08-01
-
-## [0.3.3] - 2026-07-23
-
-- Changed `SelectList` selection cursor from `→` to `›` for consistency with tree and user-message selectors.
-- Changed slash-command autocomplete to show argument hints and source tags inline, selected descriptions separately, and directional hidden-result counts.
-
-## [0.3.2] - 2026-07-20
-
-- Removed the fullscreen image fallback instruction and kept fullscreen overlays from emitting terminal graphics ([#437](https://github.com/PrimeIntellect-ai/prime-agent/pull/437) by [@snimu](https://github.com/snimu)).
-- Changed the fullscreen follow shortcut from `Alt+Down` to `Ctrl+Shift+Down` for more reliable terminal input ([ENG-4684](https://linear.app/primeintellect/issue/ENG-4684/altdown-doesnt-work)).
-- Fixed terminal width, slicing, and wrapping helpers misreading standard CSI and DCS escape sequences.
-- Fixed autocomplete popups overlapping the prompt's top edge.
-
-## [0.3.1] - 2026-07-15
-
-- Fixed fullscreen Markdown table selections copying borders instead of tab-separated cell content ([ENG-4629](https://linear.app/primeintellect/issue/ENG-4629/respect-table-boundaries-when-selecting)).
-- Fixed fullscreen drag selection so holding at a transcript edge scrolls through offscreen text ([ENG-4644](https://linear.app/primeintellect/issue/ENG-4644/copy-issues)).
-- Fixed slash-command and skill autocomplete not appearing for references typed in the middle of prompts ([ENG-4628](https://linear.app/primeintellect/issue/ENG-4628/support-skill-and-command-autocomplete-mid-prompt)).
-- Fixed focused full-pane overlays becoming slow to navigate on wider terminals.
-- Fixed plain-text truncation emitting ANSI resets, marked shortened descriptions with an ellipsis, and rendered autocomplete in content-sized popup surfaces that close when editing leaves the completion context ([ENG-4542](https://linear.app/primeintellect/issue/ENG-4542/command-descriptions-are-cut-off-on-narrow-screens)).
-
-## [0.3.0] - 2026-07-13
-
-- Fixed fullscreen TUI handoffs temporarily releasing raw input and leaking keyboard-protocol timers, which caused flicker and echoed arrow escape sequences while opening sessions.
-
-## [0.2.9] - 2026-07-13
-
-- Fixed fullscreen dock selection so prompt text can be copied ([#342](https://github.com/PrimeIntellect-ai/prime-agent/pull/342)).
-
-## [0.2.8] - 2026-07-09
-
-## [0.2.7] - 2026-07-08
-
-- Fixed full TUI redraws to preserve terminal scrollback on resize and shrink redraws ([#331](https://github.com/PrimeIntellect-ai/prime-agent/pull/331) by [@sethkarten](https://github.com/sethkarten)).
-- Fixed fullscreen overlays that request native mouse behavior suspending mouse tracking while visible.
-- Added fullscreen handoff support so callers can switch alternate-screen views without replaying content into primary scrollback.
-
-## [0.2.6] - 2026-07-06
-
-- Fixed fullscreen overlay selection so login URLs can be copied.
-
-## [0.2.5] - 2026-07-06
-
-- Added fullscreen viewport rendering with alternate-screen scrolling, follow controls, mouse selection, and clipboard copy hooks ([#316](https://github.com/PrimeIntellect-ai/prime-agent/pull/316)).
-
-## [0.2.4] - 2026-07-01
-
-## [0.2.3] - 2026-06-30
-
-## [0.2.2] - 2026-06-25
-
-- Added `fuzzyFilterScored`, returning scored matches so callers can break ties by recency; `fuzzyFilter` delegates to it unchanged ([#251](https://github.com/PrimeIntellect-ai/prime-agent/issues/251)).
-- Changed the editor to expose `rlmChildLabel` (whitespace-normalized full prompt) and centralized the "still working" pulse glyph in `working-icon.ts` for shared use across panels and lists ([#247](https://github.com/PrimeIntellect-ai/prime-agent/issues/247)).
-
-## [0.2.1] - 2026-06-23
-
-## [0.2.0] - 2026-06-23
-
-### Added
-
-- Added an optional `commandColor` to the editor theme so a leading slash command stays highlighted while its argument is being typed.
-- Added editor support for atomic pasted-image markers, resolving markers by presence so undo and dequeue keep them intact.
-
-## [0.1.9] - 2026-06-22
-
-## [0.1.8] - 2026-06-21
-
-## [0.1.7] - 2026-06-18
-
-### Fixed
-
-- Fixed TUI flicker when attaching to long or streaming sessions by only preserving scrollback when the transcript grows, not when it shrinks.
-
-## [0.1.6] - 2026-06-17
-
-### Fixed
-
-- Fixed the viewport not staying anchored when collapsing or expanding tool output, preserving scrollback images instead of forcing a full redraw.
-
-## [0.1.5] - 2026-06-16
-
-### Fixed
-
-- Fixed `Alt+Up`/`Alt+Down` key matching in non-kitty terminals so the bindings are recognized outside kitty's keyboard protocol.
-- Fixed autocomplete to respect slash-command alias resolution so aliased commands complete to their canonical form.
-
-## [0.1.4] - 2026-06-15
-
-## [0.1.3] - 2026-06-12
-
-## [0.1.2] - 2026-06-12
-
-## [0.1.1] - 2026-06-11
-
-## [0.1.0] - 2026-06-11
-
-## [0.0.10] - 2026-06-08
-
-### Added
-
-- Added an optional `promptPrefix` to the editor that renders a leading prompt indicator with correct wrapping and padding, with overridable hooks for subclasses.
-
-### Changed
-
-- Changed `Editor.cancelAutocomplete` from private to protected so subclasses can cancel autocomplete before handling interrupts.
-
-## [0.0.9] - 2026-06-04
-
-## [0.0.8] - 2026-06-04
-
-## [0.0.7] - 2026-06-01
-
-## [0.0.6] - 2026-05-27
-
-## [0.0.5] - 2026-05-26
-
-### Added
-
-- Added a terminal-colors module that probes the terminal's default foreground/background via OSC queries and exposes helpers to adapt surfaces to dark or light terminals.
-
-## [0.0.4] - 2026-05-21
-
-## [0.0.2] - 2026-05-20
-
-### Added
-
-- Added `VersionedRenderCache` for width/version-keyed render caching of expensive TUI components.
-- Added optional background surface rendering for editor components.
-- Added scrollback overlay rendering for full-screen overlays that should preserve native terminal scrollback.
-
-### Fixed
-
-- Fixed raw tabs in rendered TUI lines to preserve painted backgrounds across indentation.
-
-## [0.0.1] - 2026-05-18
-
-### Added
-
-- Added marquee TUI components and a Prime-branded theme as part of the initial Prime Agent fork from pi-mono.

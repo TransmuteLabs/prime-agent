@@ -15,6 +15,7 @@ import { homedir } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
 import { spawnProcessSync } from "./utils/child-process.ts";
+import { normalizeSocketPath } from "./utils/daemon-socket-path.ts";
 import { normalizePath } from "./utils/paths.ts";
 import { stripBom } from "./utils/text.ts";
 
@@ -39,7 +40,7 @@ export const isBunRuntime = !!process.versions.bun;
 // Install Method Detection
 // =============================================================================
 
-export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
+export type InstallMethod = "bun-binary" | "homebrew" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
 
 interface SelfUpdateCommandStep {
 	command: string;
@@ -63,11 +64,33 @@ function normalizeSelfUpdatePackageTarget(target: SelfUpdatePackageTarget): {
 	return { packageName: target.packageName, installSpec: target.installSpec ?? target.packageName };
 }
 
+/** An install spec that names an artifact rather than a registry package. */
+function isDirectPackageArtifactSpec(installSpec: string): boolean {
+	const spec = installSpec.trim().toLowerCase();
+	return (
+		spec.startsWith("http://") ||
+		spec.startsWith("https://") ||
+		spec.startsWith("file:") ||
+		spec.endsWith(".tgz") ||
+		spec.endsWith(".tar.gz")
+	);
+}
+
 function makeSelfUpdateCommand(
 	installStep: SelfUpdateCommandStep,
 	uninstallStep?: SelfUpdateCommandStep,
+	options: { uninstallAfterInstall?: boolean } = {},
 ): SelfUpdateCommand {
 	if (!uninstallStep) return installStep;
+	// Installing from an artifact can fail after the old package is gone, so that
+	// order is inverted: the replacement lands first, the old package leaves after.
+	if (options.uninstallAfterInstall) {
+		return {
+			...installStep,
+			display: `${installStep.display} && ${uninstallStep.display}`,
+			steps: [installStep, uninstallStep],
+		};
+	}
 	return {
 		...installStep,
 		display: `${uninstallStep.display} && ${installStep.display}`,
@@ -83,9 +106,18 @@ function makeSelfUpdateCommandStep(command: string, args: string[]): SelfUpdateC
 	};
 }
 
+function isHomebrewInstall(): boolean {
+	const packageDir = getPackageDir().toLowerCase().replace(/\\/g, "/");
+	return packageDir.includes("/cellar/") && packageDir.includes("/libexec/lib/node_modules/");
+}
+
 export function detectInstallMethod(): InstallMethod {
 	if (isBunBinary) {
 		return "bun-binary";
+	}
+	// Homebrew owns its own installs; self-update must not write into the Cellar.
+	if (isHomebrewInstall()) {
+		return "homebrew";
 	}
 
 	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
@@ -132,8 +164,10 @@ function getSelfUpdateCommandForMethod(
 	npmCommand?: string[],
 ): SelfUpdateCommand | undefined {
 	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
+	const artifactOptions = { uninstallAfterInstall: isDirectPackageArtifactSpec(target.installSpec) };
 	switch (method) {
 		case "bun-binary":
+		case "homebrew":
 			return undefined;
 		case "pnpm": {
 			const match = readCommandOutput("pnpm", ["root", "-g"])
@@ -154,6 +188,7 @@ function getSelfUpdateCommandForMethod(
 				target.packageName === installedPackageName
 					? undefined
 					: makeSelfUpdateCommandStep("pnpm", ["remove", "-g", ...binDirArgs, installedPackageName]),
+				artifactOptions,
 			);
 		}
 		case "yarn":
@@ -162,6 +197,7 @@ function getSelfUpdateCommandForMethod(
 				target.packageName === installedPackageName
 					? undefined
 					: makeSelfUpdateCommandStep("yarn", ["global", "remove", installedPackageName]),
+				artifactOptions,
 			);
 		case "bun":
 			return makeSelfUpdateCommand(
@@ -175,6 +211,7 @@ function getSelfUpdateCommandForMethod(
 				target.packageName === installedPackageName
 					? undefined
 					: makeSelfUpdateCommandStep("bun", ["uninstall", "-g", installedPackageName]),
+				artifactOptions,
 			);
 		case "npm": {
 			const [command = "npm", ...npmArgs] = npmCommand ?? [];
@@ -192,7 +229,7 @@ function getSelfUpdateCommandForMethod(
 				target.packageName === installedPackageName
 					? undefined
 					: makeSelfUpdateCommandStep(command, [...prefixArgs, "uninstall", "-g", installedPackageName]);
-			return makeSelfUpdateCommand(installStep, uninstallStep);
+			return makeSelfUpdateCommand(installStep, uninstallStep, artifactOptions);
 		}
 		case "unknown":
 			return undefined;
@@ -256,6 +293,7 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 			return roots;
 		}
 		case "bun-binary":
+		case "homebrew":
 		case "unknown":
 			return [];
 	}
@@ -346,7 +384,10 @@ export function getSelfUpdateUnavailableInstruction(
 	const method = detectInstallMethod();
 	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
 	if (method === "bun-binary") {
-		return `Download from: https://github.com/earendil-works/pi-mono/releases/latest`;
+		return `Download from: https://github.com/PrimeIntellect-ai/prime-agent/releases/latest`;
+	}
+	if (method === "homebrew") {
+		return `Update with: brew upgrade ${APP_NAME}`;
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, target, npmCommand);
 	if (command) {
@@ -537,7 +578,8 @@ export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or PRIME_AGENT_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${envPrefix}_CODING_AGENT_DIR`;
-export const ENV_SESSION_DIR = `${envPrefix}_CODING_AGENT_SESSION_DIR`;
+export const ENV_SESSION_DIR = `${envPrefix}_SESSION_DIR`;
+export const ENV_LEGACY_SESSION_DIR = `${envPrefix}_CODING_AGENT_SESSION_DIR`;
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);
@@ -574,52 +616,12 @@ export function getModelsPath(): string {
 	return join(getAgentDir(), "models.json");
 }
 
-/** Get path to auth.json */
-export function getAuthPath(): string {
-	return join(getAgentDir(), "auth.json");
-}
-
-/** Get path to settings.json */
-export function getSettingsPath(): string {
-	return join(getAgentDir(), "settings.json");
-}
-
-/** Get path to tools directory */
-export function getToolsDir(): string {
-	return join(getAgentDir(), "tools");
-}
-
-/** Get path to managed binaries directory (fd, rg) */
-export function getBinDir(): string {
-	return join(getAgentDir(), "bin");
-}
-
-/** Get path to prompt templates directory */
-export function getPromptsDir(): string {
-	return join(getAgentDir(), "prompts");
-}
-
-/** Get path to sessions directory */
-export function getSessionsDir(): string {
-	return join(getAgentDir(), "sessions");
-}
-
-/** Get path to logs directory */
+/** Directory where daemon and client diagnostic logs are written (e.g. ~/.prime/agent/logs/). */
 export function getLogsDir(): string {
 	return join(getAgentDir(), "logs");
 }
 
-/** Get path to debug log file */
-export function getDebugLogPath(): string {
-	return join(getAgentDir(), `${APP_NAME}-debug.log`);
-}
-
-// --- prime-port: daemon log/path helpers ---
-export const SELF_UPDATE_INTERACTIVE_CHILD_ENV = "PRIME_AGENT_INTERACTIVE_SELF_UPDATE";
-export const SELF_UPDATE_NOT_ATTEMPTED_EXIT_CODE = 75;
-
-const MAX_LOG_BYTES = 5 * 1024 * 1024;
-
+/** Log file capturing client-side agent-open failures. */
 export function getClientErrorLogPath(): string {
 	return join(getLogsDir(), "client-errors.log");
 }
@@ -628,21 +630,40 @@ export function getAgentTracesLogPath(): string {
 	return join(getLogsDir(), "agent-traces.log");
 }
 
+/** Shared structured (JSON lines) log for client, daemon, and provider diagnostics. */
 export function getAgentLogPath(): string {
 	return join(getLogsDir(), "agent.jsonl");
 }
 
+/**
+ * Log file for a daemon. The basename keeps it readable; a hash of the full
+ * socket path makes it unique so two sockets that share a basename (e.g.
+ * daemon.sock in different dirs) don't interleave into one file.
+ */
 export function getDaemonLogPath(socketPath: string): string {
-	const hash = createHash("sha256").update(socketPath).digest("hex").slice(0, 8);
-	return join(getLogsDir(), `${basename(socketPath)}.${hash}.log`);
+	const normalized = normalizeSocketPath(socketPath);
+	const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 8);
+	return join(getLogsDir(), `${basename(normalized)}.${hash}.log`);
 }
 
 export function getDaemonUpdateRestartManifestPath(socketPath: string, agentDir: string = getAgentDir()): string {
-	const normalizedSocketPath = process.platform === "win32" ? socketPath.toLowerCase() : resolve(socketPath);
+	const normalizedSocketPath = normalizeSocketPath(socketPath);
 	const socketHash = createHash("sha256").update(normalizedSocketPath).digest("hex");
 	return join(agentDir, "daemon-update-restarts", `${socketHash}.json`);
 }
 
+export function getLegacyDaemonUpdateRestartManifestPath(agentDir: string = getAgentDir()): string {
+	return join(agentDir, "daemon-update-restart.json");
+}
+
+const MAX_LOG_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Append a line to a log file, keeping its size bounded with a single-generation
+ * rotation. Opens and closes per call (no held fd), so rotation works at runtime
+ * — a long-lived writer rotates on the write that crosses the cap, not only at
+ * startup. Best-effort: diagnostics must never throw into the caller.
+ */
 export function appendRotatingLog(logPath: string, message: string, maxBytes: number = MAX_LOG_BYTES): void {
 	try {
 		mkdirSync(dirname(logPath), { recursive: true });
@@ -661,6 +682,49 @@ export function appendRotatingLog(logPath: string, message: string, maxBytes: nu
 	}
 }
 
+/** Get path to auth.json */
+export function getAuthPath(): string {
+	return join(getAgentDir(), "auth.json");
+}
+
+/** Get path to settings.json */
+export function getSettingsPath(): string {
+	return join(getAgentDir(), "settings.json");
+}
+
+/** Get path to tools directory */
+export function getToolsDir(): string {
+	return join(getAgentDir(), "tools");
+}
+
+/** Get path to cron jobs store */
 export function getCronJobsPath(agentDir: string = getAgentDir()): string {
 	return join(agentDir, "cron-jobs.json");
 }
+
+/** Get path to managed binaries directory (fd, rg) */
+export function getBinDir(): string {
+	return join(getAgentDir(), "bin");
+}
+
+/** Get path to sessions directory */
+export function getSessionsDir(agentDir: string = getAgentDir()): string {
+	const envDir = getSessionDirEnvOverride();
+	if (envDir) {
+		return envDir;
+	}
+	return join(agentDir, "sessions");
+}
+
+export function getSessionDirEnvOverride(): string | undefined {
+	const envDir = process.env[ENV_SESSION_DIR] ?? process.env[ENV_LEGACY_SESSION_DIR];
+	return envDir ? expandTildePath(envDir) : undefined;
+}
+
+/** Get path to debug log file */
+export function getDebugLogPath(): string {
+	return join(getAgentDir(), `${APP_NAME}-debug.log`);
+}
+
+export const SELF_UPDATE_INTERACTIVE_CHILD_ENV = "PRIME_AGENT_INTERACTIVE_SELF_UPDATE";
+export const SELF_UPDATE_NOT_ATTEMPTED_EXIT_CODE = 75;

@@ -13,7 +13,14 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import {
+	APP_NAME,
+	CONFIG_DIR_NAME,
+	ENV_AGENT_DIR,
+	PACKAGE_NAME,
+	SELF_UPDATE_INTERACTIVE_CHILD_ENV,
+	VERSION,
+} from "../src/config.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import type { ResolvedPaths } from "../src/core/package-manager.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
@@ -22,6 +29,8 @@ import { main } from "../src/main.ts";
 import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
 import { allowNetwork } from "./test-network-env.ts";
+
+const DOWNLOAD_BASE_URL = "https://example.test/download";
 
 describe("package commands", () => {
 	let tempDir: string;
@@ -68,7 +77,7 @@ fs.writeFileSync(${JSON.stringify(npmRecordPath)}, JSON.stringify(args));
 if (${npmExitCode} !== 0) process.exit(${npmExitCode});
 const binDir = path.join(process.cwd(), "node_modules", ".bin");
 fs.mkdirSync(binDir, { recursive: true });
-const piPath = path.join(binDir, process.platform === "win32" ? "pi.cmd" : "pi");
+const piPath = path.join(binDir, process.platform === "win32" ? "${APP_NAME}.cmd" : "${APP_NAME}");
 fs.writeFileSync(
 	piPath,
 	process.platform === "win32"
@@ -95,12 +104,14 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	}
 
 	function mockManagedUpdate(targetVersion: string): void {
+		// The release manifest, not a version API, is what this product checks.
+		vi.stubEnv("PRIME_AGENT_DOWNLOAD_BASE_URL", DOWNLOAD_BASE_URL);
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (input: string | URL | Request) => {
 				const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-				if (url === "https://pi.dev/api/latest-version") {
-					return Response.json({ packageName: PACKAGE_NAME, version: targetVersion });
+				if (url === `${DOWNLOAD_BASE_URL}/latest.json`) {
+					return Response.json({ package: PACKAGE_NAME, version: targetVersion });
 				}
 				const releaseUrl = `https://example.test/api/installer/releases/${targetVersion}`;
 				if (url === `${releaseUrl}/package.json` || url === `${releaseUrl}/package-lock.json`) {
@@ -113,6 +124,23 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 	async function runPackageCommandDirectly(args: string[]): Promise<void> {
 		expect(await handlePackageCommand(args)).toBe(true);
+	}
+
+	// A self-update that succeeds hands the daemon to a detached coordinator spawned from the
+	// installed entry point, which these fixtures never create. The interactive parent already
+	// owns that handover for its child, so the child marker keeps it out of the update path.
+	async function runSelfUpdateInstallChild(args: string[]): Promise<void> {
+		const previousValue = process.env[SELF_UPDATE_INTERACTIVE_CHILD_ENV];
+		process.env[SELF_UPDATE_INTERACTIVE_CHILD_ENV] = "1";
+		try {
+			await runPackageCommandDirectly(args);
+		} finally {
+			if (previousValue === undefined) {
+				delete process.env[SELF_UPDATE_INTERACTIVE_CHILD_ENV];
+			} else {
+				process.env[SELF_UPDATE_INTERACTIVE_CHILD_ENV] = previousValue;
+			}
+		}
 	}
 
 	function extensionPaths(
@@ -130,6 +158,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			skills: [],
 			prompts: [],
 			themes: [],
+			diagnostics: [],
 		};
 	}
 
@@ -191,7 +220,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		const relativePkgDir = join(projectDir, "packages", "local-package");
 		mkdirSync(relativePkgDir, { recursive: true });
 
-		await main(["install", "./packages/local-package"]);
+		await main(["package", "install", "./packages/local-package"]);
 
 		const settingsPath = join(agentDir, "settings.json");
 		const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { packages?: string[] };
@@ -202,25 +231,28 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("should remove local packages using a path with a trailing slash", async () => {
-		await main(["install", `${packageDir}/`]);
+		await main(["package", "install", `${packageDir}/`]);
 
 		const settingsPath = join(agentDir, "settings.json");
 		const installedSettings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { packages?: string[] };
 		expect(installedSettings.packages?.length).toBe(1);
 
-		await main(["remove", `${packageDir}/`]);
+		await main(["package", "remove", `${packageDir}/`]);
 
 		const removedSettings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { packages?: string[] };
 		expect(removedSettings.packages ?? []).toHaveLength(0);
 	});
 
 	it("skips untrusted project package settings", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
-		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
-			await expect(main(["list"])).resolves.toBeUndefined();
+			await expect(main(["package", "list"])).resolves.toBeUndefined();
 
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).toContain("No packages installed.");
@@ -231,13 +263,16 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("uses remembered project trust for list", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
-		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
-			await expect(main(["list"])).resolves.toBeUndefined();
+			await expect(main(["package", "list"])).resolves.toBeUndefined();
 
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).toContain("Project packages:");
@@ -250,13 +285,16 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("overrides remembered trust for list with --no-approve", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
-		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
-			await expect(main(["list", "--no-approve"])).resolves.toBeUndefined();
+			await expect(handlePackageCommand(["list", "--no-approve"])).resolves.toBe(true);
 
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).toContain("No packages installed.");
@@ -268,12 +306,15 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("approves project trust for list with --approve", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
-		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
-			await expect(main(["list", "--approve"])).resolves.toBeUndefined();
+			await expect(handlePackageCommand(["list", "--approve"])).resolves.toBe(true);
 
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).toContain("Project packages:");
@@ -286,13 +327,16 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("uses default project trust for list", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
-		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
-			await expect(main(["list"])).resolves.toBeUndefined();
+			await expect(main(["package", "list"])).resolves.toBeUndefined();
 
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).toContain("Project packages:");
@@ -305,13 +349,16 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("uses project_trust extensions for package commands", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
-		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
 			await expect(
-				main(["list"], {
+				main(["package", "list"], {
 					extensionFactories: [
 						(pi) => {
 							pi.on("project_trust", () => ({ trusted: "yes" }));
@@ -331,7 +378,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("does not prompt or ask extensions for project trust during update", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
 		const fakeNpmPath = join(tempDir, "fake-project-npm.cjs");
 		const recordPath = join(tempDir, "project-update.json");
@@ -340,7 +387,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			`const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(process.argv.slice(2)));`,
 		);
 		writeFileSync(
-			join(projectDir, ".pi", "settings.json"),
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:fake-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
 		);
 		let projectTrustCalled = false;
@@ -348,7 +395,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 		try {
 			await expect(
-				main(["update", "--extensions"], {
+				main(["package", "update"], {
 					extensionFactories: [
 						(pi) => {
 							pi.on("project_trust", () => {
@@ -369,7 +416,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("uses saved project trust during update", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 		const fakeNpmPath = join(tempDir, "fake-trusted-project-npm.cjs");
 		const recordPath = join(tempDir, "trusted-project-update.json");
 		writeFileSync(
@@ -377,14 +424,14 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			`const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(process.argv.slice(2)));`,
 		);
 		writeFileSync(
-			join(projectDir, ".pi", "settings.json"),
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:fake-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
 		);
 		new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
-			await expect(main(["update", "--extensions"])).resolves.toBeUndefined();
+			await expect(main(["package", "update"])).resolves.toBeUndefined();
 
 			expect(existsSync(recordPath)).toBe(true);
 			expect(process.exitCode).toBeUndefined();
@@ -394,14 +441,17 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("lets trust.json override default project trust", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
-		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		new ProjectTrustStore(agentDir).set(projectDir, false);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
-			await expect(main(["list"])).resolves.toBeUndefined();
+			await expect(main(["package", "list"])).resolves.toBeUndefined();
 
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).toContain("No packages installed.");
@@ -413,12 +463,12 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("blocks local package changes when project is untrusted", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
-		writeFileSync(join(projectDir, ".pi", "settings.json"), "{}");
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
+		writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), "{}");
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(main(["install", "-l", "./local-package"])).resolves.toBeUndefined();
+			await expect(main(["package", "install", "-l", "./local-package"])).resolves.toBeUndefined();
 
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain("Project is not trusted. Use --approve to modify local package config.");
@@ -429,13 +479,13 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("allows local package install to initialize fresh project settings", async () => {
-		await main(["install", "-l", packageDir]);
+		await main(["package", "install", "-l", packageDir]);
 
-		const settingsPath = join(projectDir, ".pi", "settings.json");
+		const settingsPath = join(projectDir, CONFIG_DIR_NAME, "settings.json");
 		const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { packages?: string[] };
 		expect(settings.packages?.length).toBe(1);
 		const stored = settings.packages?.[0] ?? "";
-		expect(realpathSync(join(projectDir, ".pi", stored))).toBe(realpathSync(packageDir));
+		expect(realpathSync(join(projectDir, CONFIG_DIR_NAME, stored))).toBe(realpathSync(packageDir));
 		expect(process.exitCode).toBeUndefined();
 	});
 
@@ -444,11 +494,11 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(main(["install", "--help"])).resolves.toBeUndefined();
+			await expect(main(["package", "install", "--help"])).resolves.toBeUndefined();
 
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).toContain("Usage:");
-			expect(stdout).toContain("pi install <source> [-l]");
+			expect(stdout).toContain(`${APP_NAME} package install <source> [--local]`);
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(process.exitCode).toBeUndefined();
 		} finally {
@@ -529,11 +579,13 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(main(["install", "--unknown"])).resolves.toBeUndefined();
+			await expect(main(["package", "install", "--unknown"])).resolves.toBeUndefined();
 
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain('Unknown option --unknown for "install".');
-			expect(stderr).toContain('Use "pi --help" or "pi install <source> [-l] [--approve|--no-approve]".');
+			expect(stderr).toContain(
+				`Use "${APP_NAME} --help" or "${APP_NAME} install <source> [-l] [--approve|--no-approve]".`,
+			);
 			expect(process.exitCode).toBe(1);
 		} finally {
 			errorSpy.mockRestore();
@@ -544,11 +596,11 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(main(["install"])).resolves.toBeUndefined();
+			await expect(main(["package", "install"])).resolves.toBeUndefined();
 
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain("Missing install source.");
-			expect(stderr).toContain("Usage: pi install <source> [-l]");
+			expect(stderr).toContain(`Usage: ${APP_NAME} install <source> [-l]`);
 			expect(stderr).not.toContain("at ");
 			expect(process.exitCode).toBe(1);
 		} finally {
@@ -569,7 +621,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 			expect(fetchMock).toHaveBeenCalledOnce();
 			expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-				`pi is already up to date (v${VERSION})`,
+				`${APP_NAME} is already up to date (v${VERSION})`,
 			);
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(process.exitCode).toBeUndefined();
@@ -619,7 +671,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+		await expect(runSelfUpdateInstallChild(["update", "--self"])).resolves.toBeUndefined();
 
 		expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${targetVersion}\n`);
 		expect(existsSync(join(managedRoot, "releases", targetVersion))).toBe(true);
@@ -629,7 +681,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			expect.arrayContaining(["ci", "--ignore-scripts"]),
 		);
 		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-			`Updated pi from ${VERSION} to ${targetVersion}`,
+			`Updated ${APP_NAME} from ${VERSION} to ${targetVersion}`,
 		);
 		expect(errorSpy).not.toHaveBeenCalled();
 		expect(process.exitCode).toBeUndefined();
@@ -651,7 +703,9 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 		expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${VERSION}\n`);
 		expect(existsSync(npmRecordPath)).toBe(false);
-		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain("Updated pi from");
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain(
+			`Updated ${APP_NAME} from`,
+		);
 		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
 			"Another managed Pi update is already running.",
 		);
@@ -670,7 +724,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(fetchMock).not.toHaveBeenCalled();
 		expect(existsSync(npmRecordPath)).toBe(false);
 		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-			"Managed pi installations do not support --force",
+			`Managed ${APP_NAME} installations do not support --force`,
 		);
 		expect(process.exitCode).toBe(1);
 	});
@@ -687,7 +741,9 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${VERSION}\n`);
 		expect(existsSync(join(managedRoot, "releases", targetVersion))).toBe(false);
 		expect(readdirSync(join(managedRoot, "staging"))).toEqual([]);
-		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain("Updated pi from");
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain(
+			`Updated ${APP_NAME} from`,
+		);
 		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("exited with code 23");
 		expect(process.exitCode).toBe(1);
 	});
@@ -695,7 +751,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	it("keeps npm self-updates non-managed when the managed environment is inherited", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const projectPrefix = join(tempDir, "project-prefix");
-		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", ...PACKAGE_NAME.split("/"));
 		const inheritedManagedRoot = join(tempDir, "inherited-managed-install");
 		mkdirSync(join(inheritedManagedRoot, "releases"), { recursive: true });
 		writeFileSync(
@@ -706,7 +762,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
 		const recordPath = join(tempDir, "self-update.json");
 		mkdirSync(selfPackageDir, { recursive: true });
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 		writeFileSync(
 			fakeNpmPath,
 			`const fs=require("node:fs"),path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
@@ -719,7 +775,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath, "--prefix", globalPrefix] }, null, 2),
 		);
 		writeFileSync(
-			join(projectDir, ".pi", "settings.json"),
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath, "--prefix", projectPrefix] }, null, 2),
 		);
 		process.env.PI_PACKAGE_DIR = selfPackageDir;
@@ -734,7 +790,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(runPackageCommandDirectly(["update", "--self", "--force"])).resolves.toBeUndefined();
+			await expect(runSelfUpdateInstallChild(["update", "--self", "--force"])).resolves.toBeUndefined();
 
 			expect(process.exitCode).toBeUndefined();
 			expect(errorSpy).not.toHaveBeenCalled();
@@ -745,7 +801,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			expect(recordedArgs).toContain(`${PACKAGE_NAME}@${VERSION}`);
 			expect(recordedArgs).not.toContain(PACKAGE_NAME);
 			expect(recordedArgs).not.toContain(projectPrefix);
-			expect(stdout).toContain(`Updated pi from ${VERSION} to ${VERSION}`);
+			expect(stdout).toContain(`Updated ${APP_NAME} from ${VERSION} to ${VERSION}`);
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
@@ -754,7 +810,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 
 	it("uses the current package name when the update check omits packageName", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
-		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", ...PACKAGE_NAME.split("/"));
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
 		const recordPath = join(tempDir, "self-update.json");
 		mkdirSync(selfPackageDir, { recursive: true });
@@ -782,7 +838,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+			await expect(runSelfUpdateInstallChild(["update", "--self"])).resolves.toBeUndefined();
 
 			expect(process.exitCode).toBeUndefined();
 			expect(errorSpy).not.toHaveBeenCalled();
@@ -791,7 +847,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
 			expect(recordedArgs).toContain(`${PACKAGE_NAME}@${targetVersion}`);
 			expect(recordedArgs).not.toContain(PACKAGE_NAME);
-			expect(stdout).toContain(`Updated pi from ${VERSION} to ${targetVersion}`);
+			expect(stdout).toContain(`Updated ${APP_NAME} from ${VERSION} to ${targetVersion}`);
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
@@ -800,7 +856,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 
 	it("installs the active package name from the update check during self-update", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
-		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", ...PACKAGE_NAME.split("/"));
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
 		const recordPath = join(tempDir, "self-update.json");
 		mkdirSync(selfPackageDir, { recursive: true });
@@ -834,7 +890,7 @@ else {
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+			await expect(runSelfUpdateInstallChild(["update", "--self"])).resolves.toBeUndefined();
 
 			expect(process.exitCode).toBeUndefined();
 			expect(errorSpy).not.toHaveBeenCalled();
@@ -851,7 +907,7 @@ else {
 
 	it("prints a pnpm metadata hint when self-update fails", async () => {
 		const globalRoot = join(tempDir, "pnpm", "global", "v11");
-		const selfPackageDir = join(globalRoot, "node_modules", "@earendil-works", "pi-coding-agent");
+		const selfPackageDir = join(globalRoot, "node_modules", ...PACKAGE_NAME.split("/"));
 		const fakeBinDir = join(tempDir, "bin");
 		const fakePnpmPath = join(fakeBinDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
 		mkdirSync(selfPackageDir, { recursive: true });
@@ -883,10 +939,10 @@ else {
 			expect(process.exitCode).toBe(1);
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stdout).not.toContain("Updated pi");
+			expect(stdout).not.toContain(`Updated ${APP_NAME}`);
 			expect(stderr).toContain("exited with code 23");
 			expect(stderr).toContain("If pnpm reports missing package versions");
-			expect(stderr).toContain("Run `pnpm store prune` and retry `pi update --self`.");
+			expect(stderr).toContain(`Run \`pnpm store prune\` and retry \`${APP_NAME} update --self\`.`);
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
@@ -895,7 +951,7 @@ else {
 
 	it("fails self-update when renamed npm package installation fails", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
-		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", ...PACKAGE_NAME.split("/"));
 		const fakeNpmPath = join(tempDir, "fake-npm-fail.cjs");
 		const recordPath = join(tempDir, "self-update-fail.json");
 		mkdirSync(selfPackageDir, { recursive: true });
@@ -936,7 +992,7 @@ if(args.includes("install")) process.exit(23);
 			expect(process.exitCode).toBe(1);
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stdout).not.toContain(`Updated pi`);
+			expect(stdout).not.toContain(`Updated ${APP_NAME}`);
 			expect(stderr).toContain("exited with code 23");
 			const recordedCalls = JSON.parse(readFileSync(recordPath, "utf-8")) as string[][];
 			expect(recordedCalls).toEqual([
@@ -957,7 +1013,7 @@ if(args.includes("install")) process.exit(23);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
-			await expect(main(["update", "pi-formatter"])).resolves.toBeUndefined();
+			await expect(main(["package", "update", "pi-formatter"])).resolves.toBeUndefined();
 
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");

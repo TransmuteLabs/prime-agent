@@ -23,6 +23,7 @@ function createTestSkill(options: {
 		baseDir: options.baseDir,
 		sourceInfo: createSyntheticSourceInfo(options.filePath, { source: options.source ?? "test" }),
 		disableModelInvocation: options.disableModelInvocation ?? false,
+		kind: "markdown",
 	};
 }
 
@@ -262,7 +263,9 @@ describe("skills", () => {
 			const introText = result.substring(0, xmlStart);
 
 			expect(introText).toContain("The following skills provide specialized instructions");
-			expect(introText).toContain("Use the read tool to load a skill's file");
+			// The kernel model reaches skill files through ipython, not a top-level read tool.
+			expect(introText).toContain("Use ipython to inspect a skill's file");
+			expect(introText).toContain("Skills with a python_import are prepared");
 		});
 
 		it("should escape XML special characters", () => {

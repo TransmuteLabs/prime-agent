@@ -1,14 +1,41 @@
-import { compare, valid } from "semver";
+import { compare, prerelease, valid } from "semver";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
-const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
+const DEFAULT_PRIME_AGENT_DOWNLOAD_BASE_URL = "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev";
+const STABLE_VERSION_MANIFEST_PATH = "latest.json";
+const BETA_VERSION_MANIFEST_PATH = "beta.json";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
 	version: string;
 	packageName?: string;
+	/** Set when the release manifest ships an artifact, so the update installs that instead of a registry version. */
+	installSpec?: string;
 	note?: string;
+}
+
+function getPrimeAgentDownloadBaseUrl(): string {
+	return (process.env.PRIME_AGENT_DOWNLOAD_BASE_URL?.trim() || DEFAULT_PRIME_AGENT_DOWNLOAD_BASE_URL).replace(
+		/\/+$/,
+		"",
+	);
+}
+
+/** A beta build follows the beta manifest; every other build follows the stable one. */
+function getReleaseManifestPath(currentVersion: string): string {
+	const identifiers = prerelease(valid(currentVersion.trim()) ?? "") ?? [];
+	return identifiers[0] === "beta" ? BETA_VERSION_MANIFEST_PATH : STABLE_VERSION_MANIFEST_PATH;
+}
+
+function resolveReleaseUrl(baseUrl: string, pathOrUrl: string): string | undefined {
+	const trimmed = pathOrUrl.trim();
+	if (!trimmed) return undefined;
+	try {
+		return new URL(trimmed).toString();
+	} catch {
+		return `${baseUrl}/${trimmed.replace(/^\/+/, "")}`;
+	}
 }
 
 /** Include useful errno details hidden behind Node's generic "fetch failed" error. */
@@ -54,8 +81,9 @@ export async function getLatestPiRelease(
 ): Promise<LatestPiRelease | undefined> {
 	if (process.env.PI_OFFLINE) return undefined;
 
+	const baseUrl = getPrimeAgentDownloadBaseUrl();
 	const response = await fetchWithRetry(
-		LATEST_VERSION_URL,
+		`${baseUrl}/${getReleaseManifestPath(currentVersion)}`,
 		{
 			headers: {
 				"User-Agent": getPiUserAgent(currentVersion),
@@ -70,7 +98,9 @@ export async function getLatestPiRelease(
 	if (!response.ok) return undefined;
 
 	const data = (await response.json()) as {
+		package?: unknown;
 		packageName?: unknown;
+		tarball?: unknown;
 		version?: unknown;
 		note?: unknown;
 	};
@@ -78,11 +108,17 @@ export async function getLatestPiRelease(
 		return undefined;
 	}
 	const packageName =
-		typeof data.packageName === "string" && data.packageName.trim() ? data.packageName.trim() : undefined;
+		typeof data.package === "string" && data.package.trim()
+			? data.package.trim()
+			: typeof data.packageName === "string" && data.packageName.trim()
+				? data.packageName.trim()
+				: undefined;
+	const installSpec = typeof data.tarball === "string" ? resolveReleaseUrl(baseUrl, data.tarball) : undefined;
 	const note = typeof data.note === "string" && data.note.trim() ? data.note.trim() : undefined;
 	return {
-		version: data.version.trim(),
+		version: data.version.trim().replace(/^v/, ""),
 		packageName,
+		...(installSpec ? { installSpec } : {}),
 		...(note ? { note } : {}),
 	};
 }

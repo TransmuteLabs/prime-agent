@@ -1244,6 +1244,37 @@ export function sliceWithWidth(
 	return { text: result, width: resultWidth };
 }
 
+/**
+ * Return an explicit OSC 8 URL or terminal-style bare HTTP(S) URL covering a
+ * visible column. OSC 8 remains authoritative when its label resembles a URL.
+ */
+export function urlAtColumn(line: string, column: number): string | undefined {
+	if (column < 0) return undefined;
+	const explicitUrl = getOsc8LinkAtColumn(line, column);
+	if (explicitUrl) return explicitUrl;
+
+	// The alt screen normalizes tabs before painting and strips ANSI without
+	// changing visible columns. Mirror that representation for bare URL spans.
+	const plainText = stripTerminalSequences(line).replace(/\t/g, "   ");
+	const urlPattern = /https?:\/\/[^\s<>"'`]+/giu;
+	for (const match of plainText.matchAll(urlPattern)) {
+		let url = match[0].replace(/[.,;:!?]+$/u, "");
+		for (const [open, close] of [
+			["(", ")"],
+			["[", "]"],
+			["{", "}"],
+		] as const) {
+			while (url.endsWith(close) && url.split(close).length > url.split(open).length) {
+				url = url.slice(0, -1);
+			}
+		}
+		const start = visibleWidth(plainText.slice(0, match.index));
+		const end = start + visibleWidth(url);
+		if (column >= start && column < end) return url;
+	}
+	return undefined;
+}
+
 // Pooled tracker instance for extractSegments (avoids allocation per call)
 const pooledStyleTracker = new AnsiCodeTracker();
 

@@ -68,8 +68,14 @@ describe("issue #7253: manual compaction during an active response", () => {
 		releaseSecondResponse();
 		await Promise.all([promptPromise, compactExpectation]);
 
-		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["manual"]);
-		expect(harness.eventsOfType("compaction_end").map((event) => event.reason)).toEqual(["manual"]);
-		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		// Threshold compaction stops the agent loop at the turn boundary here (reserveTokens 999
+		// of a 1000-token window), so it runs before the manual request exists. The manual
+		// compaction must still run exactly once, on its own, and must not fail.
+		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "manual")).toHaveLength(1);
+		const manualEnds = harness.eventsOfType("compaction_end").filter((event) => event.reason === "manual");
+		expect(manualEnds).toHaveLength(1);
+		expect(manualEnds[0]).toMatchObject({ aborted: false, willRetry: false });
+		expect(manualEnds[0].errorMessage).toBeUndefined();
+		expect(harness.sessionManager.getEntries().at(-1)?.type).toBe("compaction");
 	});
 });

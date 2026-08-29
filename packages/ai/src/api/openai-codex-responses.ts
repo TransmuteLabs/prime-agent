@@ -814,10 +814,14 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 		signal?.removeEventListener("abort", onAbort);
 		try {
 			await reader.cancel();
-		} catch {}
+		} catch {
+			// Teardown only: the stream is already finished, errored or aborted.
+		}
 		try {
 			reader.releaseLock();
-		} catch {}
+		} catch {
+			// A reader released by an earlier cancel throws; nothing is left to clean up.
+		}
 	}
 }
 
@@ -1019,7 +1023,9 @@ function isWebSocketSessionExpired(entry: CachedWebSocketConnection): boolean {
 function closeWebSocketSilently(socket: WebSocketLike, code = 1000, reason = "done"): void {
 	try {
 		socket.close(code, reason);
-	} catch {}
+	} catch {
+		// The socket is already closed or failed; the caller drops it either way.
+	}
 }
 
 function scheduleSessionWebSocketExpiry(sessionId: string, accountId: string, entry: CachedWebSocketConnection): void {
@@ -1568,7 +1574,9 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 			}
 			message = err.message || friendlyMessage || message;
 		}
-	} catch {}
+	} catch {
+		// A non-JSON error body leaves the raw message as the reported one.
+	}
 
 	return { message, friendlyMessage };
 }

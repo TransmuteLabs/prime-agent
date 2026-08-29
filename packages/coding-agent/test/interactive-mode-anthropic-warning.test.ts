@@ -7,20 +7,21 @@ function createSettingsManager(warnings: { anthropicExtraUsage?: boolean } = {})
 	};
 }
 
-function createModelRuntime(credential: { type: "oauth" } | undefined, apiKey?: string) {
+/** The warning reads stored credentials through the registry facade, not a session runtime. */
+function createModelRegistry(credential: { type: "oauth" } | undefined, apiKey?: string) {
 	return {
-		checkAuth: vi.fn().mockResolvedValue(credential),
-		getAuth: vi.fn().mockResolvedValue(apiKey ? { auth: { apiKey } } : undefined),
+		authStorage: { get: vi.fn().mockReturnValue(credential) },
+		getApiKeyForProvider: vi.fn().mockResolvedValue(apiKey),
 	};
 }
 
 describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 	test("warns once when Anthropic subscription auth is detected", async () => {
-		const modelRuntime = createModelRuntime(undefined, "sk-ant-oat01-test");
+		const modelRegistry = createModelRegistry(undefined, "sk-ant-oat01-test");
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
 			settingsManager: createSettingsManager(),
-			session: { modelRuntime },
+			modelRegistry,
 			showWarning: vi.fn(),
 		};
 
@@ -32,15 +33,15 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		});
 
 		expect(fakeThis.showWarning).toHaveBeenCalledTimes(1);
-		expect(modelRuntime.getAuth).toHaveBeenCalledTimes(1);
+		expect(modelRegistry.getApiKeyForProvider).toHaveBeenCalledTimes(1);
 	});
 
 	test("warns when Anthropic OAuth is stored even if token refresh lookup would fail", async () => {
-		const modelRuntime = createModelRuntime({ type: "oauth" });
+		const modelRegistry = createModelRegistry({ type: "oauth" });
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
 			settingsManager: createSettingsManager(),
-			session: { modelRuntime },
+			modelRegistry,
 			showWarning: vi.fn(),
 		};
 
@@ -49,15 +50,15 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		});
 
 		expect(fakeThis.showWarning).toHaveBeenCalledTimes(1);
-		expect(modelRuntime.getAuth).not.toHaveBeenCalled();
+		expect(modelRegistry.getApiKeyForProvider).not.toHaveBeenCalled();
 	});
 
 	test("does not warn for non-Anthropic models", async () => {
-		const modelRuntime = createModelRuntime(undefined);
+		const modelRegistry = createModelRegistry(undefined);
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
 			settingsManager: createSettingsManager(),
-			session: { modelRuntime },
+			modelRegistry,
 			showWarning: vi.fn(),
 		};
 
@@ -66,15 +67,15 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		});
 
 		expect(fakeThis.showWarning).not.toHaveBeenCalled();
-		expect(modelRuntime.getAuth).not.toHaveBeenCalled();
+		expect(modelRegistry.getApiKeyForProvider).not.toHaveBeenCalled();
 	});
 
 	test("does not warn when Anthropic extra usage warning is disabled", async () => {
-		const modelRuntime = createModelRuntime(undefined);
+		const modelRegistry = createModelRegistry(undefined);
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
 			settingsManager: createSettingsManager({ anthropicExtraUsage: false }),
-			session: { modelRuntime },
+			modelRegistry,
 			showWarning: vi.fn(),
 		};
 
@@ -83,7 +84,7 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		});
 
 		expect(fakeThis.showWarning).not.toHaveBeenCalled();
-		expect(modelRuntime.checkAuth).not.toHaveBeenCalled();
-		expect(modelRuntime.getAuth).not.toHaveBeenCalled();
+		expect(modelRegistry.authStorage.get).not.toHaveBeenCalled();
+		expect(modelRegistry.getApiKeyForProvider).not.toHaveBeenCalled();
 	});
 });

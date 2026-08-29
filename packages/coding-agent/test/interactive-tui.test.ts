@@ -87,7 +87,13 @@ describe("createInteractiveTui", () => {
 		renderer.setFocus(component);
 
 		type SwitchContext = {
-			runtimeHost: { session: { settingsManager: { getFullscreenCopyOnSelect: () => boolean } } };
+			uiServices: {
+				settingsManager: {
+					getFullscreenCopyOnSelect: () => boolean;
+					getFullscreenMouse: () => boolean;
+					getShowTerminalProgress: () => boolean;
+				};
+			};
 			renderer: ReturnType<typeof createInteractiveTui>;
 			ui: TUI;
 			fullscreenLayoutRoot: Component;
@@ -96,7 +102,13 @@ describe("createInteractiveTui", () => {
 			extensionTerminalInputSubscriptions: Set<never>;
 		};
 		const context = Object.assign(Object.create(InteractiveMode.prototype), {
-			runtimeHost: { session: { settingsManager: { getFullscreenCopyOnSelect: () => true } } },
+			uiServices: {
+				settingsManager: {
+					getFullscreenCopyOnSelect: () => true,
+					getFullscreenMouse: () => false,
+					getShowTerminalProgress: () => false,
+				},
+			},
 			renderer,
 			ui: undefined as unknown as TUI,
 			fullscreenLayoutRoot: component,
@@ -139,6 +151,8 @@ describe("InteractiveMode right-click paste", () => {
 		const context = {
 			renderer: { getFocusedComponent: () => target },
 			ui: { requestRender },
+			// An empty image clipboard falls through to the text paste under test.
+			handleClipboardImagePaste: async () => false,
 		};
 		const prototype = InteractiveMode.prototype as unknown as {
 			handleRightClickPaste(this: typeof context): Promise<void>;
@@ -152,7 +166,8 @@ describe("InteractiveMode right-click paste", () => {
 });
 
 type CopyCommandContext = {
-	session: { getLastAssistantText: () => string | undefined };
+	// Copy reads the transcript through the connection, so it also works against a daemon.
+	agentConnection: { getLastAssistantText: () => Promise<string | undefined> | string | undefined };
 	ui: ReturnType<typeof createInteractiveTui>;
 	showStatus: (message: string) => void;
 	showError: (message: string) => void;
@@ -185,7 +200,7 @@ describe("InteractiveMode copy confirmation", () => {
 		const showStatus = vi.fn();
 		const showError = vi.fn();
 		const context: CopyCommandContext = {
-			session: { getLastAssistantText },
+			agentConnection: { getLastAssistantText },
 			ui,
 			showStatus,
 			showError,
@@ -227,7 +242,7 @@ describe("InteractiveMode copy confirmation", () => {
 		const showStatus = vi.fn();
 		const showError = vi.fn();
 		const context: CopyCommandContext = {
-			session: { getLastAssistantText },
+			agentConnection: { getLastAssistantText },
 			ui,
 			showStatus,
 			showError,
@@ -268,7 +283,7 @@ describe("InteractiveMode copy confirmation", () => {
 		const showStatus = vi.fn();
 		const showError = vi.fn();
 		const context: CopyCommandContext = {
-			session: { getLastAssistantText: () => "assistant response" },
+			agentConnection: { getLastAssistantText: () => "assistant response" },
 			ui,
 			showStatus,
 			showError,
@@ -299,7 +314,7 @@ describe("InteractiveMode copy confirmation", () => {
 		const showStatus = vi.fn();
 		const showError = vi.fn();
 		const context: CopyCommandContext = {
-			session: { getLastAssistantText: () => "assistant response" },
+			agentConnection: { getLastAssistantText: () => "assistant response" },
 			ui,
 			showStatus,
 			showError,
@@ -313,7 +328,6 @@ describe("InteractiveMode copy confirmation", () => {
 });
 
 type ClearStatusContext = {
-	activeStatusIndicator: { kind: "working"; dispose: () => void } | undefined;
 	statusContainer: Container;
 	options: { tuiMode?: TuiMode };
 	ui: { getClearOnShrink: () => boolean };
@@ -321,7 +335,7 @@ type ClearStatusContext = {
 };
 
 type InteractiveModePrototype = {
-	clearStatusIndicator(this: ClearStatusContext, kind?: "working"): void;
+	reserveIdleStatusLine(this: ClearStatusContext): void;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
@@ -332,18 +346,15 @@ describe("clear-on-shrink status spacing", () => {
 			["regular", 1],
 			["fullscreen", 0],
 		] as const) {
-			const dispose = vi.fn();
 			const context: ClearStatusContext = {
-				activeStatusIndicator: { kind: "working", dispose },
 				statusContainer: new Container(),
 				options: { tuiMode },
 				ui: { getClearOnShrink: () => true },
 				idleStatus: new Text("", 0, 0),
 			};
 
-			interactiveModePrototype.clearStatusIndicator.call(context);
+			interactiveModePrototype.reserveIdleStatusLine.call(context);
 
-			expect(dispose).toHaveBeenCalledOnce();
 			expect(context.statusContainer.children).toHaveLength(expectedChildren);
 		}
 	});

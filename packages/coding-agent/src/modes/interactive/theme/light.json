@@ -31,7 +31,7 @@
 		"muted": "mediumGray",
 		"dim": "dimGray",
 		"text": "text",
-		"thinkingText": "mediumGray",
+		"thinkingText": "#7a7a7a",
 		"selectedBg": "selectedBg",
 		"scrollbarThumb": "selectedBg",
 		"searchMatchBg": "selectedBg",
@@ -46,7 +46,7 @@
 		"toolErrorBg": "toolErrorBg",
 		"toolTitle": "text",
 		"toolOutput": "mediumGray",
-		"mdHeading": "yellow",
+		"mdHeading": "#7e57c2",
 		"mdLink": "blue",
 		"mdLinkUrl": "dimGray",
 		"mdCode": "teal",
@@ -78,7 +78,7 @@
 		"thinkingXhigh": "#8b008b",
 		"thinkingMax": "#af005f",
 		"bashMode": "green",
-		"toolPanelBg": "selectedBg"
+		"toolPanelBg": "#ededf2"
 	},
 	"export": {
 		"pageBg": "#f8f8f8",

@@ -10,6 +10,8 @@ describe("agent connection snapshots", () => {
 				getCwd: () => "/workspace/project",
 			},
 			resourceLoader: {
+				getSystemPromptSource: () => undefined,
+				getAppendSystemPromptSources: () => [],
 				getAgentsFiles: () => ({
 					agentsFiles: [{ path: "/workspace/project/AGENTS.md" }],
 				}),
@@ -63,5 +65,37 @@ describe("agent connection snapshots", () => {
 			},
 		});
 		expect(snapshot.extensions[0]?.artifact).not.toHaveProperty("relativePath");
+	});
+
+	it("lists the system prompt and its appendices before project context files", () => {
+		const session = {
+			sessionId: "session-2",
+			sessionManager: {
+				getCwd: () => "/workspace/project",
+			},
+			resourceLoader: {
+				getSystemPromptSource: () => ({ path: "/workspace/project/.prime/SYSTEM.md" }),
+				getAppendSystemPromptSources: () => [{ path: "/workspace/project/.prime/APPEND_SYSTEM.md" }],
+				getAgentsFiles: () => ({
+					agentsFiles: [{ path: "/workspace/project/AGENTS.md" }],
+				}),
+				getSkills: () => ({ skills: [], diagnostics: [] }),
+				getPrompts: () => ({ prompts: [], diagnostics: [] }),
+				getThemes: () => ({ themes: [], diagnostics: [] }),
+				getExtensions: () => ({ extensions: [], errors: [] }),
+			},
+		} as unknown as AgentSession;
+
+		const snapshot = createAgentConnectionResourceSnapshot(session);
+
+		expect(snapshot.contextFiles.map((contextFile) => contextFile.path)).toEqual([
+			"/workspace/project/.prime/SYSTEM.md",
+			"/workspace/project/.prime/APPEND_SYSTEM.md",
+			"/workspace/project/AGENTS.md",
+		]);
+		expect(snapshot.contextFiles[0]?.artifact).toMatchObject({
+			type: "context_file",
+			logicalPath: ".prime/SYSTEM.md",
+		});
 	});
 });

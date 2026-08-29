@@ -37,6 +37,15 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import {
+	classifyStreamFailure,
+	formatStreamFailureMessage,
+	recordStreamFailure,
+	StreamFailureError,
+	streamFailureFromStopReason,
+	streamFailureMessage,
+	truncateRawPayload,
+} from "../utils/stream-failure.ts";
 
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -457,6 +466,29 @@ async function* iterateSseMessages(
 	}
 }
 
+/** An in-stream `error` SSE event is how Anthropic delivers overloads; keep its own type. */
+function anthropicSseError(data: string): StreamFailureError {
+	let errorType: string | undefined;
+	let detail: string | undefined;
+	let requestId: string | undefined;
+	try {
+		const parsed = parseJsonWithRepair<{ error?: { type?: string; message?: string }; request_id?: string }>(data);
+		errorType = parsed.error?.type;
+		detail = parsed.error?.message;
+		// Proxies may strip the request-id header; the error body carries it too.
+		requestId = typeof parsed.request_id === "string" ? parsed.request_id : undefined;
+	} catch {
+		detail = data;
+	}
+	const info = {
+		kind: classifyStreamFailure(errorType),
+		providerErrorType: errorType,
+		requestId,
+		raw: truncateRawPayload(data),
+	};
+	return new StreamFailureError(streamFailureMessage(info, detail), info);
+}
+
 async function* iterateAnthropicEvents(
 	response: Response,
 	signal?: AbortSignal,
@@ -470,7 +502,7 @@ async function* iterateAnthropicEvents(
 
 	for await (const sse of iterateSseMessages(response.body, signal)) {
 		if (sse.event === "error") {
-			throw new Error(sse.data);
+			throw anthropicSseError(sse.data);
 		}
 
 		if (!ANTHROPIC_MESSAGE_EVENTS.has(sse.event ?? "")) {
@@ -487,14 +519,15 @@ async function* iterateAnthropicEvents(
 			yield event;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			throw new Error(
+			throw new StreamFailureError(
 				`Could not parse Anthropic SSE event ${sse.event}: ${message}; data=${sse.data}; raw=${sse.raw.join("\\n")}`,
+				{ kind: "malformed_response", raw: truncateRawPayload(sse.data) },
 			);
 		}
 	}
 
 	if (sawMessageStart && !sawMessageEnd) {
-		throw new Error("Anthropic stream ended before message_stop");
+		throw new StreamFailureError("Anthropic stream ended before message_stop", { kind: "malformed_response" });
 	}
 }
 
@@ -776,7 +809,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				throw new Error("Anthropic stream ended without a stop reason");
 			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error(output.errorMessage || "An unknown error occurred");
+				throw streamFailureFromStopReason(output.rawStopReason, { message: output.errorMessage });
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -788,7 +821,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				delete (block as { partialJson?: string }).partialJson;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = formatStreamFailureMessage(error);
+			recordStreamFailure(model, output, error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -833,7 +867,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 		...buildBaseOptions(model, context, options, options?.apiKey),
 		toolChoice: options?.toolChoice,
 	} satisfies AnthropicOptions;
-	if (!options?.reasoning) {
+	if (!options?.reasoning || options.reasoning === "off") {
 		return stream(model, context, {
 			...base,
 			thinkingEnabled: false,

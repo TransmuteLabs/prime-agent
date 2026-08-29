@@ -1,9 +1,3 @@
-/**
- * Proxy stream function for apps that route LLM calls through a server.
- * The server manages auth and proxies requests to LLM providers.
- */
-
-// Internal import for JSON parsing utility
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
@@ -16,7 +10,6 @@ import {
 	type ToolCall,
 } from "@earendil-works/pi-ai";
 
-// Create stream class matching ProxyMessageEventStream
 class ProxyMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
 	constructor() {
 		super(
@@ -30,9 +23,6 @@ class ProxyMessageEventStream extends EventStream<AssistantMessageEvent, Assista
 	}
 }
 
-/**
- * Proxy event types - server sends these with partial field stripped to reduce bandwidth.
- */
 export type ProxyAssistantMessageEvent =
 	| { type: "start" }
 	| { type: "text_start"; contentIndex: number }
@@ -72,11 +62,8 @@ type ProxySerializableStreamOptions = Pick<
 >;
 
 export interface ProxyStreamOptions extends ProxySerializableStreamOptions {
-	/** Local abort signal for the proxy request */
 	signal?: AbortSignal;
-	/** Auth token for the proxy server */
 	authToken: string;
-	/** Proxy server URL (e.g., "https://genai.example.com") */
 	proxyUrl: string;
 }
 
@@ -119,7 +106,6 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 	const stream = new ProxyMessageEventStream();
 
 	(async () => {
-		// Initialize the partial message that we'll build up from events
 		const partial: AssistantMessage = {
 			role: "assistant",
 			stopReason: "pending",
@@ -173,7 +159,7 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 						errorMessage = `Proxy error: ${errorData.error}`;
 					}
 				} catch {
-					// Couldn't parse error response
+					// Keep the status-text fallback when the error body is not JSON.
 				}
 				throw new Error(errorMessage);
 			}
@@ -234,9 +220,6 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 	return stream;
 }
 
-/**
- * Process a proxy event and update the partial message.
- */
 function processProxyEvent(
 	proxyEvent: ProxyAssistantMessageEvent,
 	partial: AssistantMessage,

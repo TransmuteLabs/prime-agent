@@ -1,9 +1,9 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { ModelRegistry } from "../../core/model-registry.ts";
 import type { AgentStatus, AgentTaskState } from "../../core/session-manager.ts";
 import type { ActiveSessionState } from "./active-session-state.ts";
-import { completeSimple } from "./prime-port-ai-compat.ts";
 
 const SWEEP_INTERVAL_MS = 25_000;
 // Collapse a tool-use loop's rapid turn_end bursts into one summarization.

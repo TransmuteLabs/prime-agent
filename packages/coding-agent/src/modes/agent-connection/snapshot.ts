@@ -45,6 +45,7 @@ export function createAgentConnectionState(
 		leafId: sessionManager.getLeafId(),
 		autoCompactionEnabled: session.autoCompactionEnabled,
 		messageCount: session.messages.length,
+		pendingMessageCount: session.pendingMessageCount,
 		sessionActions: session.getSessionActionSnapshot(),
 		compactionCount: sessionManager.getEntries().filter((entry) => entry.type === "compaction").length,
 		goal: session.goalState,
@@ -54,7 +55,7 @@ export function createAgentConnectionState(
 		})),
 		activeToolNames: session.getActiveToolNames(),
 		contextUsage: session.getContextUsage(),
-		// Baseline recap; the daemon overlays the live summary on attach.
+		// Baseline recap; the daemon overlays the live summary when attaching.
 		recap: persistedRecap(sessionManager),
 	};
 }
@@ -74,6 +75,7 @@ export function createAgentConnectionSnapshot(
 			tree: sessionManager.getTree(),
 			leafId: sessionManager.getLeafId(),
 		},
+		children: session.getRlmChildSnapshots(),
 	};
 }
 
@@ -107,9 +109,17 @@ export function createAgentConnectionResourceSnapshot(session: AgentSession): Ag
 	const promptsResult = session.resourceLoader.getPrompts();
 	const themesResult = session.resourceLoader.getThemes();
 	const extensionsResult = session.resourceLoader.getExtensions();
+	const systemPromptSource = session.resourceLoader.getSystemPromptSource();
+	// The system prompt and its appendices are context the session loaded before any
+	// AGENTS.md, so they lead the list in load order.
+	const contextFileSources = [
+		...(systemPromptSource ? [systemPromptSource] : []),
+		...session.resourceLoader.getAppendSystemPromptSources(),
+		...session.resourceLoader.getAgentsFiles().agentsFiles,
+	];
 
 	return {
-		contextFiles: session.resourceLoader.getAgentsFiles().agentsFiles.map((entry) => ({
+		contextFiles: contextFileSources.map((entry) => ({
 			path: entry.path,
 			artifact: createArtifactReference(session, "context_file", entry.path),
 		})),

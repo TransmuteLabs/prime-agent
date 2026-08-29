@@ -180,7 +180,9 @@ function resolveSpawnContext(
 	delete env.PI_PROVIDER;
 	delete env.PI_MODEL;
 	delete env.PI_REASONING_LEVEL;
-	if (exposeSessionEnvironment && ctx) {
+	// Extensions may call the tool with a partial context, so session metadata is
+	// exposed only when the session manager it comes from is actually present.
+	if (exposeSessionEnvironment && ctx?.sessionManager) {
 		const model = ctx.model;
 		env.PI_SESSION_ID = ctx.sessionManager.getSessionId();
 		const sessionFile = ctx.sessionManager.getSessionFile();
@@ -530,7 +532,10 @@ export function createBashToolDefinition(
 	cwd: string,
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
-	return createShellToolDefinition(cwd, bashToolConfig, options);
+	const definition = createShellToolDefinition(cwd, bashToolConfig, options);
+	// Saved transcripts of removed built-ins replay through this renderer.
+	definition.replayBuiltInToolName = "bash";
+	return definition;
 }
 
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {

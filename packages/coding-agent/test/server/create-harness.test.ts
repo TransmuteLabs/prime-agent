@@ -327,6 +327,7 @@ describe("coding-agent Harness construction", () => {
 				contextFiles: [{ path: "/workspace/AGENTS.md", content: "Follow project policy." }],
 				skills: [
 					{
+						kind: "markdown",
 						name: "review",
 						description: "Review server changes",
 						filePath: "/skills/review/SKILL.md",

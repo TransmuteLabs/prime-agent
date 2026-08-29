@@ -75,6 +75,7 @@ function createMutableAgentState(
 		systemPrompt: initialState?.systemPrompt ?? "",
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
+		serviceTier: initialState?.serviceTier ?? "default",
 		get tools() {
 			return tools;
 		},
@@ -94,7 +95,6 @@ function createMutableAgentState(
 	};
 }
 
-/** Options for constructing an {@link Agent}. */
 export interface AgentOptions {
 	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>;
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
@@ -123,38 +123,57 @@ export interface AgentOptions {
 }
 
 class PendingMessageQueue {
-	private messages: AgentMessage[] = [];
+	// Batches, not a flat list: a caller that enqueues several messages together means them
+	// to be delivered together, and removeWhere() drops the whole batch when one member matches.
+	private batches: AgentMessage[][] = [];
 	public mode: QueueMode;
 
 	constructor(mode: QueueMode) {
 		this.mode = mode;
 	}
 
-	enqueue(message: AgentMessage): void {
-		this.messages.push(message);
+	enqueue(message: AgentMessage | AgentMessage[]): void {
+		const batch = Array.isArray(message) ? message.slice() : [message];
+		if (batch.length > 0) {
+			this.batches.push(batch);
+		}
 	}
 
 	hasItems(): boolean {
-		return this.messages.length > 0;
+		return this.batches.length > 0;
+	}
+
+	removeWhere(predicate: (message: AgentMessage) => boolean): AgentMessage[] {
+		const removed: AgentMessage[] = [];
+		const retained: AgentMessage[][] = [];
+		for (const batch of this.batches) {
+			if (batch.some(predicate)) {
+				removed.push(...batch);
+			} else {
+				retained.push(batch);
+			}
+		}
+		this.batches = retained;
+		return removed;
 	}
 
 	drain(): AgentMessage[] {
 		if (this.mode === "all") {
-			const drained = this.messages.slice();
-			this.messages = [];
+			const drained = this.batches.flat();
+			this.batches = [];
 			return drained;
 		}
 
-		const first = this.messages[0];
+		const first = this.batches[0];
 		if (!first) {
 			return [];
 		}
-		this.messages = this.messages.slice(1);
-		return [first];
+		this.batches = this.batches.slice(1);
+		return first;
 	}
 
 	clear(): void {
-		this.messages = [];
+		this.batches = [];
 	}
 }
 
@@ -164,12 +183,20 @@ type ActiveRun = {
 	abortController: AbortController;
 };
 
-/**
- * Stateful wrapper around the low-level agent loop.
- *
- * `Agent` owns the current transcript, emits lifecycle events, executes tools,
- * and exposes queueing APIs for steering and follow-up messages.
- */
+/** Why {@link Agent.continue} refused to start a continuation. */
+export type AgentContinueErrorCode = "busy" | "nothing-to-continue";
+
+/** Typed precondition failure from {@link Agent.continue}, so callers classify by code instead of message text. */
+export class AgentContinueError extends Error {
+	readonly code: AgentContinueErrorCode;
+
+	constructor(code: AgentContinueErrorCode, message: string) {
+		super(message);
+		this.code = code;
+		this.name = "AgentContinueError";
+	}
+}
+
 export class Agent {
 	private _state: MutableAgentState;
 	private readonly listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
@@ -202,15 +229,10 @@ export class Agent {
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
 	private activeRun?: ActiveRun;
-	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
-	/** Optional per-level thinking token budgets forwarded to the stream function. */
 	public thinkingBudgets?: ThinkingBudgets;
-	/** Preferred transport forwarded to the stream function. */
 	public transport: Transport;
-	/** Optional cap for provider-requested retry delays. */
 	public maxRetryDelayMs?: number;
-	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
 
 	constructor(options: AgentOptions) {
@@ -261,7 +283,6 @@ export class Agent {
 		return this._state;
 	}
 
-	/** Controls how queued steering messages are drained. */
 	set steeringMode(mode: QueueMode) {
 		this.steeringQueue.mode = mode;
 	}
@@ -270,7 +291,6 @@ export class Agent {
 		return this.steeringQueue.mode;
 	}
 
-	/** Controls how queued follow-up messages are drained. */
 	set followUpMode(mode: QueueMode) {
 		this.followUpQueue.mode = mode;
 	}
@@ -280,29 +300,30 @@ export class Agent {
 	}
 
 	/** Queue a message to be injected after the current assistant turn finishes. */
-	steer(message: AgentMessage): void {
+	steer(message: AgentMessage | AgentMessage[]): void {
 		this.steeringQueue.enqueue(message);
 	}
 
 	/** Queue a message to run only after the agent would otherwise stop. */
-	followUp(message: AgentMessage): void {
+	followUp(message: AgentMessage | AgentMessage[]): void {
 		this.followUpQueue.enqueue(message);
 	}
 
-	/** Remove all queued steering messages. */
 	clearSteeringQueue(): void {
 		this.steeringQueue.clear();
 	}
 
-	/** Remove all queued follow-up messages. */
 	clearFollowUpQueue(): void {
 		this.followUpQueue.clear();
 	}
 
-	/** Remove all queued steering and follow-up messages. */
 	clearAllQueues(): void {
 		this.clearSteeringQueue();
 		this.clearFollowUpQueue();
+	}
+
+	removeQueuedMessages(predicate: (message: AgentMessage) => boolean): AgentMessage[] {
+		return [...this.steeringQueue.removeWhere(predicate), ...this.followUpQueue.removeWhere(predicate)];
 	}
 
 	/** Returns true when either queue still contains pending messages. */
@@ -310,12 +331,10 @@ export class Agent {
 		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 
-	/** Active abort signal for the current run, if any. */
 	get signal(): AbortSignal | undefined {
 		return this.activeRun?.abortController.signal;
 	}
 
-	/** Abort the current run, if one is active. */
 	abort(): void {
 		this.activeRun?.abortController.abort();
 	}
@@ -329,7 +348,6 @@ export class Agent {
 		return this.activeRun?.promise ?? Promise.resolve();
 	}
 
-	/** Clear transcript state, runtime state, and queued messages. */
 	reset(): void {
 		if (this.activeRun) {
 			throw new Error("Agent is already processing. Wait for completion before resetting.");
@@ -344,7 +362,6 @@ export class Agent {
 		this.clearSteeringQueue();
 	}
 
-	/** Start a new prompt from text, a single message, or a batch of messages. */
 	async prompt(message: AgentMessage | AgentMessage[]): Promise<void>;
 	async prompt(input: string, images?: ImageContent[]): Promise<void>;
 	async prompt(input: string | AgentMessage | AgentMessage[], images?: ImageContent[]): Promise<void> {
@@ -357,31 +374,54 @@ export class Agent {
 		await this.runPromptMessages(messages);
 	}
 
-	/** Continue from the current transcript. The last message must be a user or tool-result message. */
+	/** The last message must convert to a user or tool-result message. */
 	async continue(): Promise<void> {
 		if (this.activeRun) {
-			throw new Error("Agent is already processing. Wait for completion before continuing.");
+			throw new AgentContinueError("busy", "Agent is already processing. Wait for completion before continuing.");
 		}
 
-		const lastMessage = this._state.messages[this._state.messages.length - 1];
-		if (!lastMessage) {
-			throw new Error("No messages to continue from");
-		}
-
-		if (lastMessage.role === "assistant") {
+		const runQueuedMessages = (): Promise<void> | undefined => {
 			const queuedSteering = this.steeringQueue.drain();
 			if (queuedSteering.length > 0) {
-				await this.runPromptMessages(queuedSteering, { skipInitialSteeringPoll: true });
-				return;
+				return this.runPromptMessages(queuedSteering, { skipInitialSteeringPoll: true });
 			}
 
 			const queuedFollowUps = this.followUpQueue.drain();
 			if (queuedFollowUps.length > 0) {
-				await this.runPromptMessages(queuedFollowUps);
+				return this.runPromptMessages(queuedFollowUps);
+			}
+
+			return undefined;
+		};
+
+		const lastMessage = this._state.messages[this._state.messages.length - 1];
+		if (!lastMessage) {
+			const queuedRun = runQueuedMessages();
+			if (queuedRun) {
+				await queuedRun;
 				return;
 			}
 
-			throw new Error("Cannot continue from message role: assistant");
+			throw new AgentContinueError("nothing-to-continue", "No messages to continue from");
+		}
+
+		if (lastMessage.role === "assistant") {
+			const queuedRun = runQueuedMessages();
+			if (queuedRun) {
+				await queuedRun;
+				return;
+			}
+
+			throw new AgentContinueError("nothing-to-continue", "Cannot continue from message role: assistant");
+		}
+
+		const lastMessageRole: string = lastMessage.role;
+		if (lastMessageRole === "custom") {
+			const queuedRun = runQueuedMessages();
+			if (queuedRun) {
+				await queuedRun;
+				return;
+			}
 		}
 
 		await this.runContinuation();
@@ -448,6 +488,7 @@ export class Agent {
 		return {
 			model: this._state.model,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
+			serviceTier: this._state.serviceTier,
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,
 			onResponse: this.onResponse,

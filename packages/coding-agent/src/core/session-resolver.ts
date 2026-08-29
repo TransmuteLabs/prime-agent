@@ -1,3 +1,4 @@
+import { resolvePath } from "../utils/paths.ts";
 import { matchesSavedSessionSelector, normalizeSessionId } from "./session-id.ts";
 import type { SessionInfo } from "./session-manager.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -48,7 +49,9 @@ export function looksLikeSessionPath(selector: string): boolean {
 
 export async function resolveSessionPath(selector: string, cwd: string, sessionDir?: string): Promise<ResolvedSession> {
 	if (looksLikeSessionPath(selector)) {
-		return { type: "path", path: selector };
+		// A path selector is resolved against the caller's cwd, not the process cwd: --cwd, a
+		// daemon session and an interactive /resume all pass a directory that is not process.cwd().
+		return { type: "path", path: resolvePath(selector, cwd) };
 	}
 
 	const localSessions = await SessionManager.list(cwd, sessionDir);

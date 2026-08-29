@@ -145,6 +145,7 @@ function createConnectionState(activeSessionId: string): AgentConnectionState {
 		leafId: `${activeSessionId}-leaf`,
 		autoCompactionEnabled: true,
 		messageCount: 1,
+		pendingMessageCount: 0,
 		sessionActions: { queuedCount: 0, steering: [], followUps: [] },
 		compactionCount: 0,
 		goal: { active: false, status: "idle", tokensUsed: 0, timeUsedSeconds: 0, continuationsUsed: 0 },

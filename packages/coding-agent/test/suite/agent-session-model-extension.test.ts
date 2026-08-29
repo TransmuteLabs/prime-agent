@@ -449,7 +449,7 @@ describe("AgentSession model and extension characterization", () => {
 		expect(seenOptions).toHaveLength(2);
 		expect(seenOptions[0]).toBe(seenOptions[1]);
 		expect(seenOptions[0]?.cwd).toBe(harness.tempDir);
-		expect(seenOptions[0]?.selectedTools).toContain("read");
+		expect(seenOptions[0]?.selectedTools).toContain("ipython");
 		expect(seenOptions[1]?.selectedTools).toContain("mutated_tool");
 	});
 

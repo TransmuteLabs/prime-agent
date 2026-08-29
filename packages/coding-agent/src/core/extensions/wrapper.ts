@@ -11,15 +11,29 @@ import type { ExtensionRunner } from "./runner.ts";
 import type { RegisteredTool } from "./types.ts";
 
 /**
+ * Either a runner instance or a getter resolved at execute time. A getter lets a wrapped tool
+ * follow a session rebuild or extension reload: the runner captured at wrap time is invalidated
+ * by the replacement and every later call through it fails its stale-ctx guard.
+ */
+export type RunnerSource = ExtensionRunner | (() => ExtensionRunner);
+
+function toRunnerGetter(source: RunnerSource): () => ExtensionRunner {
+	return typeof source === "function" ? source : () => source;
+}
+
+/**
  * Wrap a RegisteredTool into an AgentTool.
  * Uses the runner's createContext() for consistent context across tools and event handlers.
  */
-export function wrapRegisteredTool(registeredTool: RegisteredTool, runner: ExtensionRunner): AgentTool {
-	const tool = wrapToolDefinition(registeredTool.definition, () => runner.createContext());
+export function wrapRegisteredTool(registeredTool: RegisteredTool, runner: RunnerSource): AgentTool {
+	const getRunner = toRunnerGetter(runner);
+	const tool = wrapToolDefinition(registeredTool.definition, () => getRunner().createContext());
 	const execute = tool.execute;
 	return {
 		...tool,
 		execute: async (toolCallId, params, signal, onUpdate) => {
+			// One resolution per call: the before/after sets must come from the same runner.
+			const runner = getRunner();
 			const activeBefore = runner.getActiveTools();
 			const result = await execute(toolCallId, params, signal, onUpdate);
 			const activeAfter = runner.getActiveTools();
@@ -40,6 +54,6 @@ export function wrapRegisteredTool(registeredTool: RegisteredTool, runner: Exten
  * Wrap all registered tools into AgentTools.
  * Uses the runner's createContext() for consistent context across tools and event handlers.
  */
-export function wrapRegisteredTools(registeredTools: RegisteredTool[], runner: ExtensionRunner): AgentTool[] {
+export function wrapRegisteredTools(registeredTools: RegisteredTool[], runner: RunnerSource): AgentTool[] {
 	return registeredTools.map((tool) => wrapRegisteredTool(tool, runner));
 }

@@ -11,7 +11,7 @@ import {
 	PRIME_INFERENCE_PROVIDER_ID,
 	resolvePrimeAgentTracesBaseUrl,
 } from "./prime-inference-auth.ts";
-import type { SessionHeader, SessionManager } from "./session-manager.ts";
+import { getSessionArtifactsRoot, type SessionHeader, type SessionManager } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 
 const MAX_TRACE_BYTES = 20 * 1024 * 1024;
@@ -541,7 +541,7 @@ async function findSessionFilesUnder(root: string, files: Set<string>): Promise<
 
 export async function findAgentTraceFiles(sessionDir: string = getSessionsDir()): Promise<string[]> {
 	const files = new Set<string>();
-	const roots = new Set([resolve(sessionDir), resolve(dirname(sessionDir), "session-artifacts")]);
+	const roots = new Set([resolve(sessionDir), resolve(getSessionArtifactsRoot(sessionDir))]);
 	await Promise.all([...roots].map((root) => findSessionFilesUnder(root, files)));
 	return [...files].sort();
 }
@@ -645,7 +645,7 @@ export async function getPrimeAgentTraceCredential(
 		authStorage.reload();
 	}
 
-	const traceKey = authStorage.getApiKey(PRIME_AGENT_TRACES_PROVIDER_ID, { includeFallback: false });
+	const traceKey = await authStorage.getApiKey(PRIME_AGENT_TRACES_PROVIDER_ID, { includeFallback: false });
 	if (traceKey) {
 		return { apiKey: traceKey, source: "stored", label: "Prime Agent Traces credential" };
 	}
@@ -657,7 +657,7 @@ export async function getPrimeAgentTraceCredential(
 
 	const primeCredential = authStorage.get(PRIME_INFERENCE_PROVIDER_ID);
 	if (primeCredential) {
-		const primeKey = authStorage.getApiKey(PRIME_INFERENCE_PROVIDER_ID, { includeFallback: false });
+		const primeKey = await authStorage.getApiKey(PRIME_INFERENCE_PROVIDER_ID, { includeFallback: false });
 		if (primeKey) {
 			return { apiKey: primeKey, source: "prime-inference", label: "Prime Inference credential" };
 		}

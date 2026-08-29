@@ -1,8 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ServiceTier } from "@earendil-works/pi-ai";
 import type { AutocompleteItem, Component } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import type { ServiceTier } from "../src/modes/interactive/compat/pi-ai-compat.ts";
 import { ThinkingSelectorComponent } from "../src/modes/interactive/components/thinking-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -21,6 +20,10 @@ type EffortCommandContext = {
 	getAvailableThinkingLevels: () => ThinkingLevel[];
 	applyThinkingLevel: (level: ThinkingLevel) => void;
 	showThinkingSelector: (levels?: ThinkingLevel[]) => void;
+	// /effort is an alias of /thinking and shares its implementation, so the alias reaches it.
+	handleThinkingCommand: (searchTerm?: string) => void;
+	selectThinkingLevel: (level: ThinkingLevel, persist: boolean) => void;
+	settingsManager: { getDefaultThinkingLevel: () => ThinkingLevel | undefined };
 	showSelector: (create: (done: () => void) => { component: Component; focus: Component }) => void;
 	ui: { requestRender: () => void };
 };
@@ -29,6 +32,7 @@ type InteractiveModePrototype = {
 	getAvailableThinkingLevels(this: EffortCommandContext): ThinkingLevel[];
 	getThinkingLevelCompletions(this: EffortCommandContext, prefix: string): AutocompleteItem[] | null;
 	handleEffortCommand(this: EffortCommandContext, arg: string): void;
+	handleThinkingCommand(this: EffortCommandContext, searchTerm?: string): void;
 	showThinkingSelector(this: EffortCommandContext, levels?: ThinkingLevel[]): void;
 	applyThinkingLevel(this: EffortCommandContext, level: ThinkingLevel): void;
 };
@@ -116,6 +120,9 @@ function makeContext(overrides: Partial<EffortCommandContext> = {}): EffortComma
 		getAvailableThinkingLevels: () => interactiveModePrototype.getAvailableThinkingLevels.call(context),
 		applyThinkingLevel: (level) => interactiveModePrototype.applyThinkingLevel.call(context, level),
 		showThinkingSelector: (levels) => interactiveModePrototype.showThinkingSelector.call(context, levels),
+		handleThinkingCommand: (searchTerm) => interactiveModePrototype.handleThinkingCommand.call(context, searchTerm),
+		selectThinkingLevel: vi.fn(),
+		settingsManager: { getDefaultThinkingLevel: () => undefined },
 		showSelector: vi.fn(),
 		ui: { requestRender: vi.fn() },
 		...overrides,
@@ -178,7 +185,7 @@ describe("InteractiveMode /effort", () => {
 
 			expect(setThinkingLevel).not.toHaveBeenCalled();
 			expect(context.showError).toHaveBeenCalledWith(
-				"Unknown thinking level 'bogus'. Available: off, low, medium, high",
+				'Unknown thinking level "bogus". Available levels: off, low, medium, high.',
 			);
 		});
 
@@ -285,7 +292,6 @@ describe("InteractiveMode /effort", () => {
 			expect(patch.serviceTier).toBe("priority");
 			expect(patch.availableThinkingLevels).toContain("high");
 			expect(patch.availableThinkingLevels.length).toBeGreaterThan(1);
-			// Provider rebuild keeps the /effort argument hint in sync with the model.
 			expect(setupAutocompleteProvider).toHaveBeenCalledTimes(1);
 		});
 	});
@@ -405,7 +411,7 @@ describe("InteractiveMode /effort", () => {
 
 			expect(context.agentConnection.setServiceTier).not.toHaveBeenCalled();
 			expect(context.showStatus).toHaveBeenCalledWith(
-				"Fast mode requires GPT-5.4, GPT-5.5, or GPT-5.6 with ChatGPT authentication",
+				"Fast mode requires GPT-5.4, GPT-5.5, or GPT-5.6 with ChatGPT or OpenAI API key authentication",
 			);
 		});
 

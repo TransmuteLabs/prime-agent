@@ -104,12 +104,13 @@ describe("model selector filter resets selection to top", () => {
 		);
 
 		// Type a query matching all three scoped models. Selection must move to
-		// the top row (alpha-2), not stay clamped at index 2 (alpha-1).
+		// the top row, which ranking puts at the current model (alpha-1); staying
+		// clamped at index 2 would select alpha-3 instead.
 		for (const char of "alpha") {
 			selector.handleInput(char);
 		}
 		selector.handleInput(ENTER);
 
-		expect(selectedModelId).toBe("alpha-2");
+		expect(selectedModelId).toBe("alpha-1");
 	});
 });

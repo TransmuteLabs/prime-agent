@@ -45,8 +45,8 @@ function createMode() {
 		featureHintRunPending: false,
 		connectionQueue: { steering: [], followUp: [] },
 		compactionQueuedMessages: [],
-		options: { returnToAgentsView: true },
-		ui: { requestRender },
+		options: { returnToAgentsView: true, tuiMode: "normal" },
+		ui: { requestRender, getClearOnShrink: () => false },
 	};
 	Object.setPrototypeOf(mode, InteractiveMode.prototype);
 	return { mode, statusContainer, featureHintContainer, loader, featureHintDeck, requestRender };
@@ -92,7 +92,7 @@ describe("feature hint deck", () => {
 		expect(textById.get("agent-messaging")).toContain("message each other");
 		expect(textById.get("goal")).toContain("/goal");
 		expect(textById.get("refine")).toContain("/refine");
-		expect(textById.get("persistent-ipython")).toContain("IPython");
+		expect(textById.get("persistent-ipython")).toContain("kernel variables");
 		expect(textById.get("context-usage")).toContain("/context");
 		expect(textById.get("session-fork")).toContain("/fork");
 		expect(textById.get("compaction")).toContain("/compact");

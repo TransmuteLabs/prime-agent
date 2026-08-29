@@ -33,8 +33,10 @@ describe("shouldRunFirstTimeSetup", () => {
 		}
 	});
 
-	it("returns true when experimental, default agent dir, and no settings.json", () => {
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
+	it("stays off in a rebranded distribution even when experimental and unconfigured", () => {
+		// startup-ui gates the flow to the official pi build (package name, app name, config dir);
+		// this distribution ships as prime-agent with .prime/agent, so the flow never runs here.
+		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
 	});
 
 	it("returns false when experimental features are disabled", () => {

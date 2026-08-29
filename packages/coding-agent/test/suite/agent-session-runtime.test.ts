@@ -325,8 +325,8 @@ describe("AgentSessionRuntime characterization", () => {
 			{ type: "session_shutdown", reason: "fork", targetSessionFile: runtime.session.sessionFile },
 			{ type: "session_start", reason: "fork", previousSessionFile },
 		]);
-		const sessionFileName = parse(runtime.session.sessionFile!).name;
-		expect(sessionFileName.endsWith(`_${runtime.session.sessionId}`)).toBe(true);
+		// The fork writes a new file named for the new session id.
+		expect(parse(runtime.session.sessionFile!).name).toBe(runtime.session.sessionId);
 
 		events.length = 0;
 		cancelNextFork = true;

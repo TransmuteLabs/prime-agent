@@ -288,7 +288,16 @@ describe("AgentSession concurrent prompt guard", () => {
 		await session.abort();
 		await firstPrompt.catch(() => {});
 
+		// Aborting suspends input admission, so queue-visible work survives the abort instead of
+		// starting a turn of its own; the next prompt resumes admission and delivers it.
+		expect(sawSteeringMessage).toBe(false);
+		expect(session.getSteeringMessages()).toContain("Steer from extension");
+		expect(session.pendingMessageCount).toBe(1);
+
+		await session.prompt("After abort");
+
 		expect(sawSteeringMessage).toBe(true);
+		expect(session.pendingMessageCount).toBe(0);
 	});
 
 	it("should allow prompt() after previous completes", async () => {

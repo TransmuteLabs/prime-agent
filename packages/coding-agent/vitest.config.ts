@@ -9,6 +9,20 @@ export default mergeConfig(
 			globals: true,
 			environment: "node",
 			testTimeout: 30000,
+			tags: [
+				{
+					name: "process-stress",
+					description: "Slow real-process stress and wall-clock scheduling coverage",
+				},
+				{
+					name: "kernel-heavy",
+					description: "Boots a real Python kernel and syncs skills into the shared venv",
+				},
+			],
+			// Kernel-heavy tests are excluded from the default sharded run: several files
+			// booting real kernels in one shard starve the neighbouring kernel tests that
+			// rely on the 30s default timeout. `test:kernel` runs them on their own.
+			tagsFilter: ["!process-stress", "!kernel-heavy"],
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
 			env: { PI_OFFLINE: "1" },
 			unstubEnvs: true,
@@ -32,6 +46,7 @@ export default mergeConfig(
 				},
 				{ find: /^@mariozechner\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
 				{ find: /^@mariozechner\/pi-ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },
+				{ find: /^@mariozechner\/pi-ai\/mcp$/, replacement: workspaceSourcePaths.aiMcp },
 				{ find: /^@mariozechner\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 				{ find: /^@mariozechner\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
 			],

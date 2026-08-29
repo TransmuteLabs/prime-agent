@@ -27,7 +27,9 @@ const EMPTY_USAGE: Usage = {
 
 type HandleEventThis = {
 	isInitialized: boolean;
-	settingsManager: { getShowTerminalProgress(): boolean };
+	settingsManager: { getShowTerminalProgress(): boolean; getShowCacheMissNotices(): boolean };
+	options: { tuiMode: string };
+	statusContainer: Container;
 	connectionState: { isStreaming: boolean };
 	toolOutputExpanded: boolean;
 	footer: { invalidate(): void };
@@ -75,12 +77,14 @@ type HandleSubagentSummaryChatAction = (
 function createFakeInteractiveModeThis(): HandleEventThis {
 	const fakeThis = {
 		isInitialized: true,
-		settingsManager: { getShowTerminalProgress: () => false },
+		settingsManager: { getShowTerminalProgress: () => false, getShowCacheMissNotices: () => false },
 		connectionState: { isStreaming: false },
 		toolOutputExpanded: false,
 		footer: { invalidate: vi.fn() },
 		activityTracker: new AgentActivityTracker(),
-		ui: { requestRender: vi.fn() } as unknown as TUI,
+		ui: { requestRender: vi.fn(), getClearOnShrink: () => false } as unknown as TUI,
+		options: { tuiMode: "normal" },
+		statusContainer: new Container(),
 		chatContainer: new Container(),
 		recapContainer: new Container(),
 		sessionRecap: "Updated files",

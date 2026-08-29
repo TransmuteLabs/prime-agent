@@ -4,8 +4,10 @@ import { isAgentSessionMessage } from "../../../core/agent-messages.ts";
 import {
 	COMPACTION_OUTCOME_CUSTOM_TYPE,
 	isCompactionOutcomeMessage,
+	isRefinementOutcomeMessage,
 	isSessionSlashCommandMessage,
 	isSessionSlashCommandResultMessage,
+	REFINEMENT_OUTCOME_CUSTOM_TYPE,
 	SESSION_SLASH_COMMAND_CUSTOM_TYPE,
 	SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
 } from "../../../core/messages.ts";
@@ -18,6 +20,10 @@ import {
 } from "./compaction-outcome-message.ts";
 import { InjectedPromptMessageComponent, isInjectedPromptMessage } from "./injected-prompt-message.ts";
 import { IPythonCellComponent } from "./ipython-cell.ts";
+import {
+	MalformedRefinementOutcomeMessageComponent,
+	RefinementOutcomeMessageComponent,
+} from "./refinement-outcome-message.ts";
 import { SlashCommandMessageComponent } from "./slash-command-message.ts";
 import { SlashCommandResultMessageComponent } from "./slash-command-result-message.ts";
 import {
@@ -38,6 +44,7 @@ export interface ConversationComponentsOptions {
 	hiddenThinkingLabel?: string;
 	toolsExpanded?: boolean;
 	agentMessagesExpanded?: boolean;
+	editDiffsExpanded?: boolean;
 	isRecognizedSlashCommand?: (name: string) => boolean;
 }
 
@@ -71,6 +78,7 @@ export function buildConversationComponents(
 	const pendingTools = new Map<string, ToolExecutionComponent>();
 	const expanded = options.toolsExpanded ?? false;
 	const agentMessagesExpanded = options.agentMessagesExpanded ?? false;
+	const editDiffsExpanded = options.editDiffsExpanded ?? false;
 
 	for (const message of messages) {
 		if (message.role === "assistant") {
@@ -102,6 +110,8 @@ export function buildConversationComponents(
 					options.cwd,
 				);
 				tool.setExpanded(expanded);
+				tool.setAgentMessagesExpanded(agentMessagesExpanded);
+				tool.setEditDiffsExpanded(editDiffsExpanded);
 				tool.markExecutionStarted();
 				tool.setArgsComplete();
 				selectLatestToolExpandHint(components, tool);
@@ -138,6 +148,13 @@ export function buildConversationComponents(
 					? new CompactionOutcomeMessageComponent(message)
 					: new MalformedCompactionOutcomeMessageComponent(),
 			);
+		} else if (message.role === "custom" && message.customType === REFINEMENT_OUTCOME_CUSTOM_TYPE) {
+			if (!message.display) continue;
+			const component = isRefinementOutcomeMessage(message)
+				? new RefinementOutcomeMessageComponent(message)
+				: new MalformedRefinementOutcomeMessageComponent();
+			component.setExpanded(expanded);
+			components.push(component);
 		} else if (isAgentSessionMessage(message) && message.display) {
 			const component = new AgentMessageComponent(message, options.markdownTheme, {
 				suppressLeadingSpace: isCompactAgentMessageNeighbor(components.at(-1)),

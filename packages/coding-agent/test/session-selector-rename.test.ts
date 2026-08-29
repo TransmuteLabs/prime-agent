@@ -22,6 +22,7 @@ function makeSession(overrides: Partial<SessionInfo> & { id: string }): SessionI
 		messageCount: overrides.messageCount ?? 1,
 		firstMessage: overrides.firstMessage ?? "hello",
 		allMessagesText: overrides.allMessagesText ?? "hello",
+		rlmDepth: overrides.rlmDepth ?? 0,
 	};
 }
 
@@ -53,7 +54,8 @@ describe("session selector rename", () => {
 		await flushPromises();
 
 		const output = selector.render(120).join("\n");
-		expect(output).toContain("ctrl+r");
+		// The hint renders key labels in display casing ("Ctrl+R"), not the binding id.
+		expect(output.toLowerCase()).toContain("ctrl+r");
 		expect(output).toContain("rename");
 	});
 

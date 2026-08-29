@@ -1,4 +1,4 @@
-import { type Component, Container } from "@earendil-works/pi-tui";
+import { type Component, Container, type ScrollView, type VStack } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
@@ -100,7 +100,6 @@ describe("ENG-4741 hint placement", () => {
 			const sideQuestionContainer = new Container();
 			const widgetContainerBelow = new Container();
 			const promptDock = new Container();
-			const enterFullscreen = vi.fn();
 			const mode = Object.assign(Object.create(InteractiveMode.prototype), {
 				headerContainer,
 				mainViewContainer,
@@ -111,26 +110,26 @@ describe("ENG-4741 hint placement", () => {
 				sideQuestionContainer,
 				widgetContainerBelow,
 				promptDock,
-				ui: { enterFullscreen },
-				uiServices: { settingsManager: { getFullscreenMouse: () => true } },
+				uiServices: { settingsManager: { getFullscreenScrollbar: () => "auto" } },
 			});
 
-			callPrivate(mode, "applyFullscreen", true);
+			callPrivate(mode, "ensureFullscreenLayoutRoot");
 
-			expect(enterFullscreen).toHaveBeenCalledWith({
-				scroll: [
-					headerContainer,
-					mainViewContainer,
-					widgetContainerAbove,
-					recapContainer,
-					featureHintContainer,
-					queuedMessagesContainer,
-					sideQuestionContainer,
-					widgetContainerBelow,
-				],
-				dock: promptDock,
-				mouse: true,
-			});
+			// The alt screen renders the layout root: a scrolling transcript above a pinned dock.
+			const layoutRoot = mode.fullscreenLayoutRoot as VStack;
+			const [scrollView, dock] = layoutRoot.children;
+			expect(dock).toBe(promptDock);
+			const transcript = (scrollView as ScrollView).children[0] as Container;
+			expect(transcript.children).toEqual([
+				headerContainer,
+				mainViewContainer,
+				widgetContainerAbove,
+				recapContainer,
+				featureHintContainer,
+				queuedMessagesContainer,
+				sideQuestionContainer,
+				widgetContainerBelow,
+			]);
 			expect(promptDock.children).not.toContain(featureHintContainer);
 		} finally {
 			if (previousIsTTY) {

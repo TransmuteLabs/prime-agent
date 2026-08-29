@@ -50,7 +50,7 @@ function vertexModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"goo
 
 async function captureGooglePayload(
 	model: Model<"google-generative-ai">,
-	reasoning: ThinkingLevel,
+	reasoning: ModelThinkingLevel,
 	thinkingBudgets?: ThinkingBudgets,
 ): Promise<GenerateContentParameters> {
 	let payload: GenerateContentParameters | undefined;
@@ -71,7 +71,7 @@ async function captureGooglePayload(
 
 async function captureVertexPayload(
 	model: Model<"google-vertex">,
-	reasoning: ThinkingLevel,
+	reasoning: ModelThinkingLevel,
 	thinkingBudgets?: ThinkingBudgets,
 ): Promise<GenerateContentParameters> {
 	let payload: GenerateContentParameters | undefined;
@@ -166,5 +166,25 @@ describe("Google thinking level maps", () => {
 		});
 
 		expect(payload).toMatchObject({ config: { thinkingConfig: { thinkingBudget: 4321 } } });
+	});
+
+	// resolveGoogleThinkingLevel maps "off" to "high", so an explicit off that reaches it turns
+	// thinking on at full strength; streamSimple has to treat it as "no reasoning" instead.
+	it("disables thinking for Google Generative AI when reasoning is off", async () => {
+		const payload = await captureGooglePayload(googleModel("gemini-2.5-flash", {}), "off", { high: 1234 });
+
+		expect(payload).toMatchObject({ config: { thinkingConfig: { thinkingBudget: 0 } } });
+		expect(
+			(payload.config?.thinkingConfig as { includeThoughts?: boolean } | undefined)?.includeThoughts,
+		).toBeUndefined();
+	});
+
+	it("disables thinking for Google Vertex when reasoning is off", async () => {
+		const payload = await captureVertexPayload(vertexModel("gemini-2.5-flash", {}), "off", { high: 4321 });
+
+		expect(payload).toMatchObject({ config: { thinkingConfig: { thinkingBudget: 0 } } });
+		expect(
+			(payload.config?.thinkingConfig as { includeThoughts?: boolean } | undefined)?.includeThoughts,
+		).toBeUndefined();
 	});
 });

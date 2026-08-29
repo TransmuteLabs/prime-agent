@@ -223,6 +223,7 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r dist/core/export-html "$OUTPUT_DIR/$platform/"
     cp -r docs "$OUTPUT_DIR/$platform/"
     cp -r examples "$OUTPUT_DIR/$platform/"
+    cp -r skills "$OUTPUT_DIR/$platform/"
 
     set_clipboard_target "$platform"
     mkdir -p "$OUTPUT_DIR/$platform/node_modules/@mariozechner"

@@ -1,10 +1,3 @@
-/**
- * Tests for StdinBuffer
- *
- * Based on code from OpenTUI (https://github.com/anomalyco/opentui)
- * MIT License - Copyright (c) 2025 opentui
- */
-
 import assert from "node:assert";
 import { beforeEach, describe, it } from "node:test";
 import { matchesKey } from "../src/keys.ts";
@@ -17,19 +10,16 @@ describe("StdinBuffer", () => {
 	beforeEach(() => {
 		buffer = new StdinBuffer({ timeout: 10 });
 
-		// Collect emitted sequences
 		emittedSequences = [];
 		buffer.on("data", (sequence) => {
 			emittedSequences.push(sequence);
 		});
 	});
 
-	// Helper to process data through the buffer
 	function processInput(data: string | Buffer): void {
 		buffer.process(data);
 	}
 
-	// Helper to wait for async operations
 	async function wait(ms: number): Promise<void> {
 		return new Promise((resolve) => setTimeout(resolve, ms));
 	}
@@ -129,7 +119,6 @@ describe("StdinBuffer", () => {
 			processInput("\x1b[<35");
 			assert.deepStrictEqual(emittedSequences, []);
 
-			// Wait for timeout
 			await wait(15);
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
@@ -220,37 +209,31 @@ describe("StdinBuffer", () => {
 
 	describe("Kitty Keyboard Protocol", () => {
 		it("should handle Kitty CSI u press events", () => {
-			// Press 'a' in Kitty protocol
 			processInput("\x1b[97u");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[97u"]);
 		});
 
 		it("should handle Kitty CSI u release events", () => {
-			// Release 'a' in Kitty protocol
 			processInput("\x1b[97;1:3u");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[97;1:3u"]);
 		});
 
 		it("should handle batched Kitty press and release", () => {
-			// Press 'a', release 'a' batched together (common over SSH)
 			processInput("\x1b[97u\x1b[97;1:3u");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[97u", "\x1b[97;1:3u"]);
 		});
 
 		it("should handle multiple batched Kitty events", () => {
-			// Press 'a', release 'a', press 'b', release 'b'
 			processInput("\x1b[97u\x1b[97;1:3u\x1b[98u\x1b[98;1:3u");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[97u", "\x1b[97;1:3u", "\x1b[98u", "\x1b[98;1:3u"]);
 		});
 
 		it("should handle Kitty arrow keys with event type", () => {
-			// Up arrow press with event type
 			processInput("\x1b[1;1:1A");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[1;1:1A"]);
 		});
 
 		it("should handle Kitty functional keys with event type", () => {
-			// Delete key release
 			processInput("\x1b[3;1:3~");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[3;1:3~"]);
 		});
@@ -276,7 +259,6 @@ describe("StdinBuffer", () => {
 		});
 
 		it("should handle plain characters mixed with Kitty sequences", () => {
-			// Plain 'a' followed by Kitty release
 			processInput("a\x1b[97;1:3u");
 			assert.deepStrictEqual(emittedSequences, ["a", "\x1b[97;1:3u"]);
 		});
@@ -303,7 +285,6 @@ describe("StdinBuffer", () => {
 		});
 
 		it("should handle rapid typing simulation with Kitty protocol", () => {
-			// Simulates typing "hi" quickly with releases interleaved
 			processInput("\x1b[104u\x1b[104;1:3u\x1b[105u\x1b[105;1:3u");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[104u", "\x1b[104;1:3u", "\x1b[105u", "\x1b[105;1:3u"]);
 		});
@@ -358,7 +339,6 @@ describe("StdinBuffer", () => {
 	describe("Edge Cases", () => {
 		it("should handle empty input", () => {
 			processInput("");
-			// Empty string emits an empty data event
 			assert.deepStrictEqual(emittedSequences, [""]);
 		});
 
@@ -366,7 +346,6 @@ describe("StdinBuffer", () => {
 			processInput("\x1b");
 			assert.deepStrictEqual(emittedSequences, []);
 
-			// After timeout, should emit
 			await wait(15);
 			assert.deepStrictEqual(emittedSequences, ["\x1b"]);
 		});
@@ -419,7 +398,6 @@ describe("StdinBuffer", () => {
 			processInput("\x1b[<35");
 			assert.deepStrictEqual(emittedSequences, []);
 
-			// Wait for timeout to flush
 			await wait(15);
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
@@ -443,13 +421,11 @@ describe("StdinBuffer", () => {
 		beforeEach(() => {
 			buffer = new StdinBuffer({ timeout: 10 });
 
-			// Collect emitted sequences
 			emittedSequences = [];
 			buffer.on("data", (sequence) => {
 				emittedSequences.push(sequence);
 			});
 
-			// Collect paste events
 			emittedPaste = [];
 			buffer.on("paste", (data) => {
 				emittedPaste.push(data);
@@ -516,10 +492,8 @@ describe("StdinBuffer", () => {
 			processInput("\x1b[<35");
 			buffer.destroy();
 
-			// Wait longer than timeout
 			await wait(15);
 
-			// Should not have emitted anything
 			assert.deepStrictEqual(emittedSequences, []);
 		});
 	});

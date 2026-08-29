@@ -1,4 +1,4 @@
-import type { Api, Model, ModelsRefreshResult } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
@@ -10,24 +10,28 @@ import { createHarness, type Harness } from "../harness.ts";
 
 const showModelsSelector = Reflect.get(InteractiveMode.prototype, "showModelsSelector") as (this: object) => void;
 
-function openSelector(harness: Harness, initialModels: readonly Model<Api>[]) {
-	let snapshot = initialModels;
-	let finishRefresh: ((result: ModelsRefreshResult) => void) | undefined;
-	let refreshSignal: AbortSignal | undefined;
+function openSelector(harness: Harness, cachedModels: readonly Model<Api>[]) {
+	let resolveRefresh: ((models: readonly Model<Api>[]) => void) | undefined;
 	let selector: ScopedModelsSelectorComponent | undefined;
 	let dispose: (() => void) | undefined;
 	const done = vi.fn();
-	vi.spyOn(harness.session.modelRuntime, "getAvailableSnapshot").mockImplementation(() => snapshot);
-	vi.spyOn(harness.session.modelRuntime, "refresh").mockImplementation(
-		(options) =>
-			new Promise((resolve) => {
-				refreshSignal = options?.signal;
-				finishRefresh = resolve;
-			}),
-	);
 	const context = {
-		session: harness.session,
+		getCachedModelCandidates: () => [...cachedModels],
+		// The connection refresh has no signal of its own; the selector's dispose is what
+		// keeps a late catalog from writing into a closed component.
+		getModelSelectorRefreshPromise: vi.fn(
+			() =>
+				new Promise<readonly Model<Api>[]>((resolve) => {
+					resolveRefresh = resolve;
+				}),
+		),
+		getScopedModelState: () => [],
+		getScopedModelsFromModelIds: Reflect.get(InteractiveMode.prototype, "getScopedModelsFromModelIds"),
+		agentConnection: { setScopedModels: vi.fn() },
+		patchConnectionState: vi.fn(),
 		settingsManager: harness.settingsManager,
+		showError: vi.fn(),
+		showStatus: vi.fn(),
 		showSelector: (
 			factory: (close: () => void) => {
 				component: ScopedModelsSelectorComponent;
@@ -50,14 +54,11 @@ function openSelector(harness: Harness, initialModels: readonly Model<Api>[]) {
 	if (!selector) throw new Error("Expected scoped-model selector to open");
 	return {
 		done,
-		get refreshSignal() {
-			return refreshSignal;
-		},
 		selector,
-		complete(models: readonly Model<Api>[], result: ModelsRefreshResult) {
-			snapshot = models;
-			if (!finishRefresh) throw new Error("Expected model refresh to start");
-			finishRefresh(result);
+		refreshStarted: () => context.getModelSelectorRefreshPromise.mock.calls.length > 0,
+		complete(models: readonly Model<Api>[]) {
+			if (!resolveRefresh) throw new Error("Expected model refresh to start");
+			resolveRefresh(models);
 		},
 	};
 }
@@ -87,7 +88,7 @@ describe("issue #7153 scoped models refresh", () => {
 		expect(initial).toContain("Refreshing model catalogs…");
 		expect(initial).not.toContain("refreshed");
 
-		refresh.complete(harness.models, { aborted: false, errors: new Map() });
+		refresh.complete(harness.models);
 		await vi.waitFor(() => {
 			const rendered = stripAnsi(refresh.selector.render(100).join("\n"));
 			expect(rendered).toContain("refreshed");
@@ -95,13 +96,23 @@ describe("issue #7153 scoped models refresh", () => {
 		});
 	});
 
-	it("cancels the background refresh when the selector closes", async () => {
-		harness = await createHarness({ models: [{ id: "cached", name: "Cached" }] });
-		const refresh = openSelector(harness, harness.models);
+	it("ignores a background refresh that lands after the selector closes", async () => {
+		harness = await createHarness({
+			models: [
+				{ id: "cached", name: "Cached" },
+				{ id: "refreshed", name: "Refreshed" },
+			],
+		});
+		const refresh = openSelector(harness, [harness.models[0]]);
+		expect(refresh.refreshStarted()).toBe(true);
 
-		expect(refresh.refreshSignal).toBeDefined();
 		refresh.selector.handleInput("\x1b");
-		await vi.waitFor(() => expect(refresh.refreshSignal?.aborted).toBe(true));
 		expect(refresh.done).toHaveBeenCalledOnce();
+
+		refresh.complete(harness.models);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const rendered = stripAnsi(refresh.selector.render(100).join("\n"));
+		expect(rendered).not.toContain("refreshed");
+		expect(rendered).toContain("Refreshing model catalogs…");
 	});
 });

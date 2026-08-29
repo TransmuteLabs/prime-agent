@@ -23,9 +23,11 @@ export interface AppKeybindings {
 	"app.suspend": true;
 	"app.model.select": true;
 	"app.model.toggleScope": true;
+	"app.model.selectAsDefault": true;
 	"app.configuration.previousTab": true;
 	"app.tools.expand": true;
 	"app.messages.expand": true;
+	"app.edits.expand": true;
 	"app.thinking.toggle": true;
 	"app.subagents.focus": true;
 	"app.heartbeats.open": true;
@@ -121,12 +123,14 @@ export const KEYBINDINGS = {
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
 	"app.model.toggleScope": { defaultKeys: "alt+s", description: "Toggle model selector scope" },
+	"app.model.selectAsDefault": { defaultKeys: "ctrl+s", description: "Set model as default" },
 	"app.configuration.previousTab": { defaultKeys: "shift+tab", description: "Select previous configuration tab" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
 	"app.messages.expand": {
 		defaultKeys: "ctrl+p",
 		description: "Toggle agent message expansion",
 	},
+	"app.edits.expand": { defaultKeys: "ctrl+j", description: "Toggle edit diffs", defaultKeyScope: "editor" },
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
 		description: "Toggle thinking blocks",
@@ -187,11 +191,14 @@ export const KEYBINDINGS = {
 	"app.session.tree": { defaultKeys: [], description: "Open session tree" },
 	"app.session.fork": { defaultKeys: [], description: "Fork current session" },
 	"app.session.resume": { defaultKeys: [], description: "Resume a session" },
-	"app.session.deleteNoninvasive": { defaultKeys: [], description: "Delete session (noninvasive)" },
-	"app.session.delete": { defaultKeys: [], description: "Delete session" },
-	"app.session.rename": { defaultKeys: [], description: "Rename session" },
-	"app.session.toggleSort": { defaultKeys: [], description: "Toggle session sort" },
-	"app.session.togglePath": { defaultKeys: [], description: "Toggle session path display" },
+	"app.session.deleteNoninvasive": {
+		defaultKeys: "ctrl+backspace",
+		description: "Delete session when query is empty",
+	},
+	"app.session.delete": { defaultKeys: "ctrl+d", description: "Delete session" },
+	"app.session.rename": { defaultKeys: "ctrl+r", description: "Rename session" },
+	"app.session.toggleSort": { defaultKeys: "ctrl+s", description: "Toggle session sort mode" },
+	"app.session.togglePath": { defaultKeys: "ctrl+p", description: "Toggle session path display" },
 	"app.session.toggleNamedFilter": { defaultKeys: "ctrl+n", description: "Toggle named session filter" },
 	"app.agents.back": { defaultKeys: "left", description: "Return to parent agent scope" },
 	"app.agents.open": { defaultKeys: "right", description: "Drill into selected agent" },

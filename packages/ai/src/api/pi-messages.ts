@@ -15,11 +15,11 @@ import type {
 	CacheRetention,
 	Context,
 	Model,
+	ModelThinkingLevel,
 	ProviderEnv,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
-	ThinkingLevel,
 	ToolCall,
 } from "../types.ts";
 import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
@@ -29,7 +29,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 
 export interface PiMessagesOptions extends StreamOptions {
-	reasoning?: ThinkingLevel;
+	reasoning?: ModelThinkingLevel;
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 	/** Ask the backend for debug metadata (e.g. routing response headers). */
 	debug?: boolean;
