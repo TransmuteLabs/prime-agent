@@ -96,7 +96,9 @@ describe("Prime Inference models", () => {
 			expect(getSupportedThinkingLevels(model)).toEqual(["off", "low", "high", "max"]);
 			expect(model.input).toEqual(["text", "image"]);
 			expect(model.contextWindow).toBe(1048576);
-			expect(model.maxTokens).toBe(1048576);
+			// Prime publishes no output limit, so the curated metadata supplies it; OpenRouter
+			// publishes its own enforced ceiling and the generator keeps it instead of forcing one.
+			expect(model.maxTokens).toBe(provider === "prime-inference" ? 1048576 : 943718);
 			expect(model.cost.input).toBe(provider === "prime-inference" ? 3.45 : 3);
 			expect(model.cost.output).toBe(provider === "prime-inference" ? 17.25 : 15);
 		}

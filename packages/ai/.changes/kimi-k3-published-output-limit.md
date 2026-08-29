@@ -1,0 +1,1 @@
+- Fixed Kimi K3 on OpenRouter and the Vercel AI Gateway reporting a hardcoded output limit instead of the ceiling the gateway publishes; the curated value is now only a floor for gateways that publish none.

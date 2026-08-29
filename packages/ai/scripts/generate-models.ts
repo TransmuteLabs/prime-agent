@@ -336,6 +336,7 @@ const QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = new Set<string>([
 	"qwen3.8-max",
 ]);
 
+/** Floor for Kimi K3's output limit where a gateway publishes none. */
 const KIMI_K3_MAX_TOKENS = 131072;
 const KIMI_K3_COST = {
 	input: 3,
@@ -2986,12 +2987,19 @@ async function generateModels() {
 		if (candidate.provider === "openai" && candidate.id === "gpt-5-pro") {
 			candidate.maxTokens = 128000;
 		}
-		// Keep Kimi K3's canonical output limit when gateway metadata is missing or incorrect.
+		// Kimi K3's canonical output limit is a FLOOR, not a replacement: both gateways
+		// fall back to 4096 when they publish no max output, and that under-declares the
+		// model by two orders of magnitude. A published value above the floor is the
+		// gateway's own enforced limit and is kept as-is; capping at the context window
+		// keeps a gateway that reports output = context from over-declaring.
 		if (
 			(candidate.provider === "openrouter" && OPENROUTER_KIMI_K3_MODEL_IDS.has(candidate.id)) ||
 			(candidate.provider === "vercel-ai-gateway" && candidate.id === "moonshotai/kimi-k3")
 		) {
-			candidate.maxTokens = KIMI_K3_MAX_TOKENS;
+			candidate.maxTokens = Math.min(
+				Math.max(candidate.maxTokens ?? 0, KIMI_K3_MAX_TOKENS),
+				candidate.contextWindow,
+			);
 		}
 		// Keep selected OpenRouter model metadata stable until upstream settles.
 		if (candidate.provider === "openrouter" && candidate.id === "moonshotai/kimi-k2.5") {
