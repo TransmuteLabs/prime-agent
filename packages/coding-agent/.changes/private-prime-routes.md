@@ -1,0 +1,1 @@
+- Fixed private Prime Inference routes never being offered: the model catalog excludes them by design, so the declarations they are built from are carried in the client again and revealed only to teams whose catalog authorizes them.

@@ -5,6 +5,7 @@ import type { Api, Credential, CredentialStore, Model, Provider } from "@earendi
 import { PRIME_INFERENCE_PROVIDER_ID } from "./prime-inference-auth.ts";
 import {
 	fetchAuthorizedPrivatePrimeInferenceModelIds,
+	getPrivatePrimeInferenceModels,
 	isPrivatePrimeInferenceModel,
 } from "./prime-inference-models.ts";
 
@@ -251,7 +252,7 @@ export function withPrivatePrimeInferenceAuthorization(
 ): Provider {
 	return {
 		...provider,
-		getModels: () => provider.getModels(),
+		getModels: () => [...provider.getModels(), ...getPrivatePrimeInferenceModels()],
 		filterModels: (models: readonly Model<Api>[], credential: Credential | undefined) => {
 			const filtered = provider.filterModels ? provider.filterModels(models, credential) : models;
 			return filtered.filter((model) => !isPrivatePrimeInferenceModel(model) || authorization.isOffered(model.id));
